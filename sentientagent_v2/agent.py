@@ -30,8 +30,8 @@ Your job:
 3. Keep responses concise and actionable.
 
 Rules:
-- This system does not support Telegram/Feishu/Slack/WhatsApp channels.
-- Only local, file-based skill loading is supported.
+- Channel delivery (e.g. local/Feishu) is handled by the gateway runtime.
+- Skill loading is file-based (workspace + built-in SKILL.md).
 - Before using a skill deeply, call `list_skills` then `read_skill(name)` for the specific skill.
 - Do not invent skill content. Always read SKILL.md first.
 - Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `exec`, `web_search`, `web_fetch`, `message`, `cron`.

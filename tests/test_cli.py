@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import types as pytypes
 import unittest
 from pathlib import Path
@@ -12,11 +15,49 @@ class CLITests(unittest.TestCase):
     def test_message_mode_dispatch(self) -> None:
         from sentientagent_v2 import cli
 
-        with patch.object(cli, "_cmd_message", return_value=0) as mocked:
-            with self.assertRaises(SystemExit) as ctx:
-                cli.main(["-m", "hello"])
-            self.assertEqual(ctx.exception.code, 0)
-            mocked.assert_called_once()
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_message", return_value=0) as mocked:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["-m", "hello"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked.assert_called_once()
+                mocked_bootstrap.assert_called_once()
+
+    def test_onboard_mode_dispatch(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_onboard", return_value=0) as mocked_onboard:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["onboard"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_onboard.assert_called_once_with(force=False)
+                mocked_bootstrap.assert_not_called()
+
+    def test_doctor_mode_bootstraps_config(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_doctor", return_value=0):
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["doctor"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+
+    def test_cmd_onboard_creates_config_and_workspace(self) -> None:
+        from sentientagent_v2 import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"HOME": tmp}, clear=False):
+                code = cli._cmd_onboard(force=False)
+
+            self.assertEqual(code, 0)
+            config_path = Path(tmp) / ".sentientagent_v2" / "config.json"
+            self.assertTrue(config_path.exists())
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            workspace = Path(data["agent"]["workspace"]).expanduser()
+            self.assertTrue(workspace.exists())
+            self.assertTrue((workspace / "skills").exists())
 
     def test_script_entrypoint_accepts_m(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

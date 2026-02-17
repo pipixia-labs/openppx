@@ -56,6 +56,21 @@ cd sentientagent_v2
 pip install -e .
 ```
 
+## Onboard (Recommended)
+
+Initialize local config and workspace:
+
+```bash
+sentientagent_v2 onboard
+```
+
+This creates:
+
+- `~/.sentientagent_v2/config.json`
+- `~/.sentientagent_v2/workspace`
+
+Gateway/doctor/message commands will auto-load this config file and map it to runtime env vars.
+
 ## Run
 
 ### Single-turn request (recommended)
@@ -99,14 +114,21 @@ python -m sentientagent_v2.cli gateway-local
 ### Gateway: channel mode (including Feishu)
 
 ```bash
-python -m sentientagent_v2.cli gateway --channels local,feishu --interactive-local
+sentientagent_v2 gateway --channels local,feishu --interactive-local
 ```
 
 Or use env default:
 
 ```bash
 export SENTIENTAGENT_V2_CHANNELS=feishu
-python -m sentientagent_v2.cli gateway
+sentientagent_v2 gateway
+```
+
+Recommended for Feishu: set channels and Feishu credentials in `~/.sentientagent_v2/config.json`,
+then run:
+
+```bash
+sentientagent_v2 gateway
 ```
 
 ## Classic Usage Examples
@@ -124,6 +146,11 @@ python -m pytest -q
 ```
 
 ## Environment Variables
+
+`sentientagent_v2` supports both:
+
+- config file: `~/.sentientagent_v2/config.json` (recommended)
+- shell env vars (higher priority, overrides config values)
 
 - `SENTIENTAGENT_V2_MODEL`: override model (default: `gemini-3-flash-preview`)
 - `SENTIENTAGENT_V2_WORKSPACE`: workspace root for custom skills
@@ -154,6 +181,35 @@ If your environment uses a SOCKS proxy and you see
 
 ```bash
 pip install python-socks
+```
+
+## Config Example
+
+```json
+{
+  "agent": {
+    "model": "gemini-3-flash-preview",
+    "workspace": "~/.sentientagent_v2/workspace",
+    "builtinSkillsDir": ""
+  },
+  "session": {
+    "backend": "memory",
+    "dbUrl": ""
+  },
+  "channels": {
+    "enabled": ["feishu"],
+    "feishu": {
+      "appId": "cli_xxx",
+      "appSecret": "xxx",
+      "encryptKey": "",
+      "verificationToken": ""
+    }
+  },
+  "keys": {
+    "braveApiKey": ""
+  },
+  "debug": false
+}
 ```
 
 ## Acknowledgements

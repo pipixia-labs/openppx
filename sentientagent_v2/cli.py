@@ -15,6 +15,13 @@ from pathlib import Path
 from google.genai import types
 
 from .channels.factory import build_channel_manager, parse_enabled_channels, validate_channel_setup
+from .config import (
+    bootstrap_env_from_config,
+    default_config,
+    get_config_path,
+    load_config,
+    save_config,
+)
 from .runtime.adk_utils import extract_text
 from .runtime.runner_factory import create_runner
 from .runtime.session_service import load_session_backend_config
@@ -41,6 +48,7 @@ def _cmd_doctor() -> int:
     if shutil.which("adk") is None:
         issues.append("Missing `adk` CLI. Install with: pip install google-adk")
 
+    config_path = get_config_path()
     registry = get_registry()
     skills_count = len(registry.list_skills())
     backend = load_session_backend_config()
@@ -48,6 +56,7 @@ def _cmd_doctor() -> int:
     channel_issues = validate_channel_setup(configured_channels)
     issues.extend(channel_issues)
 
+    print(f"Config file: {config_path}" + (" (found)" if config_path.exists() else " (not found)"))
     print(f"Workspace: {registry.workspace}")
     print(f"Detected skills: {skills_count}")
     print(f"Session backend: {backend.backend}" + (f" ({backend.db_url})" if backend.db_url else ""))
@@ -71,6 +80,34 @@ def _cmd_run(passthrough_args: list[str]) -> int:
     agent_dir = Path(__file__).parent.resolve()
     cmd = ["adk", "run", str(agent_dir), *passthrough_args]
     return subprocess.call(cmd)
+
+
+def _cmd_onboard(force: bool) -> int:
+    config_path = get_config_path()
+    existed = config_path.exists()
+
+    if force or not existed:
+        config = default_config()
+        saved_to = save_config(config, config_path=config_path)
+        state = "reset to defaults" if force and existed else "created"
+    else:
+        # Refresh while preserving existing values.
+        config = load_config(config_path=config_path)
+        saved_to = save_config(config, config_path=config_path)
+        state = "refreshed"
+
+    workspace = Path(str(config.get("agent", {}).get("workspace", ""))).expanduser()
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "skills").mkdir(parents=True, exist_ok=True)
+
+    print(f"Config {state}: {saved_to}")
+    print(f"Workspace ready: {workspace}")
+    print("")
+    print("Next steps:")
+    print(f"1. Edit config: {saved_to}")
+    print("2. Start gateway: sentientagent_v2 gateway")
+    print("3. Dry run: sentientagent_v2 doctor")
+    return 0
 
 
 def _cmd_gateway_local(sender_id: str, chat_id: str) -> int:
@@ -194,6 +231,15 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     subparsers = parser.add_subparsers(dest="command", required=False)
+    onboard_parser = subparsers.add_parser(
+        "onboard",
+        help="Initialize ~/.sentientagent_v2/config.json and workspace.",
+    )
+    onboard_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing config with defaults.",
+    )
     subparsers.add_parser("skills", help="List discovered skills as JSON.")
     subparsers.add_parser("doctor", help="Check local runtime prerequisites.")
 
@@ -223,9 +269,14 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+    if args.command != "onboard":
+        bootstrap_env_from_config()
+
     if args.message:
         sid = args.session_id or uuid.uuid4().hex[:12]
         code = _cmd_message(args.message, user_id=args.user_id, session_id=sid)
+    elif args.command == "onboard":
+        code = _cmd_onboard(force=args.force)
     elif args.command == "skills":
         code = _cmd_skills()
     elif args.command == "doctor":
