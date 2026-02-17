@@ -38,7 +38,6 @@ def default_config() -> dict[str, Any]:
             "builtinSkillsDir": "",
         },
         "providers": {
-            "active": "google",
             "google": {
                 "enabled": True,
                 "apiKey": "",
@@ -164,15 +163,25 @@ def _resolve_provider(cfg: dict[str, Any]) -> tuple[str, bool, str, str]:
     if not isinstance(providers, dict):
         providers = {}
 
-    active = str(providers.get("active", "google")).strip().lower() or "google"
+    ordered = ("google", "openai", "openrouter")
+    enabled_names: list[str] = []
+    for name in ordered:
+        raw_cfg = providers.get(name, {})
+        if not isinstance(raw_cfg, dict):
+            raw_cfg = {}
+        if is_enabled(raw_cfg.get("enabled"), default=(name == "google")):
+            enabled_names.append(name)
+
+    if not enabled_names:
+        return "google", False, _DEFAULT_GOOGLE_MODEL, ""
+
+    active = enabled_names[0]
     active_cfg = providers.get(active, {})
     if not isinstance(active_cfg, dict):
         active_cfg = {}
-
-    enabled = is_enabled(active_cfg.get("enabled"), default=(active == "google"))
     model = str(active_cfg.get("model", "")).strip() or _DEFAULT_GOOGLE_MODEL
     api_key = str(active_cfg.get("apiKey", "")).strip()
-    return active, enabled, model, api_key
+    return active, True, model, api_key
 
 
 def _resolve_web(cfg: dict[str, Any]) -> tuple[bool, bool, str, int, str]:

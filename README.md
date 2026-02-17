@@ -202,7 +202,6 @@ pip install python-socks
     "builtinSkillsDir": ""
   },
   "providers": {
-    "active": "google",
     "google": {
       "enabled": true,
       "apiKey": "your_google_api_key",
@@ -247,6 +246,8 @@ pip install python-socks
   "debug": false
 }
 ```
+
+Provider selection is determined by `enabled` flags only. Keep exactly one provider enabled.
 
 `session` always uses SQLite. If `dbUrl` is empty, the default path is
 `~/.sentientagent_v2/database/sessions.db`.

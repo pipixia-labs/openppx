@@ -138,6 +138,46 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(os.environ["BRAVE_API_KEY"], "brave-key")
 
+    def test_provider_selection_uses_enabled_flags_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            cfg = default_config()
+            cfg["providers"]["google"]["enabled"] = False
+            cfg["providers"]["google"]["apiKey"] = "google-key-ignored"
+            cfg["providers"]["openai"]["enabled"] = True
+            cfg["providers"]["openai"]["apiKey"] = "openai-key-selected"
+            cfg["providers"]["openai"]["model"] = "gpt-4.1-mini"
+            save_config(cfg, path)
+
+            os.environ.pop("SENTIENTAGENT_V2_PROVIDER", None)
+            os.environ.pop("SENTIENTAGENT_V2_PROVIDER_ENABLED", None)
+            os.environ.pop("GOOGLE_API_KEY", None)
+            os.environ.pop("SENTIENTAGENT_V2_MODEL", None)
+            bootstrap_env_from_config(path)
+
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_PROVIDER"], "openai")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_PROVIDER_ENABLED"], "1")
+        self.assertEqual(os.environ["GOOGLE_API_KEY"], "openai-key-selected")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_MODEL"], "gpt-4.1-mini")
+
+    def test_provider_active_key_is_ignored_when_enabled_points_elsewhere(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            cfg = default_config()
+            cfg["providers"]["google"]["enabled"] = True
+            cfg["providers"]["google"]["apiKey"] = "google-key-selected"
+            cfg["providers"]["openai"]["enabled"] = False
+            cfg["providers"]["openai"]["apiKey"] = "openai-key-ignored"
+            cfg["providers"]["active"] = "openai"
+            save_config(cfg, path)
+
+            os.environ.pop("SENTIENTAGENT_V2_PROVIDER", None)
+            os.environ.pop("GOOGLE_API_KEY", None)
+            bootstrap_env_from_config(path)
+
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_PROVIDER"], "google")
+        self.assertEqual(os.environ["GOOGLE_API_KEY"], "google-key-selected")
+
     def test_legacy_keys_are_not_used_anymore(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
