@@ -144,6 +144,7 @@ _DENY_PATTERNS = [
 
 _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 _WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 
 
 def _command_name(argv0: str) -> str:
@@ -431,6 +432,65 @@ def message(content: str, channel: str | None = None, chat_id: str | None = None
         f.write(line + "\n")
     result = f"Message recorded to {outbox}"
     _debug("tool.message.output", result)
+    return result
+
+
+def message_image(path: str, caption: str = "", channel: str | None = None, chat_id: str | None = None) -> str:
+    """Send an outbound image message via bus publisher or local outbox fallback."""
+    target_channel, target_chat_id = _resolve_route(channel, chat_id)
+    _debug(
+        "tool.message_image.input",
+        {"path": path, "caption_chars": len(caption), "channel": target_channel, "chat_id": target_chat_id},
+    )
+    try:
+        image_path = _resolve_path(path)
+    except PermissionError as exc:
+        return _ret("tool.message_image.output", f"Error: {exc}")
+    except Exception as exc:
+        return _ret("tool.message_image.output", f"Error resolving image path: {exc}")
+
+    if not image_path.exists():
+        return _ret("tool.message_image.output", f"Error: File not found: {path}")
+    if not image_path.is_file():
+        return _ret("tool.message_image.output", f"Error: Not a file: {path}")
+    if image_path.suffix.lower() not in _IMAGE_SUFFIXES:
+        allowed = ", ".join(sorted(_IMAGE_SUFFIXES))
+        return _ret(
+            "tool.message_image.output",
+            f"Error: Unsupported image extension '{image_path.suffix}'. Allowed: {allowed}",
+        )
+
+    outbound = OutboundMessage(
+        channel=target_channel,
+        chat_id=target_chat_id,
+        content=caption,
+        metadata={
+            "content_type": "image",
+            "image_path": str(image_path),
+        },
+    )
+    if _publish_outbound_if_configured(outbound):
+        result = f"Image queued to {target_channel}:{target_chat_id}"
+        _debug("tool.message_image.output", result)
+        return result
+
+    outbox = _workspace() / "messages" / "outbox.log"
+    outbox.parent.mkdir(parents=True, exist_ok=True)
+    ts = dt.datetime.now().isoformat(timespec="seconds")
+    line = json.dumps(
+        {
+            "timestamp": ts,
+            "channel": target_channel,
+            "chat_id": target_chat_id,
+            "content": caption,
+            "metadata": outbound.metadata,
+        },
+        ensure_ascii=False,
+    )
+    with outbox.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+    result = f"Image message recorded to {outbox}"
+    _debug("tool.message_image.output", result)
     return result
 
 

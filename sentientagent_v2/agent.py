@@ -9,7 +9,18 @@ from datetime import datetime
 from google.adk.agents import LlmAgent
 
 from .skills import get_registry, list_skills, read_skill
-from .tools import cron, edit_file, exec_command, list_dir, message, read_file, web_fetch, web_search, write_file
+from .tools import (
+    cron,
+    edit_file,
+    exec_command,
+    list_dir,
+    message,
+    message_image,
+    read_file,
+    web_fetch,
+    web_search,
+    write_file,
+)
 
 
 def _build_instruction() -> str:
@@ -34,7 +45,8 @@ Rules:
 - Skill loading is file-based (workspace + built-in SKILL.md).
 - Before using a skill deeply, call `list_skills` then `read_skill(name)` for the specific skill.
 - Do not invent skill content. Always read SKILL.md first.
-- Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `exec`, `web_search`, `web_fetch`, `message`, `cron`.
+- Use `message_image(path=..., caption=...)` when a local image file should be delivered to the current channel.
+- Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `exec`, `web_search`, `web_fetch`, `message`, `message_image`, `cron`.
 
 Available skills:
 {skills_summary}
@@ -56,6 +68,7 @@ root_agent = LlmAgent(
         web_search,
         web_fetch,
         message,
+        message_image,
         cron,
     ],
 )

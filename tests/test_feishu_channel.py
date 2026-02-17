@@ -7,6 +7,7 @@ import types as pytypes
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from sentientagent_v2.bus.events import OutboundMessage
 from sentientagent_v2.bus.queue import MessageBus
 from sentientagent_v2.channels.feishu import FeishuChannel
 
@@ -76,6 +77,45 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         # Should not raise even when SDK client has no public stop/close API.
         await channel.stop()
         self.assertFalse(channel._running)
+
+    async def test_send_sync_routes_image_metadata(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._client = object()
+        outbound = OutboundMessage(
+            channel="feishu",
+            chat_id="oc_group_1",
+            content="image caption",
+            metadata={"content_type": "image", "image_path": "/tmp/demo.png"},
+        )
+
+        with (
+            patch.object(channel, "_send_image_sync") as send_image,
+            patch.object(channel, "_send_text_sync") as send_text,
+        ):
+            channel._send_sync(outbound)
+
+        send_image.assert_called_once_with(outbound, "/tmp/demo.png")
+        send_text.assert_called_once_with(outbound, "image caption")
+
+    async def test_send_sync_falls_back_to_text_when_image_send_fails(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._client = object()
+        outbound = OutboundMessage(
+            channel="feishu",
+            chat_id="oc_group_1",
+            content="",
+            metadata={"content_type": "image", "image_path": "/tmp/demo.png"},
+        )
+
+        with (
+            patch.object(channel, "_send_image_sync", side_effect=RuntimeError("upload failed")),
+            patch.object(channel, "_send_text_sync") as send_text,
+        ):
+            channel._send_sync(outbound)
+
+        send_text.assert_called_once_with(outbound, "[image send failed] /tmp/demo.png")
 
 
 if __name__ == "__main__":

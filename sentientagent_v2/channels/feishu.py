@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
 from .base import BaseChannel
@@ -14,11 +15,22 @@ logger = logging.getLogger(__name__)
 
 try:
     import lark_oapi as lark
-    from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody, P2ImMessageReceiveV1
+    from lark_oapi.api.im.v1 import (
+        CreateImageRequest,
+        CreateImageRequestBody,
+        CreateMessageRequest,
+        CreateMessageRequestBody,
+        P2ImMessageReceiveV1,
+    )
 
     FEISHU_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment dependent
     lark = None
+    CreateImageRequest = None
+    CreateImageRequestBody = None
+    CreateMessageRequest = None
+    CreateMessageRequestBody = None
+    P2ImMessageReceiveV1 = None
     FEISHU_AVAILABLE = False
 
 if FEISHU_AVAILABLE:
@@ -147,11 +159,15 @@ class FeishuChannel(BaseChannel):
             except Exception:
                 logger.exception("Failed stopping Feishu websocket client")
 
-    def _send_sync(self, msg) -> None:
+    @staticmethod
+    def _resolve_receive_id_type(chat_id: str) -> str:
+        return "chat_id" if chat_id.startswith("oc_") else "open_id"
+
+    def _send_text_sync(self, msg, text: str | None = None) -> None:
         if not self._client:
             return
-        receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
-        payload = json.dumps({"text": msg.content}, ensure_ascii=False)
+        receive_id_type = self._resolve_receive_id_type(msg.chat_id)
+        payload = json.dumps({"text": text if text is not None else msg.content}, ensure_ascii=False)
         request = (
             CreateMessageRequest.builder()
             .receive_id_type(receive_id_type)
@@ -165,6 +181,81 @@ class FeishuChannel(BaseChannel):
             .build()
         )
         self._client.im.v1.message.create(request)
+
+    def _upload_image_sync(self, image_path: str) -> str:
+        if not self._client or CreateImageRequest is None or CreateImageRequestBody is None:
+            raise RuntimeError("Feishu image API is unavailable in current SDK/runtime")
+
+        target = Path(image_path).expanduser().resolve()
+        if not target.exists():
+            raise FileNotFoundError(f"Image file not found: {target}")
+        if not target.is_file():
+            raise ValueError(f"Image path is not a file: {target}")
+
+        with target.open("rb") as image_file:
+            request = (
+                CreateImageRequest.builder()
+                .request_body(
+                    CreateImageRequestBody.builder()
+                    .image_type("message")
+                    .image(image_file)
+                    .build()
+                )
+                .build()
+            )
+            response = self._client.im.v1.image.create(request)
+
+        success_fn = getattr(response, "success", None)
+        if callable(success_fn) and not success_fn():
+            code = getattr(response, "code", "")
+            message = getattr(response, "msg", "")
+            log_id_fn = getattr(response, "get_log_id", None)
+            log_id = log_id_fn() if callable(log_id_fn) else ""
+            raise RuntimeError(f"Feishu image upload failed: code={code}, msg={message}, log_id={log_id}")
+
+        image_key = getattr(getattr(response, "data", None), "image_key", "")
+        if not image_key:
+            raise RuntimeError("Feishu image upload returned empty image_key")
+        return str(image_key)
+
+    def _send_image_sync(self, msg, image_path: str) -> None:
+        if not self._client:
+            return
+        receive_id_type = self._resolve_receive_id_type(msg.chat_id)
+        image_key = self._upload_image_sync(image_path)
+        payload = json.dumps({"image_key": image_key}, ensure_ascii=False)
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(receive_id_type)
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(msg.chat_id)
+                .msg_type("image")
+                .content(payload)
+                .build()
+            )
+            .build()
+        )
+        self._client.im.v1.message.create(request)
+
+    def _send_sync(self, msg) -> None:
+        if not self._client:
+            return
+        metadata = msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {}
+        content_type = str(metadata.get("content_type", "")).strip().lower()
+        image_path = str(metadata.get("image_path", "")).strip() if content_type == "image" else ""
+        if image_path:
+            try:
+                self._send_image_sync(msg, image_path)
+                caption = (msg.content or "").strip()
+                if caption:
+                    self._send_text_sync(msg, caption)
+            except Exception:
+                logger.exception("Failed sending Feishu image message; falling back to text")
+                fallback = (msg.content or "").strip() or f"[image send failed] {image_path}"
+                self._send_text_sync(msg, fallback)
+            return
+        self._send_text_sync(msg)
 
     async def send(self, msg) -> None:
         loop = asyncio.get_running_loop()

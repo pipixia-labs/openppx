@@ -47,6 +47,7 @@ The agent exposes two skill tools:
 - `exec` (implemented by `exec_command`)
 - `web_search`, `web_fetch`
 - `message` (local outbox log)
+- `message_image` (upload/send image on channels that support image messages, e.g. Feishu)
 - `cron` (local persisted add/list/remove)
 
 ## Installation

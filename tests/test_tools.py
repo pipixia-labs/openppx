@@ -15,6 +15,7 @@ from sentientagent_v2.tools import (
     exec_command,
     list_dir,
     message,
+    message_image,
     read_file,
     web_fetch,
     web_search,
@@ -89,6 +90,23 @@ class ToolsTests(unittest.TestCase):
             record = json.loads(outbox.read_text(encoding="utf-8").splitlines()[-1])
             self.assertEqual(record["channel"], "telegram")
             self.assertEqual(record["chat_id"], "u2")
+
+    def test_message_image_tool_writes_image_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["SENTIENTAGENT_V2_WORKSPACE"] = tmp
+            image_path = Path(tmp) / "tmp" / "demo.png"
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+            response = message_image("tmp/demo.png", caption="done", channel="feishu", chat_id="oc_1")
+            self.assertIn("Image message recorded", response)
+            outbox = Path(tmp) / "messages" / "outbox.log"
+            record = json.loads(outbox.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(record["channel"], "feishu")
+            self.assertEqual(record["chat_id"], "oc_1")
+            self.assertEqual(record["content"], "done")
+            self.assertEqual(record["metadata"]["content_type"], "image")
+            self.assertEqual(Path(record["metadata"]["image_path"]).resolve(), image_path.resolve())
 
     def test_cron_tool_add_list_remove(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
