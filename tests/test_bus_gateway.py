@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import types as pytypes
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from sentientagent_v2.bus.events import InboundMessage, OutboundMessage
 from sentientagent_v2.bus.queue import MessageBus
@@ -49,6 +49,56 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(outbound.channel, "local")
         self.assertEqual(outbound.chat_id, "c1")
         self.assertEqual(outbound.content, "gateway answer")
+
+    def test_process_message_merges_stream_snapshots(self) -> None:
+        fake_event_1 = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="hello")])
+        )
+        fake_event_2 = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="hello world")])
+        )
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                yield fake_event_1
+                yield fake_event_2
+
+        fake_agent = pytypes.SimpleNamespace(name="sentientagent_v2")
+        with patch("sentientagent_v2.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="sentientagent_v2", bus=MessageBus())
+            inbound = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="hello")
+            outbound = asyncio.run(gateway.process_message(inbound))
+
+        self.assertEqual(outbound.content, "hello world")
+
+
+class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_consume_inbound_continues_after_processing_error(self) -> None:
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                if False:
+                    yield  # pragma: no cover
+
+        fake_agent = pytypes.SimpleNamespace(name="sentientagent_v2")
+        with patch("sentientagent_v2.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            bus = MessageBus()
+            gateway = Gateway(agent=fake_agent, app_name="sentientagent_v2", bus=bus)
+
+        success_outbound = OutboundMessage(channel="local", chat_id="c2", content="ok")
+        gateway.process_message = AsyncMock(side_effect=[RuntimeError("boom"), success_outbound])  # type: ignore[method-assign]
+
+        task = asyncio.create_task(gateway._consume_inbound())
+        try:
+            await bus.publish_inbound(InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="one"))
+            await bus.publish_inbound(InboundMessage(channel="local", sender_id="u1", chat_id="c2", content="two"))
+
+            outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+            self.assertEqual(outbound.chat_id, "c2")
+            self.assertEqual(outbound.content, "ok")
+        finally:
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from .env_utils import env_enabled
+
 
 @dataclass(frozen=True)
 class SkillInfo:
@@ -162,7 +164,7 @@ def _xml_escape(text: str) -> str:
 
 
 def _debug_enabled() -> bool:
-    return os.getenv("SENTIENTAGENT_V2_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    return env_enabled("SENTIENTAGENT_V2_DEBUG", default=False)
 
 
 def _debug(tag: str, payload: object) -> None:

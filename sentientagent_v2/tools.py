@@ -17,17 +17,11 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .bus.events import OutboundMessage
+from .env_utils import env_enabled
 from .runtime.tool_context import get_route
 
 
 _OUTBOUND_PUBLISHER: Callable[[OutboundMessage], Awaitable[None]] | None = None
-
-
-def _flag_enabled(env_name: str, default: bool = False) -> bool:
-    value = os.getenv(env_name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 def _workspace() -> Path:
@@ -191,9 +185,9 @@ def _validate_http_url(url: str) -> tuple[bool, str]:
 def web_search(query: str, count: int = 5) -> str:
     """Search the web via Brave Search API."""
     _debug("tool.web_search.input", {"query": query, "count": count})
-    if not _flag_enabled("SENTIENTAGENT_V2_WEB_ENABLED", default=True):
+    if not env_enabled("SENTIENTAGENT_V2_WEB_ENABLED", default=True):
         return _ret("tool.web_search.output", "Error: web tools are disabled in configuration")
-    if not _flag_enabled("SENTIENTAGENT_V2_WEB_SEARCH_ENABLED", default=True):
+    if not env_enabled("SENTIENTAGENT_V2_WEB_SEARCH_ENABLED", default=True):
         return _ret("tool.web_search.output", "Error: web_search is disabled in configuration")
 
     provider = os.getenv("SENTIENTAGENT_V2_WEB_SEARCH_PROVIDER", "brave").strip().lower() or "brave"
@@ -449,7 +443,7 @@ exec_command.__name__ = "exec"
 
 
 def _debug_enabled() -> bool:
-    return os.getenv("SENTIENTAGENT_V2_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    return env_enabled("SENTIENTAGENT_V2_DEBUG", default=False)
 
 
 def _debug(tag: str, payload: object) -> None:

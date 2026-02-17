@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from ..bus.queue import MessageBus
 from .base import BaseChannel
+
+logger = logging.getLogger(__name__)
 
 
 class ChannelManager:
@@ -46,5 +49,14 @@ class ChannelManager:
             # Cancellation cleanly exits this blocking wait.
             msg = await self.bus.consume_outbound()
             channel = self.channels.get(msg.channel)
-            if channel:
+            if not channel:
+                logger.warning("Dropping outbound message: unknown channel '%s'", msg.channel)
+                continue
+            try:
                 await channel.send(msg)
+            except Exception:
+                logger.exception(
+                    "Failed sending outbound message via channel=%s chat_id=%s",
+                    msg.channel,
+                    msg.chat_id,
+                )

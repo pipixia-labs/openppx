@@ -22,17 +22,11 @@ from .config import (
     load_config,
     save_config,
 )
-from .runtime.adk_utils import extract_text
+from .env_utils import env_enabled
+from .runtime.adk_utils import extract_text, merge_text_stream
 from .runtime.runner_factory import create_runner
 from .runtime.session_service import load_session_config
 from .skills import get_registry
-
-
-def _env_enabled(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 def _cmd_skills() -> int:
@@ -55,7 +49,7 @@ def _cmd_doctor() -> int:
     if shutil.which("adk") is None:
         issues.append("Missing `adk` CLI. Install with: pip install google-adk")
     provider_name = os.getenv("SENTIENTAGENT_V2_PROVIDER", "google").strip().lower() or "google"
-    provider_enabled = _env_enabled("SENTIENTAGENT_V2_PROVIDER_ENABLED", default=True)
+    provider_enabled = env_enabled("SENTIENTAGENT_V2_PROVIDER_ENABLED", default=True)
     if not provider_enabled:
         issues.append("No provider is enabled. Enable one in config (e.g. providers.google.enabled=true).")
     if provider_enabled and provider_name != "google":
@@ -75,8 +69,8 @@ def _cmd_doctor() -> int:
     configured_channels = parse_enabled_channels(None)
     channel_issues = validate_channel_setup(configured_channels)
     issues.extend(channel_issues)
-    web_enabled = _env_enabled("SENTIENTAGENT_V2_WEB_ENABLED", default=True)
-    web_search_enabled = _env_enabled("SENTIENTAGENT_V2_WEB_SEARCH_ENABLED", default=True)
+    web_enabled = env_enabled("SENTIENTAGENT_V2_WEB_ENABLED", default=True)
+    web_search_enabled = env_enabled("SENTIENTAGENT_V2_WEB_SEARCH_ENABLED", default=True)
     web_search_provider = os.getenv("SENTIENTAGENT_V2_WEB_SEARCH_PROVIDER", "brave").strip().lower() or "brave"
     web_search_key_configured = bool(os.getenv("BRAVE_API_KEY", "").strip())
 
@@ -232,9 +226,8 @@ def _cmd_message(message: str, user_id: str, session_id: str) -> int:
         final = ""
         async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=request):
             _debug_event(event)
-            text = extract_text(event.content)
-            if text:
-                final = text
+            text = extract_text(getattr(event, "content", None))
+            final = merge_text_stream(final, text)
         return final
 
     try:
@@ -333,7 +326,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _debug_enabled() -> bool:
-    return os.getenv("SENTIENTAGENT_V2_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    return env_enabled("SENTIENTAGENT_V2_DEBUG", default=False)
 
 
 def _debug(tag: str, payload: object) -> None:

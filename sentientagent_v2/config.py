@@ -9,6 +9,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .env_utils import is_enabled
+
 _DEFAULT_GOOGLE_MODEL = "gemini-3-flash-preview"
 
 
@@ -25,18 +27,6 @@ def get_config_path() -> Path:
 def get_default_workspace_path() -> Path:
     """Return default workspace path used by onboard."""
     return get_data_dir() / "workspace"
-
-
-def _is_enabled(value: Any, *, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
-    return default
 
 
 def default_config() -> dict[str, Any]:
@@ -151,9 +141,9 @@ def _resolve_enabled_channels(channels: dict[str, Any]) -> str:
     for name in ("local", "feishu"):
         raw = channels.get(name)
         if isinstance(raw, dict):
-            enabled = _is_enabled(raw.get("enabled"), default=(name == "local"))
+            enabled = is_enabled(raw.get("enabled"), default=(name == "local"))
         else:
-            enabled = _is_enabled(raw, default=False)
+            enabled = is_enabled(raw, default=False)
         if enabled:
             names.append(name)
 
@@ -172,7 +162,7 @@ def _resolve_provider(cfg: dict[str, Any]) -> tuple[str, bool, str, str]:
     if not isinstance(active_cfg, dict):
         active_cfg = {}
 
-    enabled = _is_enabled(active_cfg.get("enabled"), default=(active == "google"))
+    enabled = is_enabled(active_cfg.get("enabled"), default=(active == "google"))
     model = str(active_cfg.get("model", "")).strip() or _DEFAULT_GOOGLE_MODEL
     api_key = str(active_cfg.get("apiKey", "")).strip()
     return active, enabled, model, api_key
@@ -186,8 +176,8 @@ def _resolve_web(cfg: dict[str, Any]) -> tuple[bool, bool, str, int, str]:
     if not isinstance(search, dict):
         search = {}
 
-    web_enabled = _is_enabled(web.get("enabled"), default=True)
-    search_enabled = web_enabled and _is_enabled(search.get("enabled"), default=True)
+    web_enabled = is_enabled(web.get("enabled"), default=True)
+    search_enabled = web_enabled and is_enabled(search.get("enabled"), default=True)
     provider = str(search.get("provider", "brave")).strip().lower() or "brave"
 
     raw_max = search.get("maxResults", 5)
@@ -239,10 +229,28 @@ def config_to_env(config: dict[str, Any]) -> dict[str, str]:
     return env
 
 
-def apply_config_to_env(config: dict[str, Any], *, overwrite: bool = False) -> None:
+def _managed_env_keys() -> set[str]:
+    """Keys controlled by config-to-env mapping."""
+    return set(config_to_env(default_config()).keys())
+
+
+def apply_config_to_env(
+    config: dict[str, Any],
+    *,
+    overwrite: bool = False,
+    clear_missing: bool = False,
+) -> None:
     """Inject config fields into environment variables."""
-    for key, value in config_to_env(config).items():
+    mapped = config_to_env(config)
+    if clear_missing:
+        for key in _managed_env_keys():
+            if key not in mapped:
+                os.environ.pop(key, None)
+
+    for key, value in mapped.items():
         if not value and key != "SENTIENTAGENT_V2_DEBUG":
+            if clear_missing:
+                os.environ.pop(key, None)
             continue
         if overwrite or key not in os.environ:
             os.environ[key] = value
@@ -254,5 +262,6 @@ def bootstrap_env_from_config(config_path: Path | None = None) -> dict[str, Any]
     if not path.exists():
         return None
     cfg = load_config(path)
-    apply_config_to_env(cfg, overwrite=False)
+    # Config file is the source of truth for runtime bootstrap.
+    apply_config_to_env(cfg, overwrite=True, clear_missing=True)
     return deepcopy(cfg)

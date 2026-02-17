@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from typing import Any
 
 from .base import BaseChannel
+
+logger = logging.getLogger(__name__)
 
 try:
     import lark_oapi as lark
@@ -120,6 +123,7 @@ class FeishuChannel(BaseChannel):
                 try:
                     self._ws_client.start()
                 except Exception:
+                    logger.exception("Feishu websocket loop failed; retrying")
                     if self._running:
                         import time
 
@@ -134,9 +138,9 @@ class FeishuChannel(BaseChannel):
             try:
                 self._ws_client.stop()
             except Exception:
-                pass
+                logger.exception("Failed stopping Feishu websocket client")
 
-    async def send(self, msg) -> None:
+    def _send_sync(self, msg) -> None:
         if not self._client:
             return
         receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
@@ -154,6 +158,10 @@ class FeishuChannel(BaseChannel):
             .build()
         )
         self._client.im.v1.message.create(request)
+
+    async def send(self, msg) -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._send_sync, msg)
 
     def _add_reaction_sync(self, message_id: str, emoji_type: str) -> None:
         """Best-effort reaction API call executed in thread pool."""
@@ -178,7 +186,7 @@ class FeishuChannel(BaseChannel):
             )
             self._client.im.v1.message_reaction.create(request)
         except Exception:
-            return
+            logger.exception("Failed adding Feishu reaction")
 
     async def _add_reaction(self, message_id: str, emoji_type: str = "THUMBSUP") -> None:
         if not message_id:
@@ -240,4 +248,4 @@ class FeishuChannel(BaseChannel):
                 },
             )
         except Exception:
-            return
+            logger.exception("Failed handling Feishu inbound message")

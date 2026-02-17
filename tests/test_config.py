@@ -92,6 +92,24 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(os.environ["SENTIENTAGENT_V2_WEB_SEARCH_ENABLED"], "0")
         self.assertNotIn("BRAVE_API_KEY", os.environ)
 
+    def test_bootstrap_env_overwrites_and_clears_managed_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            cfg = default_config()
+            cfg["channels"]["feishu"]["appId"] = ""
+            cfg["channels"]["feishu"]["appSecret"] = ""
+            cfg["providers"]["google"]["apiKey"] = "from-config"
+            save_config(cfg, path)
+
+            os.environ["GOOGLE_API_KEY"] = "from-shell"
+            os.environ["FEISHU_APP_ID"] = "stale-feishu-id"
+            os.environ["FEISHU_APP_SECRET"] = "stale-feishu-secret"
+            bootstrap_env_from_config(path)
+
+        self.assertEqual(os.environ["GOOGLE_API_KEY"], "from-config")
+        self.assertNotIn("FEISHU_APP_ID", os.environ)
+        self.assertNotIn("FEISHU_APP_SECRET", os.environ)
+
     def test_web_search_api_key_is_loaded_from_web_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
