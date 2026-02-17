@@ -26,6 +26,7 @@ from .env_utils import env_enabled
 from .runtime.adk_utils import extract_text, merge_text_stream
 from .runtime.runner_factory import create_runner
 from .runtime.session_service import load_session_config
+from .security import load_security_policy
 from .skills import get_registry
 
 
@@ -73,6 +74,7 @@ def _cmd_doctor() -> int:
     web_search_enabled = env_enabled("SENTIENTAGENT_V2_WEB_SEARCH_ENABLED", default=True)
     web_search_provider = os.getenv("SENTIENTAGENT_V2_WEB_SEARCH_PROVIDER", "brave").strip().lower() or "brave"
     web_search_key_configured = bool(os.getenv("BRAVE_API_KEY", "").strip())
+    security_policy = load_security_policy()
 
     print(f"Config file: {config_path}" + (" (found)" if config_path.exists() else " (not found)"))
     print(f"Workspace: {registry.workspace}")
@@ -85,6 +87,14 @@ def _cmd_doctor() -> int:
         f"enabled={web_enabled and web_search_enabled}, "
         f"provider={web_search_provider}, "
         f"api_key={'configured' if web_search_key_configured else 'missing'}"
+    )
+    print(
+        "Security: "
+        f"strict={security_policy.strict_mode}, "
+        f"restrict_to_workspace={security_policy.restrict_to_workspace}, "
+        f"allow_exec={security_policy.allow_exec}, "
+        f"allow_network={security_policy.allow_network}, "
+        f"exec_allowlist={list(security_policy.exec_allowlist)}"
     )
 
     if issues:

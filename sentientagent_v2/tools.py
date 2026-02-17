@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import uuid
@@ -19,21 +20,24 @@ from urllib.request import Request, urlopen
 from .bus.events import OutboundMessage
 from .env_utils import env_enabled
 from .runtime.tool_context import get_route
+from .security import PathGuard, SecurityPolicy, load_security_policy
 
 
 _OUTBOUND_PUBLISHER: Callable[[OutboundMessage], Awaitable[None]] | None = None
 
 
-def _workspace() -> Path:
-    workspace_env = os.getenv("SENTIENTAGENT_V2_WORKSPACE")
-    return Path(workspace_env).expanduser().resolve() if workspace_env else Path.cwd().resolve()
+def _security_policy() -> SecurityPolicy:
+    return load_security_policy()
 
 
-def _resolve_path(path: str) -> Path:
-    p = Path(path).expanduser()
-    if not p.is_absolute():
-        p = _workspace() / p
-    return p.resolve()
+def _workspace(policy: SecurityPolicy | None = None) -> Path:
+    return (policy or _security_policy()).workspace_root
+
+
+def _resolve_path(path: str, *, base_dir: Path | None = None, policy: SecurityPolicy | None = None) -> Path:
+    active = policy or _security_policy()
+    guard = PathGuard(active)
+    return guard.resolve_path(path, base_dir=base_dir)
 
 
 def _json(obj: Any) -> str:
@@ -52,6 +56,8 @@ def read_file(path: str) -> str:
         result = target.read_text(encoding="utf-8")
         _debug("tool.read_file.output", {"path": str(target), "chars": len(result)})
         return result
+    except PermissionError as exc:
+        return _ret("tool.read_file.output", f"Error: {exc}")
     except Exception as exc:
         return _ret("tool.read_file.output", f"Error reading file: {exc}")
 
@@ -66,6 +72,8 @@ def write_file(path: str, content: str) -> str:
         result = f"Successfully wrote {len(content)} bytes to {target}"
         _debug("tool.write_file.output", result)
         return result
+    except PermissionError as exc:
+        return _ret("tool.write_file.output", f"Error: {exc}")
     except Exception as exc:
         return _ret("tool.write_file.output", f"Error writing file: {exc}")
 
@@ -95,6 +103,8 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
         result = f"Successfully edited {target}"
         _debug("tool.edit_file.output", result)
         return result
+    except PermissionError as exc:
+        return _ret("tool.edit_file.output", f"Error: {exc}")
     except Exception as exc:
         return _ret("tool.edit_file.output", f"Error editing file: {exc}")
 
@@ -115,6 +125,8 @@ def list_dir(path: str) -> str:
         result = "\n".join(entries) if entries else f"Directory {target} is empty"
         _debug("tool.list_dir.output", {"path": str(target), "entries": len(entries)})
         return result
+    except PermissionError as exc:
+        return _ret("tool.list_dir.output", f"Error: {exc}")
     except Exception as exc:
         return _ret("tool.list_dir.output", f"Error listing directory: {exc}")
 
@@ -130,21 +142,94 @@ _DENY_PATTERNS = [
     r":\(\)\s*\{.*\};\s*:",
 ]
 
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _command_name(argv0: str) -> str:
+    token = argv0.strip()
+    if not token:
+        return ""
+    return Path(token).name if ("/" in token or "\\" in token) else token
+
+
+def _looks_like_path_token(token: str) -> bool:
+    value = token.strip()
+    if not value:
+        return False
+    if _URL_SCHEME_RE.match(value):
+        return False
+    if value.startswith("--") and "=" in value:
+        _, right = value.split("=", 1)
+        return _looks_like_path_token(right)
+    if value.startswith("-"):
+        return False
+    if value.startswith(("/", "./", "../", "~")):
+        return True
+    if _WINDOWS_ABS_RE.match(value):
+        return True
+    if "/" in value or "\\" in value:
+        return True
+    return False
+
+
+def _validate_exec_paths(argv: list[str], cwd: Path, policy: SecurityPolicy) -> str | None:
+    if not policy.restrict_to_workspace:
+        return None
+    guard = PathGuard(policy)
+    for token in argv:
+        if not _looks_like_path_token(token):
+            continue
+        candidate = token
+        if token.startswith("--") and "=" in token:
+            _, candidate = token.split("=", 1)
+        try:
+            guard.resolve_path(candidate, base_dir=cwd)
+        except PermissionError:
+            return f"Error: Command blocked by security policy (path outside workspace: {candidate})"
+    return None
+
 
 def exec_command(command: str, working_dir: str | None = None, timeout: int = 60) -> str:
     """Execute a shell command and return stdout/stderr."""
     _debug("tool.exec.input", {"command": command, "working_dir": working_dir, "timeout": timeout})
     cmd = command.strip()
+    if not cmd:
+        return _ret("tool.exec.output", "Error: command is empty")
+
+    policy = _security_policy()
+    if not policy.allow_exec:
+        return _ret("tool.exec.output", "Error: exec is disabled by security policy")
+
+    try:
+        argv = shlex.split(cmd, posix=True)
+    except ValueError as exc:
+        return _ret("tool.exec.output", f"Error: invalid command syntax: {exc}")
+    if not argv:
+        return _ret("tool.exec.output", "Error: command is empty")
+
+    command_name = _command_name(argv[0])
+    if not policy.is_exec_allowed(command_name):
+        return _ret("tool.exec.output", f"Error: Command '{command_name}' is not in exec allowlist")
+
     lower = cmd.lower()
     for pattern in _DENY_PATTERNS:
         if re.search(pattern, lower):
             return _ret("tool.exec.output", "Error: Command blocked by safety guard (dangerous pattern detected)")
 
-    cwd = _resolve_path(working_dir) if working_dir else _workspace()
+    try:
+        cwd = _resolve_path(working_dir, base_dir=_workspace(policy), policy=policy) if working_dir else _workspace(policy)
+    except PermissionError as exc:
+        return _ret("tool.exec.output", f"Error: {exc}")
+
+    path_guard_error = _validate_exec_paths(argv, cwd, policy)
+    if path_guard_error:
+        return _ret("tool.exec.output", path_guard_error)
+
     try:
         completed = subprocess.run(
-            cmd,
-            shell=True,
+            argv,
+            shell=False,
             cwd=str(cwd),
             capture_output=True,
             text=True,
@@ -185,6 +270,8 @@ def _validate_http_url(url: str) -> tuple[bool, str]:
 def web_search(query: str, count: int = 5) -> str:
     """Search the web via Brave Search API."""
     _debug("tool.web_search.input", {"query": query, "count": count})
+    if not _security_policy().allow_network:
+        return _ret("tool.web_search.output", "Error: network access is disabled by security policy")
     if not env_enabled("SENTIENTAGENT_V2_WEB_ENABLED", default=True):
         return _ret("tool.web_search.output", "Error: web tools are disabled in configuration")
     if not env_enabled("SENTIENTAGENT_V2_WEB_SEARCH_ENABLED", default=True):
@@ -241,6 +328,8 @@ def web_search(query: str, count: int = 5) -> str:
 def web_fetch(url: str, max_chars: int = 50000) -> str:
     """Fetch URL and return extracted text."""
     _debug("tool.web_fetch.input", {"url": url, "max_chars": max_chars})
+    if not _security_policy().allow_network:
+        return _ret("tool.web_fetch.output", _json({"error": "network access is disabled by security policy", "url": url}))
     ok, err = _validate_http_url(url)
     if not ok:
         return _ret("tool.web_fetch.output", _json({"error": err, "url": url}))

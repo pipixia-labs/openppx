@@ -54,6 +54,23 @@ class ToolsTests(unittest.TestCase):
         result = exec_command("echo hello")
         self.assertIn("hello", result)
 
+    def test_exec_tool_respects_allowlist(self) -> None:
+        os.environ["SENTIENTAGENT_V2_EXEC_ALLOWLIST"] = "python"
+        out = exec_command("echo hello")
+        self.assertIn("allowlist", out.lower())
+
+    def test_exec_tool_is_disabled_in_strict_mode_by_default(self) -> None:
+        os.environ["SENTIENTAGENT_V2_STRICT_MODE"] = "1"
+        out = exec_command("echo hello")
+        self.assertIn("disabled by security policy", out.lower())
+
+    def test_file_tools_respect_workspace_restriction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["SENTIENTAGENT_V2_WORKSPACE"] = tmp
+            os.environ["SENTIENTAGENT_V2_RESTRICT_TO_WORKSPACE"] = "1"
+            out = write_file("../outside.txt", "nope")
+            self.assertIn("outside workspace", out.lower())
+
     def test_message_tool_writes_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["SENTIENTAGENT_V2_WORKSPACE"] = tmp
@@ -89,6 +106,13 @@ class ToolsTests(unittest.TestCase):
     def test_web_fetch_rejects_invalid_url(self) -> None:
         payload = json.loads(web_fetch("file:///tmp/test.txt"))
         self.assertIn("error", payload)
+
+    def test_web_tools_respect_security_network_flag(self) -> None:
+        os.environ["SENTIENTAGENT_V2_ALLOW_NETWORK"] = "0"
+        search_out = web_search("adk")
+        fetch_payload = json.loads(web_fetch("https://example.com"))
+        self.assertIn("disabled by security policy", search_out.lower())
+        self.assertIn("disabled by security policy", fetch_payload["error"].lower())
 
     def test_web_search_respects_disabled_flag(self) -> None:
         os.environ["SENTIENTAGENT_V2_WEB_ENABLED"] = "0"

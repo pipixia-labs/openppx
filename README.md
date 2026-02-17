@@ -165,11 +165,14 @@ Configure these fields in `config.json`:
 - `providers.google.enabled / apiKey / model`
 - `channels.local.enabled`, `channels.feishu.enabled`, and `channels.feishu.*`
 - `web.enabled`, `web.search.enabled / provider / apiKey / maxResults`
+- `security.strictMode / restrictToWorkspace / allowExec / allowNetwork / execAllowlist`
 
 Use env vars only for temporary overrides, for example:
 
 - `GOOGLE_API_KEY`
 - `SENTIENTAGENT_V2_CHANNELS`
+- `SENTIENTAGENT_V2_STRICT_MODE`
+- `SENTIENTAGENT_V2_EXEC_ALLOWLIST`
 - `SENTIENTAGENT_V2_DEBUG`
 
 ## Feishu Dependency
@@ -232,12 +235,27 @@ pip install python-socks
       "maxResults": 5
     }
   },
+  "security": {
+    "strictMode": false,
+    "restrictToWorkspace": false,
+    "allowExec": true,
+    "allowNetwork": true,
+    "execAllowlist": []
+  },
   "debug": false
 }
 ```
 
 `session` always uses SQLite. If `dbUrl` is empty, the default path is
 `~/.sentientagent_v2/database/sessions.db`.
+
+## Security Policy
+
+`sentientagent_v2` applies one unified security policy to file tools, shell execution, and web tools.
+
+- `restrictToWorkspace=true`: file read/write/edit/list and shell path arguments are constrained to the workspace root.
+- `strictMode=true`: forces workspace restriction, and disables exec/network by default unless explicitly re-enabled.
+- `execAllowlist`: optional command-name allowlist for `exec`.
 
 ## Acknowledgements
 

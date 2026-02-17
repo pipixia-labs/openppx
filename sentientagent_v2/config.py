@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .env_utils import is_enabled
+from .security import normalize_allowlist
 
 _DEFAULT_GOOGLE_MODEL = "gemini-3-flash-preview"
 
@@ -77,6 +78,13 @@ def default_config() -> dict[str, Any]:
                 "apiKey": "",
                 "maxResults": 5,
             },
+        },
+        "security": {
+            "strictMode": False,
+            "restrictToWorkspace": False,
+            "allowExec": True,
+            "allowNetwork": True,
+            "execAllowlist": [],
         },
         "debug": False,
     }
@@ -191,6 +199,23 @@ def _resolve_web(cfg: dict[str, Any]) -> tuple[bool, bool, str, int, str]:
     return web_enabled, search_enabled, provider, max_results, api_key
 
 
+def _resolve_security(cfg: dict[str, Any]) -> tuple[bool, bool, bool, bool, str]:
+    security = cfg.get("security")
+    if not isinstance(security, dict):
+        security = {}
+
+    strict_mode = is_enabled(security.get("strictMode"), default=False)
+    restrict = is_enabled(security.get("restrictToWorkspace"), default=False) or strict_mode
+    allow_exec = is_enabled(security.get("allowExec"), default=not strict_mode)
+    allow_network = is_enabled(security.get("allowNetwork"), default=not strict_mode)
+
+    raw_allowlist = security.get("execAllowlist", [])
+    if not isinstance(raw_allowlist, list):
+        raw_allowlist = []
+    allowlist = ",".join(normalize_allowlist(raw_allowlist))
+    return strict_mode, restrict, allow_exec, allow_network, allowlist
+
+
 def config_to_env(config: dict[str, Any]) -> dict[str, str]:
     """Map config payload into runtime environment variables."""
     cfg = normalize_config(config)
@@ -204,6 +229,7 @@ def config_to_env(config: dict[str, Any]) -> dict[str, str]:
     web_enabled, web_search_enabled, web_search_provider, web_search_max_results, web_search_api_key = _resolve_web(
         cfg
     )
+    strict_mode, restrict_workspace, allow_exec, allow_network, exec_allowlist = _resolve_security(cfg)
     debug = cfg.get("debug", False)
 
     env = {
@@ -224,6 +250,11 @@ def config_to_env(config: dict[str, Any]) -> dict[str, str]:
         "SENTIENTAGENT_V2_WEB_SEARCH_ENABLED": "1" if web_search_enabled else "0",
         "SENTIENTAGENT_V2_WEB_SEARCH_PROVIDER": web_search_provider,
         "SENTIENTAGENT_V2_WEB_SEARCH_MAX_RESULTS": str(web_search_max_results),
+        "SENTIENTAGENT_V2_STRICT_MODE": "1" if strict_mode else "0",
+        "SENTIENTAGENT_V2_RESTRICT_TO_WORKSPACE": "1" if restrict_workspace else "0",
+        "SENTIENTAGENT_V2_ALLOW_EXEC": "1" if allow_exec else "0",
+        "SENTIENTAGENT_V2_ALLOW_NETWORK": "1" if allow_network else "0",
+        "SENTIENTAGENT_V2_EXEC_ALLOWLIST": exec_allowlist,
         "SENTIENTAGENT_V2_DEBUG": "1" if bool(debug) else "0",
     }
     return env

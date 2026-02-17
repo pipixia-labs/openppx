@@ -32,6 +32,11 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(cfg["providers"]["google"]["enabled"])
         self.assertTrue(cfg["web"]["search"]["enabled"])
         self.assertEqual(cfg["session"]["dbUrl"], "")
+        self.assertFalse(cfg["security"]["strictMode"])
+        self.assertFalse(cfg["security"]["restrictToWorkspace"])
+        self.assertTrue(cfg["security"]["allowExec"])
+        self.assertTrue(cfg["security"]["allowNetwork"])
+        self.assertEqual(cfg["security"]["execAllowlist"], [])
 
     def test_save_then_load_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -74,6 +79,10 @@ class ConfigTests(unittest.TestCase):
             cfg["session"]["dbUrl"] = "sqlite+aiosqlite:////tmp/sessions.db"
             cfg["providers"]["google"]["apiKey"] = "google-key"
             cfg["web"]["search"]["enabled"] = False
+            cfg["security"]["strictMode"] = True
+            cfg["security"]["allowExec"] = False
+            cfg["security"]["allowNetwork"] = False
+            cfg["security"]["execAllowlist"] = ["python", "ls", "python"]
             save_config(cfg, path)
 
             os.environ.pop("SENTIENTAGENT_V2_CHANNELS", None)
@@ -82,6 +91,11 @@ class ConfigTests(unittest.TestCase):
             os.environ.pop("GOOGLE_API_KEY", None)
             os.environ.pop("BRAVE_API_KEY", None)
             os.environ.pop("SENTIENTAGENT_V2_WEB_SEARCH_ENABLED", None)
+            os.environ.pop("SENTIENTAGENT_V2_STRICT_MODE", None)
+            os.environ.pop("SENTIENTAGENT_V2_RESTRICT_TO_WORKSPACE", None)
+            os.environ.pop("SENTIENTAGENT_V2_ALLOW_EXEC", None)
+            os.environ.pop("SENTIENTAGENT_V2_ALLOW_NETWORK", None)
+            os.environ.pop("SENTIENTAGENT_V2_EXEC_ALLOWLIST", None)
             loaded = bootstrap_env_from_config(path)
 
         self.assertIsNotNone(loaded)
@@ -90,6 +104,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(os.environ["SENTIENTAGENT_V2_SESSION_DB_URL"], "sqlite+aiosqlite:////tmp/sessions.db")
         self.assertEqual(os.environ["GOOGLE_API_KEY"], "google-key")
         self.assertEqual(os.environ["SENTIENTAGENT_V2_WEB_SEARCH_ENABLED"], "0")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_STRICT_MODE"], "1")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_RESTRICT_TO_WORKSPACE"], "1")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_ALLOW_EXEC"], "0")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_ALLOW_NETWORK"], "0")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_EXEC_ALLOWLIST"], "python,ls")
         self.assertNotIn("BRAVE_API_KEY", os.environ)
 
     def test_bootstrap_env_overwrites_and_clears_managed_keys(self) -> None:
