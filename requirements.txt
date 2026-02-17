@@ -1,2 +1,6 @@
-# Runtime dependencies for sentientagent_v2
-google-adk
+# Core runtime dependencies (from pyproject [project.dependencies])
+google-adk>=1.25.0
+
+# Optional Feishu channel dependencies (from [project.optional-dependencies.feishu])
+lark-oapi>=1.4.15
+python-socks>=2.5.3

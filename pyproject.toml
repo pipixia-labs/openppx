@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A lightweight skills-first agent built with Google ADK"
 requires-python = ">=3.11"
 dependencies = [
-    "google-adk>=1.0.0",
+    "google-adk>=1.25.0",
 ]
 
 [project.optional-dependencies]
