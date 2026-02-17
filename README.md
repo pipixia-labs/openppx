@@ -149,6 +149,13 @@ Install Feishu SDK only when needed:
 pip install -e '.[feishu]'
 ```
 
+If your environment uses a SOCKS proxy and you see
+`python-socks is required to use a SOCKS proxy`, install:
+
+```bash
+pip install python-socks
+```
+
 ## Acknowledgements
 
 This project is inspired by and partially adapted from [nanobot](https://github.com/HKUDS/nanobot).
