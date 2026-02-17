@@ -18,6 +18,26 @@ except ImportError:  # pragma: no cover - environment dependent
     lark = None
     FEISHU_AVAILABLE = False
 
+if FEISHU_AVAILABLE:
+    try:
+        from lark_oapi.api.im.v1 import (
+            CreateMessageReactionRequest,
+            CreateMessageReactionRequestBody,
+            Emoji,
+        )
+
+        FEISHU_REACTION_AVAILABLE = True
+    except Exception:  # pragma: no cover - sdk version dependent
+        CreateMessageReactionRequest = None
+        CreateMessageReactionRequestBody = None
+        Emoji = None
+        FEISHU_REACTION_AVAILABLE = False
+else:
+    CreateMessageReactionRequest = None
+    CreateMessageReactionRequestBody = None
+    Emoji = None
+    FEISHU_REACTION_AVAILABLE = False
+
 
 def _extract_post_text(content_json: dict[str, Any]) -> str:
     """Extract text from Feishu rich-text `post` payload."""
@@ -135,6 +155,37 @@ class FeishuChannel(BaseChannel):
         )
         self._client.im.v1.message.create(request)
 
+    def _add_reaction_sync(self, message_id: str, emoji_type: str) -> None:
+        """Best-effort reaction API call executed in thread pool."""
+        if (
+            not self._client
+            or not FEISHU_REACTION_AVAILABLE
+            or CreateMessageReactionRequest is None
+            or CreateMessageReactionRequestBody is None
+            or Emoji is None
+        ):
+            return
+        try:
+            request = (
+                CreateMessageReactionRequest.builder()
+                .message_id(message_id)
+                .request_body(
+                    CreateMessageReactionRequestBody.builder()
+                    .reaction_type(Emoji.builder().emoji_type(emoji_type).build())
+                    .build()
+                )
+                .build()
+            )
+            self._client.im.v1.message_reaction.create(request)
+        except Exception:
+            return
+
+    async def _add_reaction(self, message_id: str, emoji_type: str = "THUMBSUP") -> None:
+        if not message_id:
+            return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
+
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._on_message(data), self._loop)
@@ -147,6 +198,11 @@ class FeishuChannel(BaseChannel):
             sender_type = getattr(sender, "sender_type", "")
             if sender_type == "bot":
                 return
+
+            message_id = getattr(message, "message_id", "")
+            if message_id:
+                # Mirror nanobot behavior: acknowledge user messages with a thumbs-up reaction.
+                await self._add_reaction(message_id, "THUMBSUP")
 
             sender_id = getattr(getattr(sender, "sender_id", None), "open_id", "") or "unknown"
             chat_id = getattr(message, "chat_id", "")
@@ -180,7 +236,7 @@ class FeishuChannel(BaseChannel):
                 metadata={
                     "msg_type": msg_type,
                     "chat_type": chat_type,
-                    "message_id": getattr(message, "message_id", ""),
+                    "message_id": message_id,
                 },
             )
         except Exception:
