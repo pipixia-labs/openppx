@@ -135,8 +135,15 @@ class FeishuChannel(BaseChannel):
     async def stop(self) -> None:
         self._running = False
         if self._ws_client:
+            stop_fn = getattr(self._ws_client, "stop", None)
+            close_fn = getattr(self._ws_client, "close", None)
             try:
-                self._ws_client.stop()
+                if callable(stop_fn):
+                    stop_fn()
+                elif callable(close_fn):
+                    close_fn()
+                else:
+                    logger.debug("Feishu ws client exposes no stop/close; skipping explicit shutdown")
             except Exception:
                 logger.exception("Failed stopping Feishu websocket client")
 

@@ -67,6 +67,16 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_inbound(), timeout=0.05)
 
+    async def test_stop_handles_ws_client_without_stop_method(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._running = True
+        channel._ws_client = object()
+
+        # Should not raise even when SDK client has no public stop/close API.
+        await channel.stop()
+        self.assertFalse(channel._running)
+
 
 if __name__ == "__main__":
     unittest.main()
