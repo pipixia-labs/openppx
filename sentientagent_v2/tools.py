@@ -14,12 +14,12 @@ from typing import Any, Awaitable, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
-from zoneinfo import ZoneInfo
 
 from .bus.events import OutboundMessage
 from .env_utils import env_enabled
 from .logging_utils import emit_debug
-from .runtime.cron_service import CronSchedule, CronService
+from .runtime.cron_schedule_parser import parse_schedule_input
+from .runtime.cron_service import CronService
 from .runtime.tool_context import get_route
 from .security import PathGuard, SecurityPolicy, load_security_policy
 
@@ -709,26 +709,18 @@ def cron(
     if action == "add":
         if not message:
             return _ret("tool.cron.output", "Error: message is required for add")
-        schedule: CronSchedule
-        delete_after_run = False
-        if every_seconds:
-            schedule = CronSchedule(kind="every", every_seconds=every_seconds)
-        elif cron_expr:
-            if tz:
-                try:
-                    ZoneInfo(tz)
-                except Exception:
-                    return _ret("tool.cron.output", f"Error: unknown timezone '{tz}'")
-            schedule = CronSchedule(kind="cron", cron_expr=cron_expr, tz=tz)
-        elif at:
-            try:
-                at_ms = int(dt.datetime.fromisoformat(at).timestamp() * 1000)
-            except ValueError:
-                return _ret("tool.cron.output", "Error: `at` must be a valid ISO datetime string")
-            schedule = CronSchedule(kind="at", at_ms=at_ms)
-            delete_after_run = True
-        else:
-            return _ret("tool.cron.output", "Error: either every_seconds, cron_expr, or at is required")
+        parsed, parse_error = parse_schedule_input(
+            every_seconds=every_seconds,
+            cron_expr=cron_expr,
+            at=at,
+            tz=tz,
+        )
+        if parse_error:
+            return _ret("tool.cron.output", f"Error: {parse_error}")
+        if parsed is None:  # pragma: no cover - defensive fallback
+            return _ret("tool.cron.output", "Error: failed to parse schedule")
+        schedule = parsed.schedule
+        delete_after_run = parsed.delete_after_run
 
         target_channel, target_chat_id = _resolve_route(channel, chat_id)
         deliver_enabled = True if deliver is None else bool(deliver)

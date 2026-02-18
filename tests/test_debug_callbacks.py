@@ -33,9 +33,10 @@ class DebugCallbacksTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {"SENTIENTAGENT_V2_DEBUG": "1"}, clear=False):
-            buf = io.StringIO()
-            with redirect_stderr(buf):
-                result = before_model_debug_callback(callback_context, llm_request)
+            with patch("sentientagent_v2.logging_utils._loguru_logger", None):
+                buf = io.StringIO()
+                with redirect_stderr(buf):
+                    result = before_model_debug_callback(callback_context, llm_request)
 
         self.assertIsNone(result)
         log = buf.getvalue()
@@ -60,9 +61,10 @@ class DebugCallbacksTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {"SENTIENTAGENT_V2_DEBUG": "1"}, clear=False):
-            buf = io.StringIO()
-            with redirect_stderr(buf):
-                result = after_model_debug_callback(callback_context, llm_response)
+            with patch("sentientagent_v2.logging_utils._loguru_logger", None):
+                buf = io.StringIO()
+                with redirect_stderr(buf):
+                    result = after_model_debug_callback(callback_context, llm_response)
 
         self.assertIsNone(result)
         log = buf.getvalue()

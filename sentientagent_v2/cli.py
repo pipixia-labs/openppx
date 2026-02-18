@@ -11,7 +11,6 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from google.genai import types
 
@@ -27,7 +26,8 @@ from .env_utils import env_enabled
 from .logging_utils import emit_debug
 from .provider import normalize_model_name, normalize_provider_name, provider_api_key_env, validate_provider_runtime
 from .runtime.adk_utils import extract_text, merge_text_stream
-from .runtime.cron_service import CronSchedule, CronService
+from .runtime.cron_service import CronService
+from .runtime.cron_schedule_parser import parse_schedule_input
 from .runtime.message_time import inject_request_time
 from .runtime.runner_factory import create_runner
 from .runtime.session_service import load_session_config
@@ -317,32 +317,20 @@ def _cmd_cron_add(
         print("Error: --to is required when --deliver is set")
         return 1
 
-    schedule: CronSchedule
-    delete_after_run = False
-    if every:
-        if every <= 0:
-            print("Error: --every must be > 0")
-            return 1
-        schedule = CronSchedule(kind="every", every_seconds=every)
-    elif cron_expr:
-        if tz:
-            try:
-                ZoneInfo(tz)
-            except Exception:
-                print(f"Error: unknown timezone '{tz}'")
-                return 1
-        schedule = CronSchedule(kind="cron", cron_expr=cron_expr, tz=tz)
-    elif at:
-        try:
-            at_ms = int(dt.datetime.fromisoformat(at).timestamp() * 1000)
-        except ValueError:
-            print("Error: --at must be a valid ISO datetime")
-            return 1
-        schedule = CronSchedule(kind="at", at_ms=at_ms)
-        delete_after_run = True
-    else:
-        print("Error: must provide one of --every, --cron, --at")
+    parsed, parse_error = parse_schedule_input(
+        every_seconds=every,
+        cron_expr=cron_expr,
+        at=at,
+        tz=tz,
+    )
+    if parse_error:
+        print(f"Error: {parse_error}")
         return 1
+    if parsed is None:  # pragma: no cover - defensive fallback
+        print("Error: failed to parse schedule")
+        return 1
+    schedule = parsed.schedule
+    delete_after_run = parsed.delete_after_run
 
     target_channel = channel or "local"
     target_to = to or "default"
@@ -378,21 +366,44 @@ def _cmd_cron_enable(job_id: str, *, disable: bool) -> int:
 
 
 def _cmd_cron_run(job_id: str, *, force: bool) -> int:
-    async def _run() -> bool:
-        return await _cron_service().run_job(job_id, force=force)
+    async def _run():
+        return await _cron_service().run_job_with_result(job_id, force=force)
 
-    if asyncio.run(_run()):
+    result = asyncio.run(_run())
+    if result.reason == "ok":
         print("Job executed")
         return 0
-    print(f"Failed to run job {job_id}")
+    if result.reason == "disabled":
+        print(f"Job {job_id} is disabled. Use --force to run it once.")
+        return 1
+    if result.reason == "not_found":
+        print(f"Job {job_id} not found")
+        return 1
+    if result.reason == "no_callback":
+        print(
+            "Job skipped: no executor callback is configured in this process. "
+            "Run via gateway runtime to execute the agent task."
+        )
+        return 1
+    if result.reason == "error":
+        if result.error:
+            print(f"Job execution failed: {result.error}")
+        else:
+            print(f"Job execution failed: {job_id}")
+        return 1
+    print(f"Job skipped: {result.reason}")
     return 1
 
 
 def _cmd_cron_status() -> int:
     info = _cron_service().status()
+    runtime_pid = info.get("runtime_pid")
+    runtime_pid_text = str(runtime_pid) if runtime_pid is not None else "-"
     print(
         "Cron status: "
-        f"running={info['running']}, "
+        f"local_running={info['running']}, "
+        f"runtime_active={info.get('runtime_active', False)}, "
+        f"runtime_pid={runtime_pid_text}, "
         f"jobs={info['jobs']}, "
         f"next_wake_at={_format_ts(info['next_wake_at_ms'])}"
     )

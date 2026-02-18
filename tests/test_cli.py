@@ -207,6 +207,53 @@ class CLITests(unittest.TestCase):
             store = Path(tmp) / ".sentientagent_v2" / "cron_jobs.json"
             self.assertTrue(store.exists())
 
+    def test_cmd_cron_run_reports_no_callback_in_plain_cli_process(self) -> None:
+        from sentientagent_v2 import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"SENTIENTAGENT_V2_WORKSPACE": tmp}, clear=False):
+                add_code = cli._cmd_cron_add(
+                    name="demo",
+                    message="hello cron",
+                    every=30,
+                    cron_expr=None,
+                    tz=None,
+                    at=None,
+                    deliver=False,
+                    to=None,
+                    channel=None,
+                )
+                self.assertEqual(add_code, 0)
+                job_id = cli._cron_service().list_jobs(include_disabled=True)[0].id
+                with patch("builtins.print") as mocked_print:
+                    code = cli._cmd_cron_run(job_id, force=False)
+
+        self.assertEqual(code, 1)
+        self.assertIn("no executor callback", mocked_print.call_args[0][0])
+
+    def test_cmd_cron_status_prints_runtime_fields(self) -> None:
+        from sentientagent_v2 import cli
+
+        fake_service = pytypes.SimpleNamespace(
+            status=lambda: {
+                "running": False,
+                "runtime_active": True,
+                "runtime_pid": 12345,
+                "runtime_last_seen_at_ms": 1739877000000,
+                "jobs": 2,
+                "next_wake_at_ms": None,
+            }
+        )
+        with patch.object(cli, "_cron_service", return_value=fake_service):
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_cron_status()
+
+        self.assertEqual(code, 0)
+        line = mocked_print.call_args[0][0]
+        self.assertIn("local_running=False", line)
+        self.assertIn("runtime_active=True", line)
+        self.assertIn("runtime_pid=12345", line)
+
 
 if __name__ == "__main__":
     unittest.main()

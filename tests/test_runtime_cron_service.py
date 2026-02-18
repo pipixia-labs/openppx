@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -74,6 +75,41 @@ class CronServiceTests(unittest.TestCase):
             self.assertEqual(jobs[0].schedule.every_seconds, 30)
             self.assertEqual(jobs[0].payload.message, "legacy message")
 
+    def test_keeps_last_good_store_when_disk_json_becomes_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "cron_jobs.json"
+            service = CronService(store_path)
+            service.add_job(
+                name="stable",
+                schedule=CronSchedule(kind="every", every_seconds=30),
+                message="hello",
+            )
+            initial = service.list_jobs(include_disabled=True)
+            self.assertEqual(len(initial), 1)
+
+            # Simulate external writer leaving a temporarily broken JSON file.
+            store_path.write_text("{broken-json", encoding="utf-8")
+            after_corruption = service.list_jobs(include_disabled=True)
+            self.assertEqual(len(after_corruption), 1)
+            self.assertEqual(after_corruption[0].name, "stable")
+
+    def test_add_job_recovers_from_broken_store_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "cron_jobs.json"
+            store_path.parent.mkdir(parents=True, exist_ok=True)
+            store_path.write_text("{broken-json", encoding="utf-8")
+
+            service = CronService(store_path)
+            job = service.add_job(
+                name="recover",
+                schedule=CronSchedule(kind="every", every_seconds=15),
+                message="repair",
+            )
+            self.assertEqual(job.name, "recover")
+            payload = json.loads(store_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("version"), 2)
+            self.assertEqual(len(payload.get("jobs", [])), 1)
+
 
 class CronServiceAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_tick_once_executes_due_jobs(self) -> None:
@@ -127,6 +163,24 @@ class CronServiceAsyncTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(with_force)
             self.assertEqual(seen, [job.id])
 
+    async def test_run_job_with_result_reports_no_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = CronService(Path(tmp) / "cron_jobs.json")
+            job = service.add_job(
+                name="manual",
+                schedule=CronSchedule(kind="every", every_seconds=10),
+                message="run",
+            )
+
+            result = await service.run_job_with_result(job.id, force=False)
+            self.assertFalse(result.executed)
+            self.assertEqual(result.reason, "no_callback")
+            self.assertEqual(result.error, "no on_job callback configured")
+
+            persisted = service.list_jobs(include_disabled=True)
+            self.assertEqual(persisted[0].state.last_status, "skipped")
+            self.assertEqual(persisted[0].state.last_error, "no on_job callback configured")
+
     async def test_at_job_with_delete_after_run_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             clock = _FakeClock(start_ms=2_000_000)
@@ -150,6 +204,40 @@ class CronServiceAsyncTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(bool(service.status()["running"]))
             service.stop()
             self.assertFalse(bool(service.status()["running"]))
+
+    async def test_status_reports_runtime_active_while_service_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = CronService(Path(tmp) / "cron_jobs.json")
+            await service.start()
+            try:
+                info = service.status()
+                self.assertTrue(bool(info["running"]))
+                self.assertTrue(bool(info["runtime_active"]))
+                self.assertEqual(info["runtime_pid"], os.getpid())
+                self.assertIsNotNone(info["runtime_last_seen_at_ms"])
+            finally:
+                service.stop()
+
+            stopped_info = service.status()
+            self.assertFalse(bool(stopped_info["running"]))
+            self.assertFalse(bool(stopped_info["runtime_active"]))
+
+    async def test_status_can_observe_runtime_heartbeat_from_another_instance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "cron_jobs.json"
+            running = CronService(store_path)
+            observer = CronService(store_path)
+
+            await running.start()
+            try:
+                observed = observer.status()
+                self.assertTrue(bool(observed["runtime_active"]))
+                self.assertEqual(observed["runtime_pid"], os.getpid())
+            finally:
+                running.stop()
+
+            observed_after_stop = observer.status()
+            self.assertFalse(bool(observed_after_stop["runtime_active"]))
 
     async def test_running_service_reloads_jobs_from_updated_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

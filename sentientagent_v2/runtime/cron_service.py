@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -179,6 +180,15 @@ class CronStore:
     jobs: list[CronJob] = field(default_factory=list)
 
 
+@dataclass(slots=True, frozen=True)
+class CronRunResult:
+    """Result of a manual cron job execution request."""
+
+    executed: bool
+    reason: Literal["ok", "error", "skipped", "disabled", "not_found", "no_callback"]
+    error: str | None = None
+
+
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     if schedule.kind == "every":
         if schedule.every_seconds is None or schedule.every_seconds <= 0:
@@ -207,11 +217,13 @@ class CronService:
         sync_poll_interval_s: float = 2.0,
     ) -> None:
         self.store_path = store_path
+        self.runtime_status_path = self.store_path.parent / "cron_runtime.json"
         self.on_job = on_job
         self._now_ms_fn = now_ms_fn or _now_ms
         self._sync_poll_interval_s = max(0.2, float(sync_poll_interval_s))
         self._store: CronStore | None = None
         self._store_mtime_ns: int | None = None
+        self._last_store_error: str | None = None
         self._running = False
         self._timer_task: asyncio.Task[None] | None = None
 
@@ -225,6 +237,50 @@ class CronService:
             return None
         except Exception:
             return None
+
+    def _runtime_heartbeat_ttl_ms(self) -> int:
+        """Return heartbeat staleness threshold for runtime-active checks."""
+        return int(max(5000, self._sync_poll_interval_s * 4000))
+
+    def _write_runtime_heartbeat(self) -> None:
+        payload = {
+            "pid": os.getpid(),
+            "updated_at_ms": self._now(),
+            "store_path": str(self.store_path),
+        }
+        self.runtime_status_path.parent.mkdir(parents=True, exist_ok=True)
+        self.runtime_status_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _read_runtime_heartbeat(self) -> dict[str, int | str] | None:
+        try:
+            raw = json.loads(self.runtime_status_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+        pid = raw.get("pid")
+        updated_at_ms = raw.get("updated_at_ms")
+        store_path = raw.get("store_path")
+        if not isinstance(pid, int):
+            return None
+        if not isinstance(updated_at_ms, int):
+            return None
+        if not isinstance(store_path, str):
+            return None
+        return {"pid": pid, "updated_at_ms": updated_at_ms, "store_path": store_path}
+
+    def _clear_runtime_heartbeat_if_owned(self) -> None:
+        heartbeat = self._read_runtime_heartbeat()
+        if heartbeat is None:
+            return
+        if int(heartbeat.get("pid", -1)) != os.getpid():
+            return
+        if str(heartbeat.get("store_path", "")) != str(self.store_path):
+            return
+        try:
+            self.runtime_status_path.unlink(missing_ok=True)
+        except Exception:
+            return
 
     def _parse_legacy_schedule(self, schedule_text: str, now_ms: int) -> tuple[CronSchedule, bool]:
         value = (schedule_text or "").strip()
@@ -341,14 +397,21 @@ class CronService:
         if current_mtime is None:
             self._store = CronStore()
             self._store_mtime_ns = None
+            self._last_store_error = None
             return self._store
 
         now_ms = self._now()
         try:
             raw = json.loads(self.store_path.read_text(encoding="utf-8"))
-        except Exception:
+            self._last_store_error = None
+        except Exception as exc:
+            self._last_store_error = f"failed to parse cron store: {exc}"
+            # Keep the last known-good in-memory state when on-disk data is temporarily broken.
+            if self._store is not None:
+                return self._store
             self._store = CronStore()
-            self._store_mtime_ns = current_mtime
+            # Force next read to retry parse instead of pinning a broken mtime snapshot.
+            self._store_mtime_ns = None
             return self._store
 
         jobs: list[CronJob] = []
@@ -378,8 +441,20 @@ class CronService:
             "version": self._store.version,
             "jobs": [self._serialize_job(job) for job in self._store.jobs],
         }
-        self.store_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._store_mtime_ns = self._read_store_mtime_ns()
+        temp_name = f".{self.store_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        temp_path = self.store_path.with_name(temp_name)
+        try:
+            temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp_path, self.store_path)
+            self._store_mtime_ns = self._read_store_mtime_ns()
+            self._last_store_error = None
+        except Exception as exc:
+            self._last_store_error = f"failed to save cron store: {exc}"
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
 
     def _recompute_next_runs(self) -> None:
         store = self._load_store()
@@ -424,6 +499,7 @@ class CronService:
         self._load_store()
         self._recompute_next_runs()
         self._save_store()
+        self._write_runtime_heartbeat()
         self._arm_timer()
 
     def stop(self) -> None:
@@ -431,20 +507,26 @@ class CronService:
         if self._timer_task is not None:
             self._timer_task.cancel()
             self._timer_task = None
+        self._clear_runtime_heartbeat_if_owned()
 
-    async def _execute_job(self, job: CronJob) -> None:
+    async def _execute_job(self, job: CronJob) -> CronRunResult:
         started_at = self._now()
+        result = CronRunResult(executed=False, reason="skipped")
         try:
             if self.on_job is None:
+                no_callback_error = "no on_job callback configured"
                 job.state.last_status = "skipped"
-                job.state.last_error = "no on_job callback configured"
+                job.state.last_error = no_callback_error
+                result = CronRunResult(executed=False, reason="no_callback", error=no_callback_error)
             else:
                 await self.on_job(job)
                 job.state.last_status = "ok"
                 job.state.last_error = None
+                result = CronRunResult(executed=True, reason="ok")
         except Exception as exc:  # pragma: no cover - callback failure path
             job.state.last_status = "error"
             job.state.last_error = str(exc)
+            result = CronRunResult(executed=False, reason="error", error=str(exc))
 
         job.state.last_run_at_ms = started_at
         job.updated_at_ms = self._now()
@@ -456,10 +538,11 @@ class CronService:
             else:
                 job.enabled = False
                 job.state.next_run_at_ms = None
-            return
+            return result
 
         if job.enabled:
             job.state.next_run_at_ms = _compute_next_run(job.schedule, self._now())
+        return result
 
     async def tick_once(self) -> int:
         store = self._load_store()
@@ -472,6 +555,8 @@ class CronService:
         for job in due_jobs:
             await self._execute_job(job)
         self._save_store()
+        if self._running:
+            self._write_runtime_heartbeat()
         self._arm_timer()
         return len(due_jobs)
 
@@ -536,22 +621,43 @@ class CronService:
         return None
 
     async def run_job(self, job_id: str, *, force: bool = False) -> bool:
+        """Run a job once and return True only when execution actually happened."""
+        result = await self.run_job_with_result(job_id, force=force)
+        return result.executed
+
+    async def run_job_with_result(self, job_id: str, *, force: bool = False) -> CronRunResult:
+        """Run a job once and return detailed execution result."""
         store = self._load_store()
         for job in list(store.jobs):
             if job.id != job_id:
                 continue
             if not job.enabled and not force:
-                return False
-            await self._execute_job(job)
+                return CronRunResult(executed=False, reason="disabled")
+            result = await self._execute_job(job)
             self._save_store()
             self._arm_timer()
-            return True
-        return False
+            return result
+        return CronRunResult(executed=False, reason="not_found")
 
     def status(self) -> dict[str, int | bool | None]:
         store = self._load_store()
+        heartbeat = self._read_runtime_heartbeat()
+        runtime_active = False
+        runtime_pid: int | None = None
+        runtime_last_seen_at_ms: int | None = None
+        if heartbeat is not None:
+            store_path = str(heartbeat.get("store_path", ""))
+            updated_at_ms = int(heartbeat.get("updated_at_ms", 0))
+            runtime_last_seen_at_ms = updated_at_ms
+            if store_path == str(self.store_path) and (self._now() - updated_at_ms) <= self._runtime_heartbeat_ttl_ms():
+                runtime_active = True
+                runtime_pid = int(heartbeat.get("pid", 0))
         return {
             "running": self._running,
+            "runtime_active": runtime_active,
+            "runtime_pid": runtime_pid,
+            "runtime_last_seen_at_ms": runtime_last_seen_at_ms,
+            "store_error": self._last_store_error,
             "jobs": len(store.jobs),
             "next_wake_at_ms": self._next_wake_ms(),
         }
