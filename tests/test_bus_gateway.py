@@ -8,10 +8,14 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
+from google.adk.agents import LlmAgent
+from google.adk.tools import LongRunningFunctionTool
+
 from sentientagent_v2.bus.events import InboundMessage, OutboundMessage
 from sentientagent_v2.bus.queue import MessageBus
 from sentientagent_v2.gateway import Gateway
 from sentientagent_v2.runtime.cron_service import CronJob, CronJobState, CronPayload, CronSchedule
+from sentientagent_v2.tools import SubagentSpawnRequest
 
 
 class MessageBusTests(unittest.IsolatedAsyncioTestCase):
@@ -170,6 +174,130 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outbound.channel, "local")
         self.assertEqual(outbound.chat_id, "c1")
         self.assertEqual(outbound.content, "cron answer")
+
+
+class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_background_subagent_resumes_parent_and_notifies(self) -> None:
+        subagent_event = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="background done")])
+        )
+        resume_event = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="parent resumed notify")])
+        )
+        captured_calls: list[dict[str, object]] = []
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                captured_calls.append(kwargs)
+                if kwargs.get("invocation_id"):
+                    yield resume_event
+                else:
+                    yield subagent_event
+
+        fake_agent = pytypes.SimpleNamespace(name="sentientagent_v2")
+        with patch("sentientagent_v2.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            bus = MessageBus()
+            gateway = Gateway(agent=fake_agent, app_name="sentientagent_v2", bus=bus)
+
+        request = SubagentSpawnRequest(
+            task_id="subagent-abc",
+            prompt="do work",
+            user_id="u1",
+            session_id="parent-session",
+            invocation_id="inv-1",
+            function_call_id="fc-1",
+            channel="local",
+            chat_id="c1",
+            notify_on_complete=True,
+        )
+        task = gateway._dispatch_subagent_request(request)
+        self.assertIsNotNone(task)
+        await asyncio.wait_for(task, timeout=0.5)
+
+        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        self.assertEqual(outbound.channel, "local")
+        self.assertEqual(outbound.chat_id, "c1")
+        self.assertEqual(outbound.content, "parent resumed notify")
+        self.assertEqual(len(captured_calls), 2)
+        self.assertEqual(captured_calls[0]["session_id"], "subagent:subagent-abc")
+        self.assertEqual(captured_calls[1]["session_id"], "parent-session")
+        self.assertEqual(captured_calls[1]["invocation_id"], "inv-1")
+
+    async def test_background_subagent_can_skip_notification(self) -> None:
+        subagent_event = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="background done")])
+        )
+        resume_event = pytypes.SimpleNamespace(content=pytypes.SimpleNamespace(parts=[]))
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                if kwargs.get("invocation_id"):
+                    yield resume_event
+                else:
+                    yield subagent_event
+
+        fake_agent = pytypes.SimpleNamespace(name="sentientagent_v2")
+        with patch("sentientagent_v2.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            bus = MessageBus()
+            gateway = Gateway(agent=fake_agent, app_name="sentientagent_v2", bus=bus)
+
+        request = SubagentSpawnRequest(
+            task_id="subagent-def",
+            prompt="do work",
+            user_id="u1",
+            session_id="parent-session",
+            invocation_id="inv-1",
+            function_call_id="fc-2",
+            channel="local",
+            chat_id="c1",
+            notify_on_complete=False,
+        )
+        task = gateway._dispatch_subagent_request(request)
+        self.assertIsNotNone(task)
+        await asyncio.wait_for(task, timeout=0.5)
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
+
+    def test_subagent_runner_uses_restricted_toolset_without_spawn(self) -> None:
+        def read_stub(path: str) -> str:
+            return path
+
+        def spawn_subagent(prompt: str) -> dict[str, str]:
+            return {"status": "pending", "task_id": "x"}
+
+        root = LlmAgent(
+            name="sentientagent_v2",
+            model="gemini-2.0-flash",
+            instruction="test",
+            tools=[
+                read_stub,
+                LongRunningFunctionTool(func=spawn_subagent),
+            ],
+        )
+
+        created_agents: list[object] = []
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                if False:
+                    yield  # pragma: no cover
+
+        def _create_runner_side_effect(*, agent, app_name, session_service=None):
+            created_agents.append(agent)
+            return _FakeRunner(), object()
+
+        with patch("sentientagent_v2.gateway.create_runner", side_effect=_create_runner_side_effect):
+            Gateway(agent=root, app_name=root.name, bus=MessageBus())
+
+        self.assertEqual(len(created_agents), 2)
+        parent_agent = created_agents[0]
+        subagent = created_agents[1]
+
+        parent_tool_names = [getattr(tool, "name", getattr(tool, "__name__", str(tool))) for tool in parent_agent.tools]
+        subagent_tool_names = [getattr(tool, "name", getattr(tool, "__name__", str(tool))) for tool in subagent.tools]
+        self.assertIn("spawn_subagent", parent_tool_names)
+        self.assertNotIn("spawn_subagent", subagent_tool_names)
 
 
 if __name__ == "__main__":

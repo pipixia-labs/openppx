@@ -9,6 +9,8 @@ import os
 import re
 import shlex
 import subprocess
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.error import HTTPError, URLError
@@ -25,6 +27,28 @@ from .security import PathGuard, SecurityPolicy, load_security_policy
 
 
 _OUTBOUND_PUBLISHER: Callable[[OutboundMessage], Awaitable[None]] | None = None
+_SUBAGENT_DISPATCHER: Callable[["SubagentSpawnRequest"], None] | None = None
+
+
+@dataclass(slots=True)
+class SubagentSpawnRequest:
+    """A background sub-agent task request created by ``spawn_subagent``.
+
+    The request carries enough metadata for the runtime to:
+    1. execute the sub-task in a separate session;
+    2. resume the paused parent invocation with the same function_call_id; and
+    3. deliver completion notifications to the original channel target.
+    """
+
+    task_id: str
+    prompt: str
+    user_id: str
+    session_id: str
+    invocation_id: str
+    function_call_id: str
+    channel: str
+    chat_id: str
+    notify_on_complete: bool = True
 
 
 def _security_policy() -> SecurityPolicy:
@@ -463,6 +487,15 @@ def configure_outbound_publisher(
     _OUTBOUND_PUBLISHER = publisher
 
 
+def configure_subagent_dispatcher(
+    dispatcher: Callable[[SubagentSpawnRequest], None] | None,
+) -> None:
+    """Configure optional background sub-agent dispatcher used by gateway."""
+
+    global _SUBAGENT_DISPATCHER
+    _SUBAGENT_DISPATCHER = dispatcher
+
+
 def _resolve_route(channel: str | None, chat_id: str | None) -> tuple[str, str]:
     route_channel, route_chat_id = get_route()
     final_channel = channel or route_channel or "local"
@@ -521,6 +554,100 @@ def message(content: str, channel: str | None = None, chat_id: str | None = None
         f.write(line + "\n")
     result = f"Message recorded to {outbox}"
     _debug("tool.message.output", result)
+    return result
+
+
+def spawn_subagent(
+    prompt: str,
+    notify_on_complete: bool = True,
+    channel: str | None = None,
+    chat_id: str | None = None,
+    tool_context: Any | None = None,
+) -> dict[str, Any]:
+    """Spawn a background sub-agent task and return a pending ticket.
+
+    This function is intended to be wrapped by ADK ``LongRunningFunctionTool``.
+    It only creates and dispatches a task request. The real work runs in the
+    runtime layer (gateway worker), outside this tool call.
+
+    Args:
+        prompt: Sub-task instruction that the background sub-agent should run.
+        notify_on_complete: Whether runtime should push completion notification.
+        channel: Optional channel override for completion notification.
+        chat_id: Optional chat target override for completion notification.
+        tool_context: ADK-injected tool context, used to capture invocation IDs.
+
+    Returns:
+        A structured payload with ``status`` and ``task_id``.
+    """
+
+    _debug(
+        "tool.spawn_subagent.input",
+        {
+            "prompt_chars": len(prompt or ""),
+            "notify_on_complete": bool(notify_on_complete),
+            "channel": channel,
+            "chat_id": chat_id,
+        },
+    )
+
+    if not (prompt or "").strip():
+        result = {"status": "error", "error": "prompt is required"}
+        _debug("tool.spawn_subagent.output", result)
+        return result
+
+    if _SUBAGENT_DISPATCHER is None:
+        result = {"status": "error", "error": "subagent dispatcher is not configured"}
+        _debug("tool.spawn_subagent.output", result)
+        return result
+
+    if tool_context is None:
+        result = {"status": "error", "error": "tool_context is required"}
+        _debug("tool.spawn_subagent.output", result)
+        return result
+
+    user_id = getattr(tool_context, "user_id", None)
+    session = getattr(tool_context, "session", None)
+    session_id = getattr(session, "id", None) if session is not None else None
+    invocation_id = getattr(tool_context, "invocation_id", None)
+    function_call_id = getattr(tool_context, "function_call_id", None)
+    if not (user_id and session_id and invocation_id and function_call_id):
+        result = {
+            "status": "error",
+            "error": (
+                "missing invocation metadata in tool context "
+                "(need user_id/session_id/invocation_id/function_call_id)"
+            ),
+        }
+        _debug("tool.spawn_subagent.output", result)
+        return result
+
+    target_channel, target_chat_id = _resolve_route(channel, chat_id)
+    task_id = f"subagent-{uuid.uuid4().hex[:12]}"
+    request = SubagentSpawnRequest(
+        task_id=task_id,
+        prompt=prompt,
+        user_id=user_id,
+        session_id=session_id,
+        invocation_id=invocation_id,
+        function_call_id=function_call_id,
+        channel=target_channel,
+        chat_id=target_chat_id,
+        notify_on_complete=bool(notify_on_complete),
+    )
+    try:
+        _SUBAGENT_DISPATCHER(request)
+    except Exception as exc:
+        result = {"status": "error", "error": f"failed to dispatch subagent task: {exc}"}
+        _debug("tool.spawn_subagent.output", result)
+        return result
+
+    result = {
+        "status": "pending",
+        "task_id": task_id,
+        "message": "Sub-agent task accepted and running in background.",
+    }
+    _debug("tool.spawn_subagent.output", result)
     return result
 
 

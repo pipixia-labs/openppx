@@ -6,6 +6,7 @@ import os
 import platform
 
 from google.adk.agents import LlmAgent
+from google.adk.tools import LongRunningFunctionTool
 
 from .provider import build_adk_model_from_env
 from .runtime.debug_callbacks import after_model_debug_callback, before_model_debug_callback
@@ -18,6 +19,7 @@ from .tools import (
     message,
     message_image,
     read_file,
+    spawn_subagent,
     web_fetch,
     web_search,
     write_file,
@@ -45,7 +47,8 @@ Rules:
 - Before using a skill deeply, call `list_skills` then `read_skill(name)` for the specific skill.
 - Do not invent skill content. Always read SKILL.md first.
 - Use `message_image(path=..., caption=...)` when a local image file should be delivered to the current channel.
-- Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `exec`, `web_search`, `web_fetch`, `message`, `message_image`, `cron`.
+- Use `spawn_subagent(prompt=...)` for background sub-tasks that should finish later.
+- Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `exec`, `web_search`, `web_fetch`, `message`, `message_image`, `cron`, `spawn_subagent`.
 - Current time is injected into each request payload (e.g. `Current request time`).
   For relative scheduling, always use that injected request time as `now`.
 
@@ -73,5 +76,6 @@ root_agent = LlmAgent(
         message,
         message_image,
         cron,
+        LongRunningFunctionTool(func=spawn_subagent),
     ],
 )

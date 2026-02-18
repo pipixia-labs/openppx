@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import types as pytypes
 import unittest
 from pathlib import Path
 
 from sentientagent_v2.runtime.tool_context import route_context
 from sentientagent_v2.tools import (
+    SubagentSpawnRequest,
+    configure_subagent_dispatcher,
     cron,
     edit_file,
     exec_command,
@@ -17,6 +20,7 @@ from sentientagent_v2.tools import (
     message,
     message_image,
     read_file,
+    spawn_subagent,
     web_fetch,
     web_search,
     write_file,
@@ -28,6 +32,7 @@ class ToolsTests(unittest.TestCase):
         self._env_backup = dict(os.environ)
 
     def tearDown(self) -> None:
+        configure_subagent_dispatcher(None)
         os.environ.clear()
         os.environ.update(self._env_backup)
 
@@ -154,6 +159,42 @@ class ToolsTests(unittest.TestCase):
         os.environ["SENTIENTAGENT_V2_WEB_SEARCH_PROVIDER"] = "dummy"
         out = web_search("adk")
         self.assertIn("not supported", out.lower())
+
+    def test_spawn_subagent_requires_dispatcher(self) -> None:
+        ctx = pytypes.SimpleNamespace(
+            user_id="u1",
+            invocation_id="inv-1",
+            function_call_id="fc-1",
+            session=pytypes.SimpleNamespace(id="s1"),
+        )
+        out = spawn_subagent(prompt="run task", tool_context=ctx)
+        self.assertEqual(out.get("status"), "error")
+        self.assertIn("dispatcher", str(out.get("error", "")).lower())
+
+    def test_spawn_subagent_dispatches_request(self) -> None:
+        captured: list[SubagentSpawnRequest] = []
+        configure_subagent_dispatcher(captured.append)
+        ctx = pytypes.SimpleNamespace(
+            user_id="u1",
+            invocation_id="inv-1",
+            function_call_id="fc-1",
+            session=pytypes.SimpleNamespace(id="s1"),
+        )
+
+        with route_context("feishu", "oc_123"):
+            out = spawn_subagent(prompt="summarize logs", tool_context=ctx)
+
+        self.assertEqual(out.get("status"), "pending")
+        self.assertTrue(str(out.get("task_id", "")).startswith("subagent-"))
+        self.assertEqual(len(captured), 1)
+        req = captured[0]
+        self.assertEqual(req.user_id, "u1")
+        self.assertEqual(req.session_id, "s1")
+        self.assertEqual(req.invocation_id, "inv-1")
+        self.assertEqual(req.function_call_id, "fc-1")
+        self.assertEqual(req.channel, "feishu")
+        self.assertEqual(req.chat_id, "oc_123")
+        self.assertTrue(req.notify_on_complete)
 
 
 if __name__ == "__main__":
