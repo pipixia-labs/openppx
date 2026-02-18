@@ -32,7 +32,7 @@ class DebugCallbacksTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {"SENTIENTAGENT_V2_DEBUG": "1"}, clear=False):
-            with patch("sentientagent_v2.runtime.debug_callbacks.emit_debug") as mocked_emit:
+            with patch("sentientagent_v2.runtime.debug_callbacks._write_debug") as mocked_emit:
                 result = before_model_debug_callback(callback_context, llm_request)
 
         self.assertIsNone(result)
@@ -60,7 +60,7 @@ class DebugCallbacksTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {"SENTIENTAGENT_V2_DEBUG": "1"}, clear=False):
-            with patch("sentientagent_v2.runtime.debug_callbacks.emit_debug") as mocked_emit:
+            with patch("sentientagent_v2.runtime.debug_callbacks._write_debug") as mocked_emit:
                 result = after_model_debug_callback(callback_context, llm_response)
 
         self.assertIsNone(result)
@@ -88,7 +88,7 @@ class DebugCallbacksTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {"SENTIENTAGENT_V2_DEBUG": "0"}, clear=False):
-            with patch("sentientagent_v2.runtime.debug_callbacks.emit_debug") as mocked_emit:
+            with patch("sentientagent_v2.runtime.debug_callbacks._write_debug") as mocked_emit:
                 before_model_debug_callback(callback_context, llm_request)
                 after_model_debug_callback(callback_context, llm_response)
 

@@ -24,7 +24,6 @@ from .config import (
     save_config,
 )
 from .env_utils import env_enabled
-from .logging_utils import emit_debug
 from .provider import normalize_model_name, normalize_provider_name, provider_api_key_env, validate_provider_runtime
 from .runtime.adk_utils import extract_text, merge_text_stream
 from .runtime.cron_service import CronService
@@ -559,10 +558,18 @@ def _debug_enabled() -> bool:
     return env_enabled("SENTIENTAGENT_V2_DEBUG", default=False)
 
 
-def _debug(tag: str, payload: object) -> None:
+def _debug_body(payload: object) -> str:
+    """Serialize debug payloads for stable structured log lines."""
+    try:
+        return payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        return str(payload)
+
+
+def _debug(tag: str, payload: object, *, depth: int = 1) -> None:
     if not _debug_enabled():
         return
-    emit_debug(tag, payload)
+    logger.opt(depth=depth).debug("[DEBUG] {}: {}", tag, _debug_body(payload))
 
 
 def _debug_event(event: object) -> None:

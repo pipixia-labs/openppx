@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -11,9 +12,9 @@ from typing import Any
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
+from loguru import logger
 
 from ..env_utils import env_enabled
-from ..logging_utils import emit_debug
 
 _DEFAULT_MAX_TEXT_CHARS = 2000
 _MAX_TOOL_CALL_ID_CHARS = 40
@@ -188,8 +189,16 @@ def _response_text(llm_response: LlmResponse) -> str:
     return _extract_content_text(getattr(llm_response, "content", None))
 
 
+def _debug_body(payload: Any) -> str:
+    """Serialize debug payloads for stable structured log lines."""
+    try:
+        return payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        return str(payload)
+
+
 def _write_debug(tag: str, payload: dict[str, Any]) -> None:
-    emit_debug(tag, payload)
+    logger.opt(depth=1).debug("[DEBUG] {}: {}", tag, _debug_body(payload))
 
 
 def before_model_debug_callback(callback_context: CallbackContext, llm_request: LlmRequest) -> LlmResponse | None:

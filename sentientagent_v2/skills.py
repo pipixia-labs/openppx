@@ -7,9 +7,11 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from loguru import logger
 
 from .env_utils import env_enabled
-from .logging_utils import emit_debug
 
 
 @dataclass(frozen=True)
@@ -46,15 +48,18 @@ class SkillRegistry:
 
         items = sorted(discovered.values(), key=lambda item: item.name.lower())
         if _debug_enabled():
-            _debug(
+            logger.debug(
+                "[DEBUG] {}: {}",
                 "skills.list",
-                {
-                    "workspace": str(self.workspace),
-                    "workspace_skills_dir": str(self.workspace_skills_dir),
-                    "builtin_skills_dir": str(self.builtin_skills_dir),
-                    "count": len(items),
-                    "names": [i.name for i in items],
-                },
+                _debug_body(
+                    {
+                        "workspace": str(self.workspace),
+                        "workspace_skills_dir": str(self.workspace_skills_dir),
+                        "builtin_skills_dir": str(self.builtin_skills_dir),
+                        "count": len(items),
+                        "names": [i.name for i in items],
+                    }
+                ),
             )
         return items
 
@@ -67,10 +72,14 @@ class SkillRegistry:
         for info in self.list_skills():
             if info.name == key:
                 if _debug_enabled():
-                    _debug("skills.read", {"name": key, "source": info.source, "path": str(info.path)})
+                    logger.debug(
+                        "[DEBUG] {}: {}",
+                        "skills.read",
+                        _debug_body({"name": key, "source": info.source, "path": str(info.path)}),
+                    )
                 return info.path.read_text(encoding="utf-8")
         if _debug_enabled():
-            _debug("skills.read.miss", {"name": key})
+            logger.debug("[DEBUG] {}: {}", "skills.read.miss", _debug_body({"name": key}))
         raise ValueError(f"Skill '{key}' not found.")
 
     def build_summary(self) -> str:
@@ -147,7 +156,7 @@ def list_skills() -> str:
     ]
     output = json.dumps(payload, ensure_ascii=False, indent=2)
     if _debug_enabled():
-        _debug("tool.list_skills.output", output)
+        logger.debug("[DEBUG] {}: {}", "tool.list_skills.output", _debug_body(output))
     return output
 
 
@@ -155,7 +164,11 @@ def read_skill(name: str) -> str:
     """ADK tool: read a specific SKILL.md by name."""
     content = get_registry().read_skill(name)
     if _debug_enabled():
-        _debug("tool.read_skill.output", {"name": name, "chars": len(content)})
+        logger.debug(
+            "[DEBUG] {}: {}",
+            "tool.read_skill.output",
+            _debug_body({"name": name, "chars": len(content)}),
+        )
     return content
 
 
@@ -167,5 +180,9 @@ def _debug_enabled() -> bool:
     return env_enabled("SENTIENTAGENT_V2_DEBUG", default=False)
 
 
-def _debug(tag: str, payload: object) -> None:
-    emit_debug(tag, payload)
+def _debug_body(payload: Any) -> str:
+    """Serialize debug payloads consistently while keeping callsite in this file."""
+    try:
+        return payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        return str(payload)

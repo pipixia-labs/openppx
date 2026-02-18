@@ -17,9 +17,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from loguru import logger
+
 from .bus.events import OutboundMessage
 from .env_utils import env_enabled
-from .logging_utils import emit_debug
 from .runtime.cron_schedule_parser import parse_schedule_input
 from .runtime.cron_service import CronService
 from .runtime.tool_context import get_route
@@ -875,12 +876,21 @@ def _debug_enabled() -> bool:
     return env_enabled("SENTIENTAGENT_V2_DEBUG", default=False)
 
 
-def _debug(tag: str, payload: object) -> None:
+def _debug_body(payload: object) -> str:
+    """Serialize debug payloads for stable structured log lines."""
+    try:
+        return payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        return str(payload)
+
+
+def _debug(tag: str, payload: object, *, depth: int = 1) -> None:
     if not _debug_enabled():
         return
-    emit_debug(tag, payload)
+    logger.opt(depth=depth).debug("[DEBUG] {}: {}", tag, _debug_body(payload))
 
 
 def _ret(tag: str, value: str) -> str:
-    _debug(tag, value)
+    # `_ret` is a thin helper; use depth=2 so the callsite points to the tool function line.
+    _debug(tag, value, depth=2)
     return value
