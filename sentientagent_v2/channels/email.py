@@ -18,6 +18,7 @@ from typing import Any
 
 from ..bus.events import OutboundMessage
 from .base import BaseChannel
+from .polling_utils import cancel_background_task, run_poll_loop
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +91,8 @@ class EmailChannel(BaseChannel):
 
     async def stop(self) -> None:
         self._running = False
-        if self._poll_task:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
+        await cancel_background_task(self._poll_task)
+        self._poll_task = None
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send outbound reply email via SMTP."""
@@ -131,14 +127,14 @@ class EmailChannel(BaseChannel):
         await asyncio.to_thread(self._smtp_send, email_msg)
 
     async def _poll_loop(self) -> None:
-        while self._running:
-            try:
-                await self._poll_once()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Email polling iteration failed")
-            await asyncio.sleep(self.poll_interval_seconds)
+        await run_poll_loop(
+            is_running=lambda: self._running,
+            poll_once=self._poll_once,
+            interval_seconds=self.poll_interval_seconds,
+            logger=logger,
+            error_message="Email polling iteration failed",
+            retry_delay_seconds=0,
+        )
 
     async def _poll_once(self) -> None:
         """Poll one batch of unread IMAP messages and publish to the bus."""

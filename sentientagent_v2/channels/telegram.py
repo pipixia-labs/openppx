@@ -10,6 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .base import BaseChannel
+from .polling_utils import cancel_background_task, run_poll_loop
 from ..bus.events import OutboundMessage
 
 logger = logging.getLogger(__name__)
@@ -83,13 +84,8 @@ class TelegramChannel(BaseChannel):
 
     async def stop(self) -> None:
         self._running = False
-        if self._poll_task:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
+        await cancel_background_task(self._poll_task)
+        self._poll_task = None
 
     async def send(self, msg: OutboundMessage) -> None:
         text = msg.content if msg.content else "[empty message]"
@@ -102,31 +98,35 @@ class TelegramChannel(BaseChannel):
         )
 
     async def _poll_loop(self) -> None:
-        while self._running:
-            try:
-                response = await self._api_call(
-                    "getUpdates",
-                    {
-                        "offset": self._offset,
-                        "timeout": self.poll_timeout_seconds,
-                        "allowed_updates": ["message"],
-                    },
-                )
-                updates = response.get("result")
-                if not isinstance(updates, list):
-                    continue
-                for update in updates:
-                    if not isinstance(update, dict):
-                        continue
-                    update_id = update.get("update_id")
-                    if isinstance(update_id, int):
-                        self._offset = max(self._offset, update_id + 1)
-                    await self._process_update(update)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception("Telegram polling iteration failed")
-                await asyncio.sleep(2)
+        await run_poll_loop(
+            is_running=lambda: self._running,
+            poll_once=self._poll_once,
+            interval_seconds=0,
+            logger=logger,
+            error_message="Telegram polling iteration failed",
+            retry_delay_seconds=2,
+        )
+
+    async def _poll_once(self) -> None:
+        """Run one Telegram getUpdates cycle and publish normalized updates."""
+        response = await self._api_call(
+            "getUpdates",
+            {
+                "offset": self._offset,
+                "timeout": self.poll_timeout_seconds,
+                "allowed_updates": ["message"],
+            },
+        )
+        updates = response.get("result")
+        if not isinstance(updates, list):
+            return
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            update_id = update.get("update_id")
+            if isinstance(update_id, int):
+                self._offset = max(self._offset, update_id + 1)
+            await self._process_update(update)
 
     async def _process_update(self, update: dict[str, Any]) -> None:
         """Normalize one Telegram update into bus inbound format."""

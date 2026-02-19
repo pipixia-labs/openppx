@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 from ..bus.events import OutboundMessage
 from .base import BaseChannel
+from .polling_utils import cancel_background_task, dedupe_stripped, run_poll_loop
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +52,8 @@ class MochatChannel(BaseChannel):
         self.base_url = base_url.strip().rstrip("/")
         self.claw_token = claw_token.strip()
         self.agent_user_id = agent_user_id.strip()
-        self.sessions = tuple(
-            dict.fromkeys(str(item).strip() for item in (sessions or []) if str(item).strip())
-        )
-        self.panels = tuple(
-            dict.fromkeys(str(item).strip() for item in (panels or []) if str(item).strip())
-        )
+        self.sessions = tuple(dedupe_stripped(sessions))
+        self.panels = tuple(dedupe_stripped(panels))
         self.poll_interval_seconds = max(int(poll_interval_seconds), 1)
         self.watch_timeout_ms = max(int(watch_timeout_ms), 1000)
         self.watch_limit = max(int(watch_limit), 1)
@@ -83,13 +80,8 @@ class MochatChannel(BaseChannel):
 
     async def stop(self) -> None:
         self._running = False
-        if self._poll_task:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
+        await cancel_background_task(self._poll_task)
+        self._poll_task = None
 
     async def send(self, msg: OutboundMessage) -> None:
         content = (msg.content or "").strip()
@@ -184,14 +176,14 @@ class MochatChannel(BaseChannel):
         return None
 
     async def _poll_loop(self) -> None:
-        while self._running:
-            try:
-                await self._poll_once()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Mochat polling iteration failed")
-            await asyncio.sleep(self.poll_interval_seconds)
+        await run_poll_loop(
+            is_running=lambda: self._running,
+            poll_once=self._poll_once,
+            interval_seconds=self.poll_interval_seconds,
+            logger=logger,
+            error_message="Mochat polling iteration failed",
+            retry_delay_seconds=0,
+        )
 
     async def _poll_once(self) -> None:
         for session_id in self.sessions:
