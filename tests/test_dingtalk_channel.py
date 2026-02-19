@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from sentientagent_v2.bus.events import OutboundMessage
@@ -62,6 +63,85 @@ class DingTalkChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inbound.sender_id, "u02")
         self.assertEqual(inbound.content, "allowed")
         self.assertEqual(inbound.metadata.get("sender_name"), "bob")
+
+    async def test_start_initializes_stream_client_when_available(self) -> None:
+        bus = MessageBus()
+
+        class _FakeCredential:
+            def __init__(self, client_id: str, client_secret: str) -> None:
+                self.client_id = client_id
+                self.client_secret = client_secret
+
+        class _FakeStreamClient:
+            def __init__(self, credential: _FakeCredential) -> None:
+                self.credential = credential
+                self.registered: list[tuple[str, object]] = []
+
+            def register_callback_handler(self, topic: str, handler: object) -> None:
+                self.registered.append((topic, handler))
+
+            async def start(self) -> None:
+                await asyncio.sleep(3600)
+
+        class _FakeChatbotMessage:
+            TOPIC = "chatbot.topic"
+
+            @staticmethod
+            def from_dict(_payload: dict) -> object:
+                return SimpleNamespace(
+                    text=SimpleNamespace(content=""),
+                    sender_staff_id="",
+                    sender_id="",
+                    sender_nick="",
+                )
+
+        channel = DingTalkChannel(
+            bus=bus,
+            client_id="dt-app-id",
+            client_secret="dt-app-secret",
+        )
+        with (
+            patch("sentientagent_v2.channels.dingtalk.DINGTALK_AVAILABLE", True),
+            patch("sentientagent_v2.channels.dingtalk.Credential", _FakeCredential),
+            patch("sentientagent_v2.channels.dingtalk.DingTalkStreamClient", _FakeStreamClient),
+            patch("sentientagent_v2.channels.dingtalk.ChatbotMessage", _FakeChatbotMessage),
+        ):
+            await channel.start()
+            self.assertIsNotNone(channel._stream_client)
+            self.assertIsNotNone(channel._stream_task)
+            self.assertEqual(len(channel._stream_client.registered), 1)
+            self.assertEqual(channel._stream_client.registered[0][0], "chatbot.topic")
+            await channel.stop()
+
+    async def test_process_stream_payload_uses_chatbot_message_parser(self) -> None:
+        bus = MessageBus()
+        channel = DingTalkChannel(
+            bus=bus,
+            client_id="dt-app-id",
+            client_secret="dt-app-secret",
+            allow_from=["u02"],
+        )
+
+        class _FakeChatbotMessage:
+            TOPIC = "chatbot.topic"
+
+            @staticmethod
+            def from_dict(_payload: dict) -> object:
+                return SimpleNamespace(
+                    text=SimpleNamespace(content="hello from stream"),
+                    sender_staff_id="u02",
+                    sender_id="u02",
+                    sender_nick="stream-bob",
+                )
+
+        with patch("sentientagent_v2.channels.dingtalk.ChatbotMessage", _FakeChatbotMessage):
+            await channel._process_stream_payload({"text": {"content": "ignored"}})
+
+        inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=0.2)
+        self.assertEqual(inbound.channel, "dingtalk")
+        self.assertEqual(inbound.chat_id, "u02")
+        self.assertEqual(inbound.content, "hello from stream")
+        self.assertEqual(inbound.metadata.get("sender_name"), "stream-bob")
 
 
 if __name__ == "__main__":

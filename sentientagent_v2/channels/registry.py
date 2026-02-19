@@ -113,6 +113,8 @@ def _build_dingtalk(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
         client_id=os.getenv("DINGTALK_CLIENT_ID", "").strip(),
         client_secret=os.getenv("DINGTALK_CLIENT_SECRET", "").strip(),
         allow_from=allow_from,
+        enable_stream_mode=_env_flag("DINGTALK_STREAM_MODE_ENABLED", default=True),
+        stream_reconnect_delay_seconds=_env_int("DINGTALK_STREAM_RECONNECT_DELAY_SECONDS", 5),
     )
 
 
@@ -149,11 +151,20 @@ def _validate_whatsapp() -> list[str]:
 
 def _build_mochat(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
     allow_from = [item.strip() for item in os.getenv("MOCHAT_ALLOW_FROM", "").split(",") if item.strip()]
+    sessions = [item.strip() for item in os.getenv("MOCHAT_SESSIONS", "").split(",") if item.strip()]
+    panels = [item.strip() for item in os.getenv("MOCHAT_PANELS", "").split(",") if item.strip()]
     return MochatChannel(
         bus=bus,
         base_url=os.getenv("MOCHAT_BASE_URL", "").strip(),
         claw_token=os.getenv("MOCHAT_CLAW_TOKEN", "").strip(),
+        agent_user_id=os.getenv("MOCHAT_AGENT_USER_ID", "").strip(),
+        sessions=sessions,
+        panels=panels,
         allow_from=allow_from,
+        poll_interval_seconds=_env_int("MOCHAT_POLL_INTERVAL_SECONDS", 5),
+        watch_timeout_ms=_env_int("MOCHAT_WATCH_TIMEOUT_MS", 15000),
+        watch_limit=_env_int("MOCHAT_WATCH_LIMIT", 20),
+        panel_limit=_env_int("MOCHAT_PANEL_LIMIT", 50),
     )
 
 

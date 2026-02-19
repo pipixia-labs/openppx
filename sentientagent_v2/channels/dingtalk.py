@@ -1,4 +1,4 @@
-"""DingTalk channel adapter (token-based API + minimal inbound normalization)."""
+"""DingTalk channel adapter (stream-mode inbound + token API outbound)."""
 
 from __future__ import annotations
 
@@ -17,15 +17,43 @@ from .base import BaseChannel
 logger = logging.getLogger(__name__)
 
 try:
-    import dingtalk_stream  # noqa: F401
+    from dingtalk_stream import AckMessage, CallbackHandler, Credential, DingTalkStreamClient
+    from dingtalk_stream.chatbot import ChatbotMessage
 
     DINGTALK_AVAILABLE = True
 except Exception:  # pragma: no cover - optional runtime dependency
+    AckMessage = None
+    CallbackHandler = object
+    Credential = None
+    DingTalkStreamClient = None
+    ChatbotMessage = None
     DINGTALK_AVAILABLE = False
 
 
+def _ack_ok() -> tuple[str, str]:
+    status = getattr(AckMessage, "STATUS_OK", "OK")
+    return str(status), "OK"
+
+
+class DingTalkCallbackHandler(CallbackHandler):
+    """Forward Stream SDK callbacks to channel normalization logic."""
+
+    def __init__(self, channel: "DingTalkChannel") -> None:
+        super().__init__()
+        self._channel = channel
+
+    async def process(self, message: Any) -> tuple[str, str]:
+        try:
+            payload = getattr(message, "data", None)
+            if isinstance(payload, dict):
+                await self._channel._process_stream_payload(payload)
+        except Exception:
+            logger.exception("DingTalk stream callback processing failed")
+        return _ack_ok()
+
+
 class DingTalkChannel(BaseChannel):
-    """Minimal DingTalk adapter focused on private outbound messaging."""
+    """DingTalk adapter with stream-mode inbound and private outbound messaging."""
 
     name = "dingtalk"
 
@@ -38,15 +66,21 @@ class DingTalkChannel(BaseChannel):
         allow_from: list[str] | None = None,
         api_base: str = "https://api.dingtalk.com",
         token_margin_seconds: int = 60,
+        enable_stream_mode: bool = True,
+        stream_reconnect_delay_seconds: int = 5,
     ) -> None:
         super().__init__(bus, allow_from=allow_from)
         self.client_id = client_id.strip()
         self.client_secret = client_secret.strip()
         self.api_base = api_base.rstrip("/")
         self.token_margin_seconds = max(int(token_margin_seconds), 0)
+        self.enable_stream_mode = bool(enable_stream_mode)
+        self.stream_reconnect_delay_seconds = max(int(stream_reconnect_delay_seconds), 1)
 
         self._access_token: str | None = None
         self._token_expiry_epoch: float = 0.0
+        self._stream_client: Any = None
+        self._stream_task: asyncio.Task[None] | None = None
 
     def _endpoint(self, path: str) -> str:
         return f"{self.api_base}{path}"
@@ -108,11 +142,40 @@ class DingTalkChannel(BaseChannel):
         if not self.client_id or not self.client_secret:
             raise RuntimeError("Missing DINGTALK_CLIENT_ID or DINGTALK_CLIENT_SECRET for dingtalk channel.")
         self._running = True
-        if not DINGTALK_AVAILABLE:
-            logger.info("dingtalk-stream not installed: inbound stream mode disabled in minimal adapter.")
+        if not self.enable_stream_mode:
+            logger.info("DingTalk stream mode disabled by configuration.")
+            return
+        if not DINGTALK_AVAILABLE or Credential is None or DingTalkStreamClient is None:
+            logger.info("dingtalk-stream not installed: inbound stream mode disabled.")
+            return
+
+        credential = Credential(self.client_id, self.client_secret)
+        self._stream_client = DingTalkStreamClient(credential)
+        topic = getattr(ChatbotMessage, "TOPIC", "chatbot.message")
+        self._stream_client.register_callback_handler(topic, DingTalkCallbackHandler(self))
+        self._stream_task = asyncio.create_task(self._run_stream_loop(), name="dingtalk-stream")
 
     async def stop(self) -> None:
         self._running = False
+        if self._stream_task:
+            self._stream_task.cancel()
+            try:
+                await self._stream_task
+            except asyncio.CancelledError:
+                pass
+            self._stream_task = None
+        self._stream_client = None
+
+    async def _run_stream_loop(self) -> None:
+        while self._running and self._stream_client is not None:
+            try:
+                await self._stream_client.start()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("DingTalk stream loop failed")
+            if self._running:
+                await asyncio.sleep(self.stream_reconnect_delay_seconds)
 
     async def send(self, msg: OutboundMessage) -> None:
         token = await self._get_access_token()
@@ -182,3 +245,48 @@ class DingTalkChannel(BaseChannel):
             content=text,
             metadata={"sender_name": str(sender_name).strip()},
         )
+
+    async def _process_stream_payload(self, payload: dict[str, Any]) -> None:
+        """Normalize Stream SDK payload and publish inbound."""
+        content, sender_id, sender_name = self._parse_stream_payload(payload)
+        if not content or not sender_id:
+            return
+        await self._on_message(content=content, sender_id=sender_id, sender_name=sender_name)
+
+    def _parse_stream_payload(self, payload: dict[str, Any]) -> tuple[str, str, str]:
+        if ChatbotMessage is not None and hasattr(ChatbotMessage, "from_dict"):
+            try:
+                parsed = ChatbotMessage.from_dict(payload)
+                text_obj = getattr(parsed, "text", None)
+                text = str(getattr(text_obj, "content", "")).strip()
+                sender_id = str(
+                    getattr(parsed, "sender_staff_id", "")
+                    or getattr(parsed, "sender_id", "")
+                ).strip()
+                sender_name = str(getattr(parsed, "sender_nick", "")).strip()
+                if text and sender_id:
+                    return text, sender_id, sender_name
+            except Exception:
+                logger.debug("DingTalk ChatbotMessage parser failed; fallback to raw payload fields.")
+
+        text = ""
+        raw_text = payload.get("text")
+        if isinstance(raw_text, dict):
+            text = str(raw_text.get("content", "")).strip()
+        if not text:
+            text = str(payload.get("content", "")).strip()
+
+        sender_id = str(
+            payload.get("senderStaffId")
+            or payload.get("sender_staff_id")
+            or payload.get("senderId")
+            or payload.get("sender_id")
+            or ""
+        ).strip()
+        sender_name = str(
+            payload.get("senderNick")
+            or payload.get("sender_nick")
+            or payload.get("senderName")
+            or ""
+        ).strip()
+        return text, sender_id, sender_name

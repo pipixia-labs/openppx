@@ -105,10 +105,16 @@ class ConfigTests(unittest.TestCase):
             cfg["channels"]["mochat"]["sessions"] = ["session_1", "session_2"]
             cfg["channels"]["mochat"]["panels"] = ["panel_1", "panel_2"]
             cfg["channels"]["mochat"]["allowFrom"] = ["mo_u1", "mo_u2"]
+            cfg["channels"]["mochat"]["pollIntervalSeconds"] = 9
+            cfg["channels"]["mochat"]["watchTimeoutMs"] = 12000
+            cfg["channels"]["mochat"]["watchLimit"] = 21
+            cfg["channels"]["mochat"]["panelLimit"] = 88
             cfg["channels"]["dingtalk"]["enabled"] = True
             cfg["channels"]["dingtalk"]["clientId"] = "dt-app-id"
             cfg["channels"]["dingtalk"]["clientSecret"] = "dt-app-secret"
             cfg["channels"]["dingtalk"]["allowFrom"] = ["dt_u1", "dt_u2"]
+            cfg["channels"]["dingtalk"]["streamModeEnabled"] = False
+            cfg["channels"]["dingtalk"]["streamReconnectDelaySeconds"] = 13
             cfg["channels"]["email"]["enabled"] = True
             cfg["channels"]["email"]["consentGranted"] = True
             cfg["channels"]["email"]["smtpHost"] = "smtp.example.com"
@@ -152,9 +158,15 @@ class ConfigTests(unittest.TestCase):
             os.environ.pop("MOCHAT_SESSIONS", None)
             os.environ.pop("MOCHAT_PANELS", None)
             os.environ.pop("MOCHAT_ALLOW_FROM", None)
+            os.environ.pop("MOCHAT_POLL_INTERVAL_SECONDS", None)
+            os.environ.pop("MOCHAT_WATCH_TIMEOUT_MS", None)
+            os.environ.pop("MOCHAT_WATCH_LIMIT", None)
+            os.environ.pop("MOCHAT_PANEL_LIMIT", None)
             os.environ.pop("DINGTALK_CLIENT_ID", None)
             os.environ.pop("DINGTALK_CLIENT_SECRET", None)
             os.environ.pop("DINGTALK_ALLOW_FROM", None)
+            os.environ.pop("DINGTALK_STREAM_MODE_ENABLED", None)
+            os.environ.pop("DINGTALK_STREAM_RECONNECT_DELAY_SECONDS", None)
             os.environ.pop("EMAIL_CONSENT_GRANTED", None)
             os.environ.pop("EMAIL_SMTP_HOST", None)
             os.environ.pop("EMAIL_SMTP_USERNAME", None)
@@ -197,9 +209,15 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(os.environ["MOCHAT_SESSIONS"], "session_1,session_2")
         self.assertEqual(os.environ["MOCHAT_PANELS"], "panel_1,panel_2")
         self.assertEqual(os.environ["MOCHAT_ALLOW_FROM"], "mo_u1,mo_u2")
+        self.assertEqual(os.environ["MOCHAT_POLL_INTERVAL_SECONDS"], "9")
+        self.assertEqual(os.environ["MOCHAT_WATCH_TIMEOUT_MS"], "12000")
+        self.assertEqual(os.environ["MOCHAT_WATCH_LIMIT"], "21")
+        self.assertEqual(os.environ["MOCHAT_PANEL_LIMIT"], "88")
         self.assertEqual(os.environ["DINGTALK_CLIENT_ID"], "dt-app-id")
         self.assertEqual(os.environ["DINGTALK_CLIENT_SECRET"], "dt-app-secret")
         self.assertEqual(os.environ["DINGTALK_ALLOW_FROM"], "dt_u1,dt_u2")
+        self.assertEqual(os.environ["DINGTALK_STREAM_MODE_ENABLED"], "0")
+        self.assertEqual(os.environ["DINGTALK_STREAM_RECONNECT_DELAY_SECONDS"], "13")
         self.assertEqual(os.environ["EMAIL_CONSENT_GRANTED"], "1")
         self.assertEqual(os.environ["EMAIL_SMTP_HOST"], "smtp.example.com")
         self.assertEqual(os.environ["EMAIL_SMTP_USERNAME"], "bot@example.com")
