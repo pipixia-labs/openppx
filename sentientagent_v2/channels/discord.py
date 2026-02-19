@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 from ..bus.events import OutboundMessage
 from .base import BaseChannel
-from .polling_utils import cancel_background_task, dedupe_stripped, run_poll_loop
+from .polling_utils import cancel_background_task, dedupe_stripped, parse_json_payload, run_poll_loop
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +78,12 @@ class DiscordChannel(BaseChannel):
         try:
             with urlopen(req, timeout=max(self.poll_interval_seconds + 10, 15)) as response:
                 raw = response.read().decode("utf-8")
-            if not raw:
-                return {}
-            return json.loads(raw)
         except HTTPError as exc:
             raise RuntimeError(f"Discord API HTTP error ({path}): {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError(f"Discord API network error ({path}): {exc.reason}") from exc
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Discord API invalid JSON ({path}): {exc}") from exc
+
+        return parse_json_payload(raw, error_context=f"Discord API invalid JSON ({path})")
 
     async def _api_call(
         self,

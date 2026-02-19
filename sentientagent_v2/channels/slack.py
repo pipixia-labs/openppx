@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 from ..bus.events import OutboundMessage
 from .base import BaseChannel
-from .polling_utils import cancel_background_task, dedupe_stripped, run_poll_loop
+from .polling_utils import cancel_background_task, dedupe_stripped, parse_json_payload, run_poll_loop
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +67,12 @@ class SlackChannel(BaseChannel):
         try:
             with urlopen(req, timeout=max(self.poll_interval_seconds + 10, 15)) as response:
                 raw = response.read().decode("utf-8")
-            parsed = json.loads(raw)
         except HTTPError as exc:
             raise RuntimeError(f"Slack API HTTP error ({method}): {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError(f"Slack API network error ({method}): {exc.reason}") from exc
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Slack API invalid JSON ({method}): {exc}") from exc
+
+        parsed = parse_json_payload(raw, error_context=f"Slack API invalid JSON ({method})")
 
         if not isinstance(parsed, dict) or not parsed.get("ok", False):
             error_text = ""

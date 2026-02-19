@@ -10,7 +10,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .base import BaseChannel
-from .polling_utils import cancel_background_task, run_poll_loop
+from .polling_utils import cancel_background_task, parse_json_payload, run_poll_loop
 from ..bus.events import OutboundMessage
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,12 @@ class TelegramChannel(BaseChannel):
         try:
             with urlopen(req, timeout=self.poll_timeout_seconds + 10) as response:
                 raw = response.read().decode("utf-8")
-            parsed = json.loads(raw)
         except HTTPError as exc:
             raise RuntimeError(f"Telegram API HTTP error ({method}): {exc.code}") from exc
         except URLError as exc:
             raise RuntimeError(f"Telegram API network error ({method}): {exc.reason}") from exc
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Telegram API invalid JSON ({method}): {exc}") from exc
+
+        parsed = parse_json_payload(raw, error_context=f"Telegram API invalid JSON ({method})")
 
         if not isinstance(parsed, dict) or not parsed.get("ok", False):
             message = ""
