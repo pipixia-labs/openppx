@@ -384,19 +384,21 @@ def _provider_login_openai_codex() -> None:
     except Exception:
         token = None
 
-    if not (token and getattr(token, "access", "")):
+    has_access = bool(token and getattr(token, "access", ""))
+    has_account_id = bool(token and getattr(token, "account_id", ""))
+    if not (has_access and has_account_id):
         logger.info("Starting interactive OAuth login for OpenAI Codex...")
         token = login_oauth_interactive(
             print_fn=lambda s: _stdout_line(str(s)),
             prompt_fn=lambda s: input(str(s)),
         )
 
-    if not (token and getattr(token, "access", "")):
-        raise RuntimeError("OpenAI Codex authentication failed.")
+    ok, detail = _check_openai_codex_oauth()
+    if not ok:
+        raise RuntimeError(f"OpenAI Codex authentication failed ({detail}).")
 
     account_id = str(getattr(token, "account_id", "")).strip()
-    suffix = f" ({account_id})" if account_id else ""
-    logger.info(f"OpenAI Codex OAuth authenticated{suffix}.")
+    logger.info(f"OpenAI Codex OAuth authenticated ({account_id}).")
 
 
 @_register_provider_login("github_copilot")

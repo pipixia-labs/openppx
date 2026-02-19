@@ -107,6 +107,37 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         handler.assert_called_once_with()
 
+    def test_cmd_provider_login_openai_codex_uses_cached_valid_token(self) -> None:
+        from sentientagent_v2 import cli
+
+        token = pytypes.SimpleNamespace(access="token", account_id="acct_1")
+        fake_oauth_module = pytypes.SimpleNamespace(
+            get_token=Mock(return_value=token),
+            login_oauth_interactive=Mock(return_value=token),
+        )
+        with patch.dict(sys.modules, {"oauth_cli_kit": fake_oauth_module}):
+            with patch.object(cli.logger, "info"):
+                code = cli._cmd_provider_login("openai-codex")
+        self.assertEqual(code, 0)
+        fake_oauth_module.login_oauth_interactive.assert_not_called()
+
+    def test_cmd_provider_login_openai_codex_rejects_missing_account_id(self) -> None:
+        from sentientagent_v2 import cli
+
+        token = pytypes.SimpleNamespace(access="token", account_id="")
+        fake_oauth_module = pytypes.SimpleNamespace(
+            get_token=Mock(return_value=token),
+            login_oauth_interactive=Mock(return_value=token),
+        )
+        with patch.dict(sys.modules, {"oauth_cli_kit": fake_oauth_module}):
+            with patch.object(cli.logger, "info") as mocked_info:
+                code = cli._cmd_provider_login("openai-codex")
+
+        self.assertEqual(code, 1)
+        fake_oauth_module.login_oauth_interactive.assert_called_once()
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("account_id missing in token" in line for line in lines))
+
     def test_provider_oauth_health_non_oauth_provider(self) -> None:
         from sentientagent_v2 import cli
 
