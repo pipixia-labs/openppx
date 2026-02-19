@@ -9,8 +9,9 @@ import types as pytypes
 import unittest
 import asyncio
 import sys
+import datetime as dt
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 class CLITests(unittest.TestCase):
@@ -55,6 +56,195 @@ class CLITests(unittest.TestCase):
                     cli.main(["doctor", "--json", "--verbose"])
                 self.assertEqual(ctx.exception.code, 0)
                 mocked_doctor.assert_called_once_with(output_json=True, verbose=True)
+
+    def test_provider_login_mode_dispatch(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_provider_login", return_value=0) as mocked_login:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["provider", "login", "openai-codex"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+                mocked_login.assert_called_once_with("openai-codex")
+
+    def test_provider_list_mode_dispatch(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_provider_list", return_value=0) as mocked_list:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["provider", "list"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+                mocked_list.assert_called_once_with()
+
+    def test_cmd_provider_list_includes_runtime_and_default_model(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli.logger, "info") as mocked_info:
+            code = cli._cmd_provider_list()
+        self.assertEqual(code, 0)
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("openai_codex: runtime=codex" in line for line in lines))
+        self.assertTrue(any("default_model=" in line for line in lines))
+
+    def test_provider_status_mode_dispatch(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_provider_status", return_value=0) as mocked_status:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["provider", "status", "--json"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+                mocked_status.assert_called_once_with(output_json=True)
+
+    def test_channels_login_mode_dispatch(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_channels_login", return_value=0) as mocked_login:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["channels", "login"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+                mocked_login.assert_called_once_with(channel_name="whatsapp")
+
+    def test_channels_bridge_start_mode_dispatch(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_channels_bridge_start", return_value=0) as mocked_start:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["channels", "bridge", "start"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+                mocked_start.assert_called_once_with(channel_name="whatsapp")
+
+    def test_cmd_provider_login_rejects_non_oauth_provider(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli.logger, "info") as mocked_info:
+            code = cli._cmd_provider_login("openai")
+        self.assertEqual(code, 1)
+        self.assertIn("Unknown OAuth provider", mocked_info.call_args[0][0])
+
+    def test_cmd_provider_login_invokes_registered_handler(self) -> None:
+        from sentientagent_v2 import cli
+
+        handler = Mock()
+        with patch.dict(cli._PROVIDER_LOGIN_HANDLERS, {"openai_codex": handler}, clear=False):
+            with patch.object(cli.logger, "info"):
+                code = cli._cmd_provider_login("openai-codex")
+        self.assertEqual(code, 0)
+        handler.assert_called_once_with()
+
+    def test_cmd_provider_login_accepts_alias(self) -> None:
+        from sentientagent_v2 import cli
+
+        handler = Mock()
+        with patch.dict(cli._PROVIDER_LOGIN_HANDLERS, {"openai_codex": handler}, clear=False):
+            with patch.object(cli.logger, "info"):
+                code = cli._cmd_provider_login("codex")
+        self.assertEqual(code, 0)
+        handler.assert_called_once_with()
+
+    def test_cmd_provider_login_openai_codex_uses_cached_valid_token(self) -> None:
+        from sentientagent_v2 import cli
+
+        token = pytypes.SimpleNamespace(access="token", account_id="acct_1")
+        fake_oauth_module = pytypes.SimpleNamespace(
+            get_token=Mock(return_value=token),
+            login_oauth_interactive=Mock(return_value=token),
+        )
+        with patch.dict(sys.modules, {"oauth_cli_kit": fake_oauth_module}):
+            with patch.object(cli.logger, "info"):
+                code = cli._cmd_provider_login("openai-codex")
+        self.assertEqual(code, 0)
+        fake_oauth_module.login_oauth_interactive.assert_not_called()
+
+    def test_cmd_provider_login_openai_codex_rejects_missing_account_id(self) -> None:
+        from sentientagent_v2 import cli
+
+        token = pytypes.SimpleNamespace(access="token", account_id="")
+        fake_oauth_module = pytypes.SimpleNamespace(
+            get_token=Mock(return_value=token),
+            login_oauth_interactive=Mock(return_value=token),
+        )
+        with patch.dict(sys.modules, {"oauth_cli_kit": fake_oauth_module}):
+            with patch.object(cli.logger, "info") as mocked_info:
+                code = cli._cmd_provider_login("openai-codex")
+
+        self.assertEqual(code, 1)
+        fake_oauth_module.login_oauth_interactive.assert_called_once()
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("account_id missing in token" in line for line in lines))
+
+    def test_provider_oauth_health_non_oauth_provider(self) -> None:
+        from sentientagent_v2 import cli
+
+        issue, status = cli._provider_oauth_health("google")
+        self.assertIsNone(issue)
+        self.assertFalse(status["required"])
+        self.assertTrue(status["authenticated"])
+        self.assertEqual(status["message"], "not_required")
+
+    def test_provider_oauth_health_openai_codex_missing_token(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "_check_openai_codex_oauth", return_value=(False, "token missing")):
+            issue, status = cli._provider_oauth_health("openai_codex")
+        self.assertIsNotNone(issue)
+        self.assertIn("provider login openai-codex", str(issue))
+        self.assertTrue(status["required"])
+        self.assertFalse(status["authenticated"])
+        self.assertEqual(status["message"], "token missing")
+
+    def test_provider_oauth_health_openai_codex_authenticated(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "_check_openai_codex_oauth", return_value=(True, "account_id=user_1")):
+            issue, status = cli._provider_oauth_health("openai_codex")
+        self.assertIsNone(issue)
+        self.assertTrue(status["required"])
+        self.assertTrue(status["authenticated"])
+        self.assertEqual(status["message"], "account_id=user_1")
+
+    def test_check_github_copilot_oauth_non_invasive_missing_cache(self) -> None:
+        from sentientagent_v2 import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"GITHUB_COPILOT_TOKEN_DIR": tmp}, clear=False):
+                ok, detail = cli._check_github_copilot_oauth_non_invasive()
+        self.assertFalse(ok)
+        self.assertEqual(detail, "access_token_missing")
+
+    def test_check_github_copilot_oauth_non_invasive_valid_api_key_cache(self) -> None:
+        from sentientagent_v2 import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = {
+                "token": "ghu_xxx",
+                "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)).timestamp(),
+            }
+            api_key_path = Path(tmp) / "api-key.json"
+            api_key_path.write_text(json.dumps(cache), encoding="utf-8")
+            with patch.dict(os.environ, {"GITHUB_COPILOT_TOKEN_DIR": tmp}, clear=False):
+                ok, detail = cli._check_github_copilot_oauth_non_invasive()
+        self.assertTrue(ok)
+        self.assertIn("api_key_cached_until=", detail)
+
+    def test_provider_oauth_health_github_copilot_missing_cache_returns_issue(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "_check_github_copilot_oauth_non_invasive", return_value=(False, "access_token_missing")):
+            issue, status = cli._provider_oauth_health("github_copilot")
+        self.assertIsNotNone(issue)
+        self.assertIn("provider login github-copilot", str(issue))
+        self.assertTrue(status["required"])
+        self.assertFalse(status["authenticated"])
+        self.assertEqual(status["message"], "access_token_missing")
 
     def test_cmd_doctor_includes_mcp_health_failures(self) -> None:
         from sentientagent_v2 import cli
@@ -149,6 +339,86 @@ class CLITests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertIn("mcp", payload)
         self.assertIn("issues", payload)
+
+    def test_cmd_doctor_json_output_includes_provider_oauth_issue(self) -> None:
+        from sentientagent_v2 import cli
+
+        fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
+        fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
+        fake_security_policy = pytypes.SimpleNamespace(
+            restrict_to_workspace=False,
+            allow_exec=True,
+            allow_network=True,
+            exec_allowlist=(),
+        )
+        fake_oauth_status = {
+            "required": True,
+            "authenticated": False,
+            "message": "token missing",
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "SENTIENTAGENT_V2_PROVIDER": "openai_codex",
+                "SENTIENTAGENT_V2_PROVIDER_ENABLED": "1",
+            },
+            clear=False,
+        ):
+            with patch("sentientagent_v2.cli.shutil.which", return_value="/usr/bin/adk"):
+                with patch.object(cli, "validate_provider_runtime", return_value=None):
+                    with patch.object(
+                        cli,
+                        "_provider_oauth_health",
+                        return_value=("OpenAI Codex OAuth token is not ready", fake_oauth_status),
+                    ):
+                        with patch.object(cli, "get_registry", return_value=fake_registry):
+                            with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
+                                with patch.object(cli, "parse_enabled_channels", return_value=["local"]):
+                                    with patch.object(cli, "validate_channel_setup", return_value=[]):
+                                        with patch.object(cli, "load_security_policy", return_value=fake_security_policy):
+                                            with patch.object(cli, "build_mcp_toolsets_from_env", return_value=[]):
+                                                with patch.object(cli.logger, "debug"):
+                                                    with patch("builtins.print") as mocked_print:
+                                                        code = cli._cmd_doctor(output_json=True, verbose=False)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(mocked_print.call_count, 1)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertFalse(payload["ok"])
+        self.assertIn("OpenAI Codex OAuth token is not ready", payload["issues"])
+        self.assertEqual(payload["provider"]["oauth"], fake_oauth_status)
+
+    def test_cmd_provider_status_json_output_includes_oauth_issue(self) -> None:
+        from sentientagent_v2 import cli
+
+        fake_oauth_status = {
+            "required": True,
+            "authenticated": False,
+            "message": "token missing",
+        }
+        with patch.dict(
+            os.environ,
+            {
+                "SENTIENTAGENT_V2_PROVIDER": "openai_codex",
+                "SENTIENTAGENT_V2_PROVIDER_ENABLED": "1",
+            },
+            clear=False,
+        ):
+            with patch.object(cli, "validate_provider_runtime", return_value=None):
+                with patch.object(
+                    cli,
+                    "_provider_oauth_health",
+                    return_value=("OpenAI Codex OAuth token is not ready", fake_oauth_status),
+                ):
+                    with patch("builtins.print") as mocked_print:
+                        code = cli._cmd_provider_status(output_json=True)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(mocked_print.call_count, 1)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertFalse(payload["ok"])
+        self.assertIn("OpenAI Codex OAuth token is not ready", payload["issues"])
+        self.assertEqual(payload["provider"]["oauth"], fake_oauth_status)
 
     def test_log_mcp_startup_summary(self) -> None:
         from sentientagent_v2 import cli
@@ -246,6 +516,45 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, 1)
         messages = [call.args[0] for call in mocked_info.call_args_list if call.args]
         self.assertIn("[doctor] required MCP failed", messages)
+
+    def test_cmd_gateway_exits_when_whatsapp_bridge_precheck_fails(self) -> None:
+        from sentientagent_v2 import cli
+
+        fake_agent = pytypes.SimpleNamespace(name="sentientagent_v2", tools=[])
+        fake_agent_module = pytypes.SimpleNamespace(root_agent=fake_agent)
+
+        class _UnexpectedGateway:
+            def __init__(self, *args, **kwargs):
+                raise AssertionError("Gateway should not be constructed when WhatsApp bridge precheck fails")
+
+        fake_gateway_module = pytypes.SimpleNamespace(Gateway=_UnexpectedGateway)
+
+        with patch.dict(
+            sys.modules,
+            {
+                "sentientagent_v2.agent": fake_agent_module,
+                "sentientagent_v2.gateway": fake_gateway_module,
+            },
+        ):
+            with patch.object(cli, "parse_enabled_channels", return_value=["whatsapp"]):
+                with patch.object(cli, "validate_channel_setup", return_value=[]):
+                    with patch.object(cli, "_whatsapp_bridge_precheck_enabled", return_value=True):
+                        with patch.object(
+                            cli,
+                            "_check_whatsapp_bridge_ready",
+                            return_value="WhatsApp bridge precheck failed",
+                        ):
+                            with patch.object(cli.logger, "info") as mocked_info:
+                                code = cli._cmd_gateway(
+                                    channels="whatsapp",
+                                    sender_id="u1",
+                                    chat_id="c1",
+                                    interactive_local=False,
+                                )
+
+        self.assertEqual(code, 1)
+        messages = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertIn("[doctor] WhatsApp bridge precheck failed", messages)
 
     def test_cmd_onboard_creates_config_and_workspace(self) -> None:
         from sentientagent_v2 import cli
@@ -475,6 +784,148 @@ class CLITests(unittest.TestCase):
         mocked_print.assert_any_call("Scheduled jobs:")
         mocked_print.assert_any_call("- demo (id: j1, every:30s, enabled, next=-)")
         mocked_info.assert_not_called()
+
+    def test_cmd_doctor_reports_whatsapp_bridge_precheck_issue(self) -> None:
+        from sentientagent_v2 import cli
+
+        fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
+        fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
+        fake_security_policy = pytypes.SimpleNamespace(
+            restrict_to_workspace=False,
+            allow_exec=True,
+            allow_network=True,
+            exec_allowlist=(),
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "SENTIENTAGENT_V2_PROVIDER": "google",
+                "SENTIENTAGENT_V2_PROVIDER_ENABLED": "1",
+                "GOOGLE_API_KEY": "k",
+            },
+            clear=False,
+        ):
+            with patch("sentientagent_v2.cli.shutil.which", return_value="/usr/bin/adk"):
+                with patch.object(cli, "validate_provider_runtime", return_value=None):
+                    with patch.object(cli, "get_registry", return_value=fake_registry):
+                        with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
+                            with patch.object(cli, "parse_enabled_channels", return_value=["whatsapp"]):
+                                with patch.object(cli, "validate_channel_setup", return_value=[]):
+                                    with patch.object(cli, "_whatsapp_bridge_precheck_enabled", return_value=True):
+                                        with patch.object(
+                                            cli,
+                                            "_check_whatsapp_bridge_ready",
+                                            return_value="WhatsApp bridge precheck failed",
+                                        ):
+                                            with patch.object(cli, "load_security_policy", return_value=fake_security_policy):
+                                                with patch.object(cli, "build_mcp_toolsets_from_env", return_value=[]):
+                                                    with patch.object(cli.logger, "debug"):
+                                                        with patch("builtins.print") as mocked_print:
+                                                            code = cli._cmd_doctor(output_json=True, verbose=False)
+
+        self.assertEqual(code, 1)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertIn("WhatsApp bridge precheck failed", payload["issues"])
+
+    def test_cmd_channels_login_rejects_unknown_channel(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli.logger, "info") as mocked_info:
+            code = cli._cmd_channels_login(channel_name="telegram")
+        self.assertEqual(code, 1)
+        self.assertIn("Unsupported channel", mocked_info.call_args[0][0])
+
+    def test_cmd_channels_login_starts_bridge_with_token_from_config(self) -> None:
+        from sentientagent_v2 import cli
+
+        fake_cfg = {
+            "channels": {
+                "whatsapp": {
+                    "bridgeToken": "bridge-token-1",
+                }
+            }
+        }
+        with patch.object(cli, "_get_bridge_dir", return_value=Path("/tmp/sentientagent_v2-bridge")) as mocked_bridge:
+            with patch.object(cli, "load_config", return_value=fake_cfg):
+                with patch("sentientagent_v2.cli.subprocess.run") as mocked_run:
+                    code = cli._cmd_channels_login(channel_name="whatsapp")
+
+        self.assertEqual(code, 0)
+        mocked_bridge.assert_called_once_with()
+        mocked_run.assert_called_once()
+        call_args = mocked_run.call_args
+        self.assertEqual(call_args.args[0], ["npm", "start"])
+        self.assertEqual(call_args.kwargs["cwd"], Path("/tmp/sentientagent_v2-bridge"))
+        self.assertTrue(call_args.kwargs["check"])
+        self.assertEqual(call_args.kwargs["env"]["BRIDGE_TOKEN"], "bridge-token-1")
+
+    def test_cmd_channels_bridge_start_persists_runtime_state(self) -> None:
+        from sentientagent_v2 import cli
+
+        fake_cfg = {
+            "channels": {
+                "whatsapp": {
+                    "bridgeToken": "bridge-token-2",
+                }
+            }
+        }
+        fake_proc = pytypes.SimpleNamespace(pid=54321)
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_base = Path(tmp) / "bridge-runtime"
+            with patch.object(cli, "_bridge_base_dir", return_value=runtime_base):
+                with patch.object(cli, "_get_bridge_dir", return_value=Path("/tmp/sentientagent_v2-bridge")):
+                    with patch.object(cli, "_is_pid_running", return_value=False):
+                        with patch.object(cli, "load_config", return_value=fake_cfg):
+                            with patch("sentientagent_v2.cli.subprocess.Popen", return_value=fake_proc) as mocked_popen:
+                                code = cli._cmd_channels_bridge_start(channel_name="whatsapp")
+
+            self.assertEqual(code, 0)
+            mocked_popen.assert_called_once()
+            state_path = runtime_base / "runtime_state.json"
+            self.assertTrue(state_path.exists())
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["pid"], 54321)
+
+    def test_cmd_channels_bridge_start_handles_bridge_dir_permission_error(self) -> None:
+        from sentientagent_v2 import cli
+
+        with patch.object(cli, "_get_bridge_dir", side_effect=PermissionError("no permission")):
+            with patch.object(cli.logger, "info") as mocked_info:
+                code = cli._cmd_channels_bridge_start(channel_name="whatsapp")
+        self.assertEqual(code, 1)
+        self.assertIn("Failed to prepare bridge directory", mocked_info.call_args[0][0])
+
+    def test_cmd_channels_bridge_status_reports_running(self) -> None:
+        from sentientagent_v2 import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_base = Path(tmp) / "bridge-runtime"
+            runtime_base.mkdir(parents=True, exist_ok=True)
+            state_path = runtime_base / "runtime_state.json"
+            state_path.write_text(json.dumps({"pid": 10001}), encoding="utf-8")
+            with patch.object(cli, "_bridge_base_dir", return_value=runtime_base):
+                with patch.object(cli, "_is_pid_running", return_value=True):
+                    with patch.object(cli.logger, "info") as mocked_info:
+                        code = cli._cmd_channels_bridge_status(channel_name="whatsapp")
+
+        self.assertEqual(code, 0)
+        self.assertIn("Bridge is running", mocked_info.call_args[0][0])
+
+    def test_cmd_channels_bridge_stop_removes_stale_state(self) -> None:
+        from sentientagent_v2 import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_base = Path(tmp) / "bridge-runtime"
+            runtime_base.mkdir(parents=True, exist_ok=True)
+            state_path = runtime_base / "runtime_state.json"
+            state_path.write_text(json.dumps({"pid": 10001}), encoding="utf-8")
+            with patch.object(cli, "_bridge_base_dir", return_value=runtime_base):
+                with patch.object(cli, "_is_pid_running", return_value=False):
+                    with patch.object(cli.logger, "info"):
+                        code = cli._cmd_channels_bridge_stop(channel_name="whatsapp")
+
+            self.assertEqual(code, 0)
+            self.assertFalse(state_path.exists())
 
 
 if __name__ == "__main__":

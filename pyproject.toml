@@ -9,8 +9,11 @@ dependencies = [
     "lark-oapi>=1.4.15",
     "loguru>=0.7.3",
     "python-socks>=2.5.3",
+    "websockets>=12.0",
     "litellm>=1.75.5,<1.80.17",
     "openai>=1.100.2",
+    "httpx>=0.27.0",
+    "oauth-cli-kit>=0.1.1",
 ]
 
 [project.scripts]
@@ -26,5 +29,6 @@ packages = ["sentientagent_v2"]
 [tool.hatch.build]
 include = [
     "sentientagent_v2/**/*.py",
+    "sentientagent_v2/bridge/**",
     "sentientagent_v2/skills/**",
 ]

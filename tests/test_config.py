@@ -308,6 +308,32 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("GOOGLE_API_KEY", os.environ)
         self.assertEqual(os.environ["SENTIENTAGENT_V2_MODEL"], "openai/gpt-4.1-mini")
 
+    def test_provider_api_base_and_extra_headers_are_exported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            cfg = default_config()
+            cfg["providers"]["google"]["enabled"] = False
+            cfg["providers"]["openrouter"]["enabled"] = True
+            cfg["providers"]["openrouter"]["apiKey"] = "openrouter-key"
+            cfg["providers"]["openrouter"]["model"] = "openai/gpt-4.1-mini"
+            cfg["providers"]["openrouter"]["apiBase"] = "https://example.gateway/v1"
+            cfg["providers"]["openrouter"]["extraHeaders"] = {"X-Trace-Id": "trace-001"}
+            save_config(cfg, path)
+
+            os.environ.pop("SENTIENTAGENT_V2_PROVIDER", None)
+            os.environ.pop("SENTIENTAGENT_V2_PROVIDER_API_BASE", None)
+            os.environ.pop("SENTIENTAGENT_V2_PROVIDER_EXTRA_HEADERS_JSON", None)
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            bootstrap_env_from_config(path)
+
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_PROVIDER"], "openrouter")
+        self.assertEqual(os.environ["OPENROUTER_API_KEY"], "openrouter-key")
+        self.assertEqual(os.environ["SENTIENTAGENT_V2_PROVIDER_API_BASE"], "https://example.gateway/v1")
+        self.assertEqual(
+            os.environ["SENTIENTAGENT_V2_PROVIDER_EXTRA_HEADERS_JSON"],
+            '{"X-Trace-Id":"trace-001"}',
+        )
+
     def test_provider_active_key_is_ignored_when_enabled_points_elsewhere(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"

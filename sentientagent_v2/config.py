@@ -11,7 +11,15 @@ from typing import Any
 from loguru import logger
 
 from .env_utils import is_enabled
-from .provider import default_model_for_provider, normalize_model_name, provider_api_key_env
+from .provider import (
+    DEFAULT_PROVIDER,
+    default_model_for_provider,
+    normalize_model_name,
+    provider_api_key_env,
+    provider_api_key_env_keys,
+    provider_default_api_base,
+    provider_names,
+)
 from .security import normalize_allowlist
 
 
@@ -132,21 +140,14 @@ def default_config() -> dict[str, Any]:
             "builtinSkillsDir": "",
         },
         "providers": {
-            "google": {
-                "enabled": True,
+            name: {
+                "enabled": name == DEFAULT_PROVIDER,
                 "apiKey": "",
-                "model": default_model_for_provider("google"),
-            },
-            "openai": {
-                "enabled": False,
-                "apiKey": "",
-                "model": default_model_for_provider("openai"),
-            },
-            "openrouter": {
-                "enabled": False,
-                "apiKey": "",
-                "model": default_model_for_provider("openrouter"),
-            },
+                "model": default_model_for_provider(name),
+                "apiBase": provider_default_api_base(name),
+                "extraHeaders": {},
+            }
+            for name in provider_names()
         },
         "session": {
             "dbUrl": "",
@@ -352,22 +353,23 @@ def _resolve_enabled_channels(channels: dict[str, Any]) -> str:
     return ",".join(names)
 
 
-def _resolve_provider(cfg: dict[str, Any]) -> tuple[str, bool, str, str]:
+def _resolve_provider(cfg: dict[str, Any]) -> tuple[str, bool, str, str, str, str]:
     providers = cfg.get("providers")
     if not isinstance(providers, dict):
         providers = {}
 
-    ordered = ("google", "openai", "openrouter")
+    ordered = provider_names()
     enabled_names: list[str] = []
     for name in ordered:
         raw_cfg = providers.get(name, {})
         if not isinstance(raw_cfg, dict):
             raw_cfg = {}
-        if is_enabled(raw_cfg.get("enabled"), default=(name == "google")):
+        if is_enabled(raw_cfg.get("enabled"), default=(name == DEFAULT_PROVIDER)):
             enabled_names.append(name)
 
     if not enabled_names:
-        return "google", False, default_model_for_provider("google"), ""
+        default_base = provider_default_api_base(DEFAULT_PROVIDER)
+        return DEFAULT_PROVIDER, False, default_model_for_provider(DEFAULT_PROVIDER), "", default_base, ""
 
     active = enabled_names[0]
     active_cfg = providers.get(active, {})
@@ -375,7 +377,12 @@ def _resolve_provider(cfg: dict[str, Any]) -> tuple[str, bool, str, str]:
         active_cfg = {}
     model = normalize_model_name(active, active_cfg.get("model"))
     api_key = str(active_cfg.get("apiKey", "")).strip()
-    return active, True, model, api_key
+    api_base = str(active_cfg.get("apiBase", "")).strip() or provider_default_api_base(active)
+    extra_headers = active_cfg.get("extraHeaders", {})
+    if not isinstance(extra_headers, dict):
+        extra_headers = {}
+    extra_headers_json = json.dumps(extra_headers, ensure_ascii=False, separators=(",", ":")) if extra_headers else ""
+    return active, True, model, api_key, api_base, extra_headers_json
 
 
 def _resolve_web(cfg: dict[str, Any]) -> tuple[bool, bool, str, int, str]:
@@ -481,7 +488,9 @@ def config_to_env(config: dict[str, Any]) -> dict[str, str]:
     session = _as_dict(cfg.get("session"))
     channels = _as_dict(cfg.get("channels"))
     channel_env = _channel_env_values(channels)
-    provider_name, provider_enabled, model, provider_api_key = _resolve_provider(cfg)
+    provider_name, provider_enabled, model, provider_api_key, provider_api_base, provider_extra_headers = _resolve_provider(
+        cfg
+    )
     web_enabled, web_search_enabled, web_search_provider, web_search_max_results, web_search_api_key = _resolve_web(
         cfg
     )
@@ -491,12 +500,12 @@ def config_to_env(config: dict[str, Any]) -> dict[str, str]:
 
     provider_key_env = provider_api_key_env(provider_name) if provider_enabled else None
     env = {
-        "GOOGLE_API_KEY": "",
-        "OPENAI_API_KEY": "",
-        "OPENROUTER_API_KEY": "",
+        **{env_key: "" for env_key in provider_api_key_env_keys()},
         "SENTIENTAGENT_V2_MODEL": model,
         "SENTIENTAGENT_V2_PROVIDER": provider_name,
         "SENTIENTAGENT_V2_PROVIDER_ENABLED": "1" if provider_enabled else "0",
+        "SENTIENTAGENT_V2_PROVIDER_API_BASE": provider_api_base,
+        "SENTIENTAGENT_V2_PROVIDER_EXTRA_HEADERS_JSON": provider_extra_headers,
         "SENTIENTAGENT_V2_WORKSPACE": str(agent.get("workspace", "")).strip(),
         "SENTIENTAGENT_V2_BUILTIN_SKILLS_DIR": str(agent.get("builtinSkillsDir", "")).strip(),
         "SENTIENTAGENT_V2_SESSION_DB_URL": str(session.get("dbUrl", "")).strip(),
