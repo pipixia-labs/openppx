@@ -29,6 +29,7 @@ from .env_utils import env_enabled
 from .mcp_registry import ManagedMcpToolset, build_mcp_toolsets_from_env, probe_mcp_toolsets, summarize_mcp_toolsets
 from .provider import normalize_model_name, normalize_provider_name, provider_api_key_env, validate_provider_runtime
 from .runtime.adk_utils import extract_text, merge_text_stream
+from .runtime.cron_helpers import cron_store_path, format_schedule, format_timestamp_ms
 from .runtime.cron_service import CronService
 from .runtime.cron_schedule_parser import parse_schedule_input
 from .runtime.message_time import inject_request_time
@@ -510,27 +511,15 @@ def _cmd_message(message: str, user_id: str, session_id: str) -> int:
 
 def _cron_service() -> CronService:
     workspace = load_security_policy().workspace_root
-    store_path = workspace / ".sentientagent_v2" / "cron_jobs.json"
-    return CronService(store_path)
+    return CronService(cron_store_path(workspace))
 
 
 def _format_schedule(job) -> str:
-    schedule = job.schedule
-    if schedule.kind == "every":
-        return f"every:{schedule.every_seconds}s"
-    if schedule.kind == "cron":
-        return f"cron:{schedule.cron_expr} ({schedule.tz})" if schedule.tz else f"cron:{schedule.cron_expr}"
-    if schedule.kind == "at":
-        if schedule.at_ms is None:
-            return "at:unknown"
-        return f"at:{dt.datetime.fromtimestamp(schedule.at_ms / 1000).isoformat(timespec='seconds')}"
-    return schedule.kind
+    return format_schedule(getattr(job, "schedule", None))
 
 
 def _format_ts(ms: int | None) -> str:
-    if ms is None:
-        return "-"
-    return dt.datetime.fromtimestamp(ms / 1000).isoformat(timespec="seconds")
+    return format_timestamp_ms(ms)
 
 
 def _cmd_cron_list(*, include_disabled: bool) -> int:

@@ -28,6 +28,86 @@ _CONFIG_CHANNEL_ORDER: tuple[str, ...] = (
     "qq",
 )
 
+# (channel_name, config_key, env_key)
+_CHANNEL_STRIPPED_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("feishu", "appId", "FEISHU_APP_ID"),
+    ("feishu", "appSecret", "FEISHU_APP_SECRET"),
+    ("feishu", "encryptKey", "FEISHU_ENCRYPT_KEY"),
+    ("feishu", "verificationToken", "FEISHU_VERIFICATION_TOKEN"),
+    ("telegram", "token", "TELEGRAM_BOT_TOKEN"),
+    ("telegram", "proxy", "TELEGRAM_PROXY"),
+    ("whatsapp", "bridgeUrl", "WHATSAPP_BRIDGE_URL"),
+    ("whatsapp", "bridgeToken", "WHATSAPP_BRIDGE_TOKEN"),
+    ("discord", "token", "DISCORD_BOT_TOKEN"),
+    ("mochat", "baseUrl", "MOCHAT_BASE_URL"),
+    ("mochat", "clawToken", "MOCHAT_CLAW_TOKEN"),
+    ("mochat", "agentUserId", "MOCHAT_AGENT_USER_ID"),
+    ("dingtalk", "clientId", "DINGTALK_CLIENT_ID"),
+    ("dingtalk", "clientSecret", "DINGTALK_CLIENT_SECRET"),
+    ("email", "imapHost", "EMAIL_IMAP_HOST"),
+    ("email", "imapUsername", "EMAIL_IMAP_USERNAME"),
+    ("email", "smtpHost", "EMAIL_SMTP_HOST"),
+    ("email", "smtpUsername", "EMAIL_SMTP_USERNAME"),
+    ("email", "fromAddress", "EMAIL_FROM_ADDRESS"),
+    ("slack", "botToken", "SLACK_BOT_TOKEN"),
+    ("slack", "appToken", "SLACK_APP_TOKEN"),
+    ("slack", "defaultChannel", "SLACK_DEFAULT_CHANNEL"),
+    ("qq", "appId", "QQ_APP_ID"),
+    ("qq", "secret", "QQ_SECRET"),
+)
+
+# (channel_name, config_key, env_key) values are stringified without trim.
+_CHANNEL_RAW_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("email", "imapPassword", "EMAIL_IMAP_PASSWORD"),
+    ("email", "smtpPassword", "EMAIL_SMTP_PASSWORD"),
+)
+
+# (channel_name, config_key, env_key)
+_CHANNEL_ALLOWLIST_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("feishu", "allowFrom", "FEISHU_ALLOW_FROM"),
+    ("telegram", "allowFrom", "TELEGRAM_ALLOW_FROM"),
+    ("whatsapp", "allowFrom", "WHATSAPP_ALLOW_FROM"),
+    ("discord", "allowFrom", "DISCORD_ALLOW_FROM"),
+    ("discord", "pollChannels", "DISCORD_POLL_CHANNELS"),
+    ("mochat", "sessions", "MOCHAT_SESSIONS"),
+    ("mochat", "panels", "MOCHAT_PANELS"),
+    ("mochat", "allowFrom", "MOCHAT_ALLOW_FROM"),
+    ("dingtalk", "allowFrom", "DINGTALK_ALLOW_FROM"),
+    ("email", "allowFrom", "EMAIL_ALLOW_FROM"),
+    ("slack", "allowFrom", "SLACK_ALLOW_FROM"),
+    ("slack", "pollChannels", "SLACK_POLL_CHANNELS"),
+    ("qq", "allowFrom", "QQ_ALLOW_FROM"),
+)
+
+# (channel_name, config_key, env_key, default)
+_CHANNEL_FLAG_FIELDS: tuple[tuple[str, str, str, bool], ...] = (
+    ("discord", "includeBots", "DISCORD_INCLUDE_BOTS", False),
+    ("dingtalk", "streamModeEnabled", "DINGTALK_STREAM_MODE_ENABLED", True),
+    ("email", "consentGranted", "EMAIL_CONSENT_GRANTED", False),
+    ("email", "imapUseSsl", "EMAIL_IMAP_USE_SSL", True),
+    ("email", "smtpUseTls", "EMAIL_SMTP_USE_TLS", True),
+    ("email", "smtpUseSsl", "EMAIL_SMTP_USE_SSL", False),
+    ("email", "autoReplyEnabled", "EMAIL_AUTO_REPLY_ENABLED", True),
+    ("email", "markSeen", "EMAIL_MARK_SEEN", True),
+    ("slack", "includeBots", "SLACK_INCLUDE_BOTS", False),
+)
+
+# (channel_name, config_key, env_key, default)
+_CHANNEL_DEFAULT_VALUE_FIELDS: tuple[tuple[str, str, str, Any], ...] = (
+    ("whatsapp", "reconnectDelaySeconds", "WHATSAPP_RECONNECT_DELAY_SECONDS", 5),
+    ("discord", "pollIntervalSeconds", "DISCORD_POLL_INTERVAL_SECONDS", 10),
+    ("mochat", "pollIntervalSeconds", "MOCHAT_POLL_INTERVAL_SECONDS", 5),
+    ("mochat", "watchTimeoutMs", "MOCHAT_WATCH_TIMEOUT_MS", 15000),
+    ("mochat", "watchLimit", "MOCHAT_WATCH_LIMIT", 20),
+    ("mochat", "panelLimit", "MOCHAT_PANEL_LIMIT", 50),
+    ("dingtalk", "streamReconnectDelaySeconds", "DINGTALK_STREAM_RECONNECT_DELAY_SECONDS", 5),
+    ("email", "imapPort", "EMAIL_IMAP_PORT", 993),
+    ("email", "smtpPort", "EMAIL_SMTP_PORT", 587),
+    ("email", "pollIntervalSeconds", "EMAIL_POLL_INTERVAL_SECONDS", 30),
+    ("email", "maxBodyChars", "EMAIL_MAX_BODY_CHARS", 12000),
+    ("slack", "pollIntervalSeconds", "SLACK_POLL_INTERVAL_SECONDS", 15),
+)
+
 
 def get_data_dir() -> Path:
     """Return the data directory used by sentientagent_v2."""
@@ -364,34 +444,43 @@ def _channel_config(channels: dict[str, Any], name: str) -> dict[str, Any]:
     return _as_dict(channels.get(name))
 
 
+def _channel_sections(channels: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Normalize per-channel config payloads into a name->dict mapping."""
+    return {name: _channel_config(channels, name) for name in _CONFIG_CHANNEL_ORDER}
+
+
+def _channel_env_values(channels: dict[str, Any]) -> dict[str, str]:
+    """Build all channel-related environment variables from config."""
+    sections = _channel_sections(channels)
+    env: dict[str, str] = {}
+
+    for channel_name, cfg_key, env_key in _CHANNEL_STRIPPED_FIELDS:
+        env[env_key] = str(sections[channel_name].get(cfg_key, "")).strip()
+
+    for channel_name, cfg_key, env_key in _CHANNEL_RAW_FIELDS:
+        env[env_key] = str(sections[channel_name].get(cfg_key, ""))
+
+    for channel_name, cfg_key, env_key in _CHANNEL_ALLOWLIST_FIELDS:
+        env[env_key] = ",".join(normalize_allowlist(_as_list(sections[channel_name].get(cfg_key))))
+
+    for channel_name, cfg_key, env_key, default in _CHANNEL_FLAG_FIELDS:
+        env[env_key] = "1" if is_enabled(sections[channel_name].get(cfg_key), default=default) else "0"
+
+    for channel_name, cfg_key, env_key, default in _CHANNEL_DEFAULT_VALUE_FIELDS:
+        env[env_key] = str(sections[channel_name].get(cfg_key, default))
+
+    email = sections["email"]
+    env["EMAIL_IMAP_MAILBOX"] = str(email.get("imapMailbox", "INBOX")).strip() or "INBOX"
+    return env
+
+
 def config_to_env(config: dict[str, Any]) -> dict[str, str]:
     """Map config payload into runtime environment variables."""
     cfg = normalize_config(config)
     agent = _as_dict(cfg.get("agent"))
     session = _as_dict(cfg.get("session"))
     channels = _as_dict(cfg.get("channels"))
-    feishu = _channel_config(channels, "feishu")
-    feishu_allow_from = _as_list(feishu.get("allowFrom"))
-    telegram = _channel_config(channels, "telegram")
-    telegram_allow_from = _as_list(telegram.get("allowFrom"))
-    whatsapp = _channel_config(channels, "whatsapp")
-    whatsapp_allow_from = _as_list(whatsapp.get("allowFrom"))
-    discord = _channel_config(channels, "discord")
-    discord_allow_from = _as_list(discord.get("allowFrom"))
-    discord_poll_channels = _as_list(discord.get("pollChannels"))
-    mochat = _channel_config(channels, "mochat")
-    mochat_allow_from = _as_list(mochat.get("allowFrom"))
-    mochat_sessions = _as_list(mochat.get("sessions"))
-    mochat_panels = _as_list(mochat.get("panels"))
-    dingtalk = _channel_config(channels, "dingtalk")
-    dingtalk_allow_from = _as_list(dingtalk.get("allowFrom"))
-    email = _channel_config(channels, "email")
-    email_allow_from = _as_list(email.get("allowFrom"))
-    slack = _channel_config(channels, "slack")
-    slack_allow_from = _as_list(slack.get("allowFrom"))
-    slack_poll_channels = _as_list(slack.get("pollChannels"))
-    qq = _channel_config(channels, "qq")
-    qq_allow_from = _as_list(qq.get("allowFrom"))
+    channel_env = _channel_env_values(channels)
     provider_name, provider_enabled, model, provider_api_key = _resolve_provider(cfg)
     web_enabled, web_search_enabled, web_search_provider, web_search_max_results, web_search_api_key = _resolve_web(
         cfg
@@ -412,69 +501,6 @@ def config_to_env(config: dict[str, Any]) -> dict[str, str]:
         "SENTIENTAGENT_V2_BUILTIN_SKILLS_DIR": str(agent.get("builtinSkillsDir", "")).strip(),
         "SENTIENTAGENT_V2_SESSION_DB_URL": str(session.get("dbUrl", "")).strip(),
         "SENTIENTAGENT_V2_CHANNELS": _resolve_enabled_channels(channels),
-        "FEISHU_APP_ID": str(feishu.get("appId", "")).strip(),
-        "FEISHU_APP_SECRET": str(feishu.get("appSecret", "")).strip(),
-        "FEISHU_ENCRYPT_KEY": str(feishu.get("encryptKey", "")).strip(),
-        "FEISHU_VERIFICATION_TOKEN": str(feishu.get("verificationToken", "")).strip(),
-        "FEISHU_ALLOW_FROM": ",".join(normalize_allowlist(feishu_allow_from)),
-        "TELEGRAM_BOT_TOKEN": str(telegram.get("token", "")).strip(),
-        "TELEGRAM_ALLOW_FROM": ",".join(normalize_allowlist(telegram_allow_from)),
-        "TELEGRAM_PROXY": str(telegram.get("proxy", "")).strip(),
-        "WHATSAPP_BRIDGE_URL": str(whatsapp.get("bridgeUrl", "")).strip(),
-        "WHATSAPP_BRIDGE_TOKEN": str(whatsapp.get("bridgeToken", "")).strip(),
-        "WHATSAPP_ALLOW_FROM": ",".join(normalize_allowlist(whatsapp_allow_from)),
-        "WHATSAPP_RECONNECT_DELAY_SECONDS": str(whatsapp.get("reconnectDelaySeconds", 5)),
-        "DISCORD_BOT_TOKEN": str(discord.get("token", "")).strip(),
-        "DISCORD_ALLOW_FROM": ",".join(normalize_allowlist(discord_allow_from)),
-        "DISCORD_POLL_CHANNELS": ",".join(normalize_allowlist(discord_poll_channels)),
-        "DISCORD_POLL_INTERVAL_SECONDS": str(discord.get("pollIntervalSeconds", 10)),
-        "DISCORD_INCLUDE_BOTS": "1" if is_enabled(discord.get("includeBots"), default=False) else "0",
-        "MOCHAT_BASE_URL": str(mochat.get("baseUrl", "")).strip(),
-        "MOCHAT_CLAW_TOKEN": str(mochat.get("clawToken", "")).strip(),
-        "MOCHAT_AGENT_USER_ID": str(mochat.get("agentUserId", "")).strip(),
-        "MOCHAT_SESSIONS": ",".join(normalize_allowlist(mochat_sessions)),
-        "MOCHAT_PANELS": ",".join(normalize_allowlist(mochat_panels)),
-        "MOCHAT_ALLOW_FROM": ",".join(normalize_allowlist(mochat_allow_from)),
-        "MOCHAT_POLL_INTERVAL_SECONDS": str(mochat.get("pollIntervalSeconds", 5)),
-        "MOCHAT_WATCH_TIMEOUT_MS": str(mochat.get("watchTimeoutMs", 15000)),
-        "MOCHAT_WATCH_LIMIT": str(mochat.get("watchLimit", 20)),
-        "MOCHAT_PANEL_LIMIT": str(mochat.get("panelLimit", 50)),
-        "DINGTALK_CLIENT_ID": str(dingtalk.get("clientId", "")).strip(),
-        "DINGTALK_CLIENT_SECRET": str(dingtalk.get("clientSecret", "")).strip(),
-        "DINGTALK_ALLOW_FROM": ",".join(normalize_allowlist(dingtalk_allow_from)),
-        "DINGTALK_STREAM_MODE_ENABLED": "1"
-        if is_enabled(dingtalk.get("streamModeEnabled"), default=True)
-        else "0",
-        "DINGTALK_STREAM_RECONNECT_DELAY_SECONDS": str(dingtalk.get("streamReconnectDelaySeconds", 5)),
-        "EMAIL_CONSENT_GRANTED": "1" if is_enabled(email.get("consentGranted"), default=False) else "0",
-        "EMAIL_IMAP_HOST": str(email.get("imapHost", "")).strip(),
-        "EMAIL_IMAP_PORT": str(email.get("imapPort", 993)),
-        "EMAIL_IMAP_USERNAME": str(email.get("imapUsername", "")).strip(),
-        "EMAIL_IMAP_PASSWORD": str(email.get("imapPassword", "")),
-        "EMAIL_IMAP_MAILBOX": str(email.get("imapMailbox", "INBOX")).strip() or "INBOX",
-        "EMAIL_IMAP_USE_SSL": "1" if is_enabled(email.get("imapUseSsl"), default=True) else "0",
-        "EMAIL_SMTP_HOST": str(email.get("smtpHost", "")).strip(),
-        "EMAIL_SMTP_PORT": str(email.get("smtpPort", 587)),
-        "EMAIL_SMTP_USERNAME": str(email.get("smtpUsername", "")).strip(),
-        "EMAIL_SMTP_PASSWORD": str(email.get("smtpPassword", "")),
-        "EMAIL_SMTP_USE_TLS": "1" if is_enabled(email.get("smtpUseTls"), default=True) else "0",
-        "EMAIL_SMTP_USE_SSL": "1" if is_enabled(email.get("smtpUseSsl"), default=False) else "0",
-        "EMAIL_FROM_ADDRESS": str(email.get("fromAddress", "")).strip(),
-        "EMAIL_AUTO_REPLY_ENABLED": "1" if is_enabled(email.get("autoReplyEnabled"), default=True) else "0",
-        "EMAIL_POLL_INTERVAL_SECONDS": str(email.get("pollIntervalSeconds", 30)),
-        "EMAIL_MARK_SEEN": "1" if is_enabled(email.get("markSeen"), default=True) else "0",
-        "EMAIL_MAX_BODY_CHARS": str(email.get("maxBodyChars", 12000)),
-        "EMAIL_ALLOW_FROM": ",".join(normalize_allowlist(email_allow_from)),
-        "SLACK_BOT_TOKEN": str(slack.get("botToken", "")).strip(),
-        "SLACK_APP_TOKEN": str(slack.get("appToken", "")).strip(),
-        "SLACK_DEFAULT_CHANNEL": str(slack.get("defaultChannel", "")).strip(),
-        "SLACK_ALLOW_FROM": ",".join(normalize_allowlist(slack_allow_from)),
-        "SLACK_POLL_CHANNELS": ",".join(normalize_allowlist(slack_poll_channels)),
-        "SLACK_POLL_INTERVAL_SECONDS": str(slack.get("pollIntervalSeconds", 15)),
-        "SLACK_INCLUDE_BOTS": "1" if is_enabled(slack.get("includeBots"), default=False) else "0",
-        "QQ_APP_ID": str(qq.get("appId", "")).strip(),
-        "QQ_SECRET": str(qq.get("secret", "")).strip(),
-        "QQ_ALLOW_FROM": ",".join(normalize_allowlist(qq_allow_from)),
         "BRAVE_API_KEY": web_search_api_key,
         "SENTIENTAGENT_V2_WEB_ENABLED": "1" if web_enabled else "0",
         "SENTIENTAGENT_V2_WEB_SEARCH_ENABLED": "1" if web_search_enabled else "0",
@@ -487,6 +513,7 @@ def config_to_env(config: dict[str, Any]) -> dict[str, str]:
         "SENTIENTAGENT_V2_MCP_SERVERS_JSON": mcp_servers_json,
         "SENTIENTAGENT_V2_DEBUG": "1" if bool(debug) else "0",
     }
+    env.update(channel_env)
     if provider_key_env:
         env[provider_key_env] = provider_api_key
     return env

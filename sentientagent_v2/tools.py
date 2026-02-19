@@ -21,6 +21,7 @@ from loguru import logger
 
 from .bus.events import OutboundMessage
 from .env_utils import env_enabled
+from .runtime.cron_helpers import cron_store_path, format_schedule
 from .runtime.cron_schedule_parser import parse_schedule_input
 from .runtime.cron_service import CronService
 from .runtime.tool_context import get_route
@@ -738,7 +739,7 @@ def message_image(path: str, caption: str = "", channel: str | None = None, chat
 
 
 def _cron_store_path() -> Path:
-    return _workspace() / ".sentientagent_v2" / "cron_jobs.json"
+    return cron_store_path(_workspace())
 
 
 def _cron_service() -> CronService:
@@ -746,22 +747,7 @@ def _cron_service() -> CronService:
 
 
 def _format_job_schedule(job: Any) -> str:
-    schedule = getattr(job, "schedule", None)
-    if schedule is None:
-        return "unknown"
-    kind = getattr(schedule, "kind", "")
-    if kind == "every":
-        return f"every:{getattr(schedule, 'every_seconds', 0)}s"
-    if kind == "cron":
-        expr = getattr(schedule, "cron_expr", "") or ""
-        tz = getattr(schedule, "tz", None)
-        return f"cron:{expr} ({tz})" if tz else f"cron:{expr}"
-    if kind == "at":
-        at_ms = getattr(schedule, "at_ms", None)
-        if at_ms:
-            return f"at:{dt.datetime.fromtimestamp(at_ms / 1000).isoformat(timespec='seconds')}"
-        return "at:unknown"
-    return str(kind or "unknown")
+    return format_schedule(getattr(job, "schedule", None))
 
 
 def cron(

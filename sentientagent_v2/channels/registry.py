@@ -53,6 +53,18 @@ def _env_csv(name: str) -> list[str]:
     return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
 
 
+def _missing_env_var(name: str, *, strip: bool = True) -> bool:
+    """Return True when an environment variable is empty/missing."""
+    raw = os.getenv(name, "")
+    value = raw.strip() if strip else raw
+    return not bool(value)
+
+
+def _required_env_issues(channel: str, *env_names: str) -> list[str]:
+    """Build standard missing-env issue lines for one channel."""
+    return [f"Missing {env_name} for {channel} channel." for env_name in env_names if _missing_env_var(env_name)]
+
+
 def _build_feishu(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
     allow_from = _env_csv("FEISHU_ALLOW_FROM")
     return FeishuChannel(
@@ -69,10 +81,7 @@ def _validate_feishu() -> list[str]:
     issues: list[str] = []
     if not FEISHU_AVAILABLE:
         issues.append("Feishu channel requires `lark-oapi` (pip install lark-oapi).")
-    if not os.getenv("FEISHU_APP_ID", "").strip():
-        issues.append("Missing FEISHU_APP_ID for feishu channel.")
-    if not os.getenv("FEISHU_APP_SECRET", "").strip():
-        issues.append("Missing FEISHU_APP_SECRET for feishu channel.")
+    issues.extend(_required_env_issues("feishu", "FEISHU_APP_ID", "FEISHU_APP_SECRET"))
     return issues
 
 
@@ -87,9 +96,7 @@ def _build_telegram(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
 
 
 def _validate_telegram() -> list[str]:
-    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip():
-        return []
-    return ["Missing TELEGRAM_BOT_TOKEN for telegram channel."]
+    return _required_env_issues("telegram", "TELEGRAM_BOT_TOKEN")
 
 
 def _build_discord(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
@@ -106,9 +113,7 @@ def _build_discord(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
 
 
 def _validate_discord() -> list[str]:
-    if os.getenv("DISCORD_BOT_TOKEN", "").strip():
-        return []
-    return ["Missing DISCORD_BOT_TOKEN for discord channel."]
+    return _required_env_issues("discord", "DISCORD_BOT_TOKEN")
 
 
 def _build_dingtalk(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
@@ -127,10 +132,7 @@ def _validate_dingtalk() -> list[str]:
     issues: list[str] = []
     if not DINGTALK_AVAILABLE:
         issues.append("DingTalk channel requires `dingtalk-stream` (pip install dingtalk-stream).")
-    if not os.getenv("DINGTALK_CLIENT_ID", "").strip():
-        issues.append("Missing DINGTALK_CLIENT_ID for dingtalk channel.")
-    if not os.getenv("DINGTALK_CLIENT_SECRET", "").strip():
-        issues.append("Missing DINGTALK_CLIENT_SECRET for dingtalk channel.")
+    issues.extend(_required_env_issues("dingtalk", "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"))
     return issues
 
 
@@ -149,8 +151,7 @@ def _validate_whatsapp() -> list[str]:
     issues: list[str] = []
     if not WHATSAPP_AVAILABLE:
         issues.append("WhatsApp channel requires `websockets` package.")
-    if not os.getenv("WHATSAPP_BRIDGE_URL", "").strip():
-        issues.append("Missing WHATSAPP_BRIDGE_URL for whatsapp channel.")
+    issues.extend(_required_env_issues("whatsapp", "WHATSAPP_BRIDGE_URL"))
     return issues
 
 
@@ -174,12 +175,7 @@ def _build_mochat(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
 
 
 def _validate_mochat() -> list[str]:
-    issues: list[str] = []
-    if not os.getenv("MOCHAT_BASE_URL", "").strip():
-        issues.append("Missing MOCHAT_BASE_URL for mochat channel.")
-    if not os.getenv("MOCHAT_CLAW_TOKEN", "").strip():
-        issues.append("Missing MOCHAT_CLAW_TOKEN for mochat channel.")
-    return issues
+    return _required_env_issues("mochat", "MOCHAT_BASE_URL", "MOCHAT_CLAW_TOKEN")
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -225,11 +221,8 @@ def _validate_email() -> list[str]:
     issues: list[str] = []
     if not _env_flag("EMAIL_CONSENT_GRANTED", default=False):
         issues.append("Missing EMAIL_CONSENT_GRANTED=1 for email channel.")
-    if not os.getenv("EMAIL_SMTP_HOST", "").strip():
-        issues.append("Missing EMAIL_SMTP_HOST for email channel.")
-    if not os.getenv("EMAIL_SMTP_USERNAME", "").strip():
-        issues.append("Missing EMAIL_SMTP_USERNAME for email channel.")
-    if not os.getenv("EMAIL_SMTP_PASSWORD", ""):
+    issues.extend(_required_env_issues("email", "EMAIL_SMTP_HOST", "EMAIL_SMTP_USERNAME"))
+    if _missing_env_var("EMAIL_SMTP_PASSWORD", strip=False):
         issues.append("Missing EMAIL_SMTP_PASSWORD for email channel.")
     return issues
 
@@ -250,9 +243,7 @@ def _build_slack(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
 
 
 def _validate_slack() -> list[str]:
-    if os.getenv("SLACK_BOT_TOKEN", "").strip():
-        return []
-    return ["Missing SLACK_BOT_TOKEN for slack channel."]
+    return _required_env_issues("slack", "SLACK_BOT_TOKEN")
 
 
 def _build_qq(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
@@ -269,10 +260,7 @@ def _validate_qq() -> list[str]:
     issues: list[str] = []
     if not QQ_AVAILABLE:
         issues.append("QQ channel requires `qq-botpy` (pip install qq-botpy).")
-    if not os.getenv("QQ_APP_ID", "").strip():
-        issues.append("Missing QQ_APP_ID for qq channel.")
-    if not os.getenv("QQ_SECRET", "").strip():
-        issues.append("Missing QQ_SECRET for qq channel.")
+    issues.extend(_required_env_issues("qq", "QQ_APP_ID", "QQ_SECRET"))
     return issues
 
 
@@ -302,67 +290,31 @@ CHANNEL_ORDER: tuple[str, ...] = (
 )
 
 
+_IMPLEMENTED_CHANNEL_SPECS: tuple[ChannelSpec, ...] = (
+    ChannelSpec(name="local", build=_build_local, validate_setup=_validate_local),
+    ChannelSpec(name="feishu", build=_build_feishu, validate_setup=_validate_feishu),
+    ChannelSpec(name="telegram", build=_build_telegram, validate_setup=_validate_telegram),
+    ChannelSpec(name="whatsapp", build=_build_whatsapp, validate_setup=_validate_whatsapp),
+    ChannelSpec(name="discord", build=_build_discord, validate_setup=_validate_discord),
+    ChannelSpec(name="mochat", build=_build_mochat, validate_setup=_validate_mochat),
+    ChannelSpec(name="dingtalk", build=_build_dingtalk, validate_setup=_validate_dingtalk),
+    ChannelSpec(name="email", build=_build_email, validate_setup=_validate_email),
+    ChannelSpec(name="slack", build=_build_slack, validate_setup=_validate_slack),
+    ChannelSpec(name="qq", build=_build_qq, validate_setup=_validate_qq),
+)
+
+
 def _make_registry() -> dict[str, ChannelSpec]:
-    specs: dict[str, ChannelSpec] = {
-        "local": ChannelSpec(
-            name="local",
-            build=_build_local,
-            validate_setup=_validate_local,
-        ),
-        "feishu": ChannelSpec(
-            name="feishu",
-            build=_build_feishu,
-            validate_setup=_validate_feishu,
-        ),
-        "telegram": ChannelSpec(
-            name="telegram",
-            build=_build_telegram,
-            validate_setup=_validate_telegram,
-        ),
-        "whatsapp": ChannelSpec(
-            name="whatsapp",
-            build=_build_whatsapp,
-            validate_setup=_validate_whatsapp,
-        ),
-        "discord": ChannelSpec(
-            name="discord",
-            build=_build_discord,
-            validate_setup=_validate_discord,
-        ),
-        "mochat": ChannelSpec(
-            name="mochat",
-            build=_build_mochat,
-            validate_setup=_validate_mochat,
-        ),
-        "dingtalk": ChannelSpec(
-            name="dingtalk",
-            build=_build_dingtalk,
-            validate_setup=_validate_dingtalk,
-        ),
-        "email": ChannelSpec(
-            name="email",
-            build=_build_email,
-            validate_setup=_validate_email,
-        ),
-        "slack": ChannelSpec(
-            name="slack",
-            build=_build_slack,
-            validate_setup=_validate_slack,
-        ),
-        "qq": ChannelSpec(
-            name="qq",
-            build=_build_qq,
-            validate_setup=_validate_qq,
-        ),
-    }
+    specs: dict[str, ChannelSpec] = {spec.name: spec for spec in _IMPLEMENTED_CHANNEL_SPECS}
 
     for name in CHANNEL_ORDER:
-        if name in specs:
-            continue
-        specs[name] = ChannelSpec(
-            name=name,
-            build=_build_not_implemented,
-            validate_setup=_validate_not_implemented(name),
+        specs.setdefault(
+            name,
+            ChannelSpec(
+                name=name,
+                build=_build_not_implemented,
+                validate_setup=_validate_not_implemented(name),
+            ),
         )
     return specs
 
