@@ -254,6 +254,47 @@ def _iter_exception_chain(exc: BaseException) -> list[BaseException]:
     return items
 
 
+def _build_connection_params(server_name: str, raw_cfg: dict[str, Any]) -> tuple[Any, str] | None:
+    """Build MCP connection params and transport name from one server config."""
+    command = str(raw_cfg.get("command", "") or "").strip()
+    url = str(raw_cfg.get("url", "") or "").strip()
+    args = _string_list(raw_cfg.get("args", []))
+    env = _string_dict(raw_cfg.get("env", {}))
+    headers = _string_dict(raw_cfg.get("headers", {})) or None
+    transport = str(raw_cfg.get("transport", "") or "").strip().lower()
+
+    if command:
+        return (
+            StdioConnectionParams(
+                server_params=StdioServerParameters(
+                    command=command,
+                    args=args,
+                    env=env or None,
+                ),
+            ),
+            "stdio",
+        )
+    if url:
+        if transport == "sse" or url.lower().rstrip("/").endswith("/sse"):
+            return SseConnectionParams(url=url, headers=headers), "sse"
+        return StreamableHTTPConnectionParams(url=url, headers=headers), "http"
+
+    logger.warning("MCP server '{}' has neither command nor url; skipping", server_name)
+    return None
+
+
+def _resolve_toolset_options(server_name: str, raw_cfg: dict[str, Any]) -> tuple[list[str] | None, str, bool]:
+    """Resolve tool filter, name prefix and confirmation options."""
+    tool_filter = _pick(raw_cfg, "tool_filter", "toolFilter")
+    tool_filter_list = _string_list(tool_filter) if isinstance(tool_filter, list) else None
+
+    prefix = str(_pick(raw_cfg, "tool_name_prefix", "toolNamePrefix", "") or "").strip()
+    if not prefix:
+        prefix = f"mcp_{server_name}_"
+    require_confirmation = bool(_pick(raw_cfg, "require_confirmation", "requireConfirmation", False))
+    return tool_filter_list, prefix, require_confirmation
+
+
 def build_mcp_toolsets(mcp_servers: dict[str, Any], *, log_registered: bool = True) -> list[ManagedMcpToolset]:
     """Build configured MCP toolsets.
 
@@ -270,39 +311,12 @@ def build_mcp_toolsets(mcp_servers: dict[str, Any], *, log_registered: bool = Tr
             logger.warning("MCP server '{}' config must be an object; got {}", server_name, type(raw_cfg).__name__)
             continue
 
-        command = str(raw_cfg.get("command", "") or "").strip()
-        url = str(raw_cfg.get("url", "") or "").strip()
-        args = _string_list(raw_cfg.get("args", []))
-        env = _string_dict(raw_cfg.get("env", {}))
-        headers = _string_dict(raw_cfg.get("headers", {})) or None
-        transport = str(raw_cfg.get("transport", "") or "").strip().lower()
-        transport_name = "stdio"
-
-        if command:
-            connection_params: Any = StdioConnectionParams(
-                server_params=StdioServerParameters(
-                    command=command,
-                    args=args,
-                    env=env or None,
-                ),
-            )
-        elif url:
-            if transport == "sse" or url.lower().rstrip("/").endswith("/sse"):
-                transport_name = "sse"
-                connection_params = SseConnectionParams(url=url, headers=headers)
-            else:
-                transport_name = "http"
-                connection_params = StreamableHTTPConnectionParams(url=url, headers=headers)
-        else:
-            logger.warning("MCP server '{}' has neither command nor url; skipping", server_name)
+        built = _build_connection_params(str(server_name), raw_cfg)
+        if built is None:
             continue
+        connection_params, transport_name = built
 
-        tool_filter = _pick(raw_cfg, "tool_filter", "toolFilter")
-        tool_filter_list = _string_list(tool_filter) if isinstance(tool_filter, list) else None
-        prefix = str(_pick(raw_cfg, "tool_name_prefix", "toolNamePrefix", "") or "").strip()
-        if not prefix:
-            prefix = f"mcp_{server_name}_"
-        require_confirmation = bool(_pick(raw_cfg, "require_confirmation", "requireConfirmation", False))
+        tool_filter_list, prefix, require_confirmation = _resolve_toolset_options(str(server_name), raw_cfg)
 
         meta = McpToolsetMeta(
             name=str(server_name),
