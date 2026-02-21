@@ -144,26 +144,87 @@ async def _collect_connected_mcp_apis(
     toolsets: list[ManagedMcpToolset],
     *,
     timeout_seconds: float,
-) -> dict[str, list[str]]:
-    """Fetch tool/API names for already-connected MCP toolsets."""
+) -> dict[str, list[dict[str, str]]]:
+    """Fetch API details for already-connected MCP toolsets."""
 
-    async def _collect_one(toolset: ManagedMcpToolset) -> tuple[str, list[str]]:
-        names: set[str] = set()
+    def _pick_schema(raw_tool: Any, schema_name: str) -> Any:
+        """Read one schema field from MCP raw tool using camel/snake conventions."""
+        value = getattr(raw_tool, schema_name, None)
+        if value is not None:
+            return value
+        if schema_name == "inputSchema":
+            return getattr(raw_tool, "input_schema", None)
+        if schema_name == "outputSchema":
+            return getattr(raw_tool, "output_schema", None)
+        return None
+
+    def _schema_summary(schema: Any) -> str:
+        """Render a concise schema summary focused on input/output fields."""
+        if schema is None:
+            return "(未声明)"
+        if isinstance(schema, dict):
+            schema_type = str(schema.get("type", ""))
+            properties = schema.get("properties", {})
+            required = schema.get("required", [])
+            if isinstance(properties, dict) and properties:
+                required_names = set(required) if isinstance(required, list) else set()
+                names: list[str] = []
+                for key in properties.keys():
+                    key_str = str(key)
+                    if key_str in required_names:
+                        names.append(f"{key_str}(required)")
+                    else:
+                        names.append(key_str)
+                prefix = f"type={schema_type}; " if schema_type else ""
+                return f"{prefix}fields={', '.join(names)}"
+            if schema_type:
+                return f"type={schema_type}"
+        try:
+            rendered = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            rendered = str(schema)
+        if len(rendered) > 240:
+            rendered = rendered[:237] + "..."
+        return rendered
+
+    async def _collect_one(toolset: ManagedMcpToolset) -> tuple[str, list[dict[str, str]]]:
+        api_rows: list[dict[str, str]] = []
         try:
             tools = await asyncio.wait_for(
                 ManagedMcpToolset.get_tools(toolset),
                 timeout=max(1.0, float(timeout_seconds)),
             )
         except Exception:
-            return toolset.meta.name, []
+            return toolset.meta.name, api_rows
         for tool in tools:
             name = str(getattr(tool, "name", "") or "").strip()
-            if name:
-                names.add(name)
-        return toolset.meta.name, sorted(names)
+            if not name:
+                continue
+            raw_tool = getattr(tool, "raw_mcp_tool", None)
+            description = ""
+            input_summary = "(未声明)"
+            output_summary = "(未声明)"
+            if raw_tool is not None:
+                description = (
+                    str(getattr(raw_tool, "description", "") or getattr(raw_tool, "title", "") or "").strip()
+                )
+                input_summary = _schema_summary(_pick_schema(raw_tool, "inputSchema"))
+                output_summary = _schema_summary(_pick_schema(raw_tool, "outputSchema"))
+            if not description:
+                description = str(getattr(tool, "description", "") or "").strip() or "(未提供)"
+            api_rows.append(
+                {
+                    "name": name,
+                    "description": description,
+                    "input": input_summary,
+                    "output": output_summary,
+                }
+            )
+        api_rows.sort(key=lambda item: item.get("name", ""))
+        return toolset.meta.name, api_rows
 
     pairs = await asyncio.gather(*[_collect_one(toolset) for toolset in toolsets])
-    return {name: api_names for name, api_names in pairs}
+    return {name: rows for name, rows in pairs}
 
 
 def _cmd_mcps() -> int:
@@ -210,10 +271,15 @@ def _cmd_mcps() -> int:
             continue
         server_name = str(item.get("name", "unknown"))
         transport = str(item.get("transport", "unknown"))
-        api_names = api_names_by_server.get(server_name, [])
+        api_rows = api_names_by_server.get(server_name, [])
         logger.info(f"- {server_name} ({transport})")
-        if api_names:
-            logger.info(f"  APIs ({len(api_names)}): {', '.join(api_names)}")
+        if api_rows:
+            logger.info(f"  APIs ({len(api_rows)}):")
+            for api in api_rows:
+                logger.info(f"  - {api.get('name', '')}")
+                logger.info(f"    功能: {api.get('description', '(未提供)')}")
+                logger.info(f"    输入: {api.get('input', '(未声明)')}")
+                logger.info(f"    输出: {api.get('output', '(未声明)')}")
         else:
             logger.info("  APIs (0): (none)")
     return 0

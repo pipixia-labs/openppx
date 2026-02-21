@@ -476,7 +476,24 @@ class CLITests(unittest.TestCase):
                 with patch.object(
                     cli,
                     "_collect_connected_mcp_apis",
-                    new=AsyncMock(return_value={"filesystem": ["read_file", "write_file"]}),
+                    new=AsyncMock(
+                        return_value={
+                            "filesystem": [
+                                {
+                                    "name": "read_file",
+                                    "description": "Read file content",
+                                    "input": "fields=path(required)",
+                                    "output": "type=string",
+                                },
+                                {
+                                    "name": "write_file",
+                                    "description": "Write file content",
+                                    "input": "fields=path(required),content(required)",
+                                    "output": "type=object",
+                                },
+                            ]
+                        }
+                    ),
                 ):
                     with patch.object(cli.logger, "info") as mocked_info:
                         code = cli._cmd_mcps()
@@ -485,8 +502,33 @@ class CLITests(unittest.TestCase):
         info_text = "\n".join(call.args[0] for call in mocked_info.call_args_list if call.args)
         self.assertIn("Connected MCP servers: 1", info_text)
         self.assertIn("filesystem (stdio)", info_text)
-        self.assertIn("read_file, write_file", info_text)
+        self.assertIn("APIs (2):", info_text)
+        self.assertIn("read_file", info_text)
+        self.assertIn("功能: Read file content", info_text)
+        self.assertIn("输入: fields=path(required)", info_text)
+        self.assertIn("输出: type=string", info_text)
         self.assertNotIn("bad_remote (http)", info_text)
+
+    def test_collect_connected_mcp_apis_extracts_input_output_and_description(self) -> None:
+        from openheron import cli
+
+        fake_raw_tool = pytypes.SimpleNamespace(
+            description="Read file content",
+            inputSchema={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+            outputSchema={"type": "string"},
+        )
+        fake_tool = pytypes.SimpleNamespace(name="read_file", raw_mcp_tool=fake_raw_tool)
+        fake_toolset = pytypes.SimpleNamespace(meta=pytypes.SimpleNamespace(name="filesystem"))
+
+        with patch.object(cli.ManagedMcpToolset, "get_tools", new=AsyncMock(return_value=[fake_tool])):
+            rows_by_server = asyncio.run(cli._collect_connected_mcp_apis([fake_toolset], timeout_seconds=3.0))
+
+        rows = rows_by_server["filesystem"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "read_file")
+        self.assertEqual(rows[0]["description"], "Read file content")
+        self.assertIn("path(required)", rows[0]["input"])
+        self.assertEqual(rows[0]["output"], "type=string")
 
     def test_cmd_spawn_lists_recent_subagent_records(self) -> None:
         from openheron import cli
