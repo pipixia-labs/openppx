@@ -60,10 +60,91 @@ class ToolsTests(unittest.TestCase):
         result = exec_command("echo hello")
         self.assertIn("hello", result)
 
+    def test_exec_tool_supports_shell_compound_command(self) -> None:
+        if os.name == "nt":
+            cmd = "set OPENHERON_EXEC_TEST=hello && echo %OPENHERON_EXEC_TEST%"
+        else:
+            cmd = "export OPENHERON_EXEC_TEST=hello && echo $OPENHERON_EXEC_TEST"
+        out = exec_command(cmd)
+        self.assertIn("hello", out.lower())
+
     def test_exec_tool_respects_allowlist(self) -> None:
         os.environ["OPENHERON_EXEC_ALLOWLIST"] = "python"
         out = exec_command("echo hello")
         self.assertIn("allowlist", out.lower())
+
+    def test_exec_tool_allowlist_checks_all_chain_segments(self) -> None:
+        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
+        out = exec_command("echo ok && python -V")
+        self.assertIn("allowlist", out.lower())
+        self.assertIn("python", out.lower())
+
+    def test_exec_tool_allowlist_allows_builtin_plus_allowed_command(self) -> None:
+        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
+        if os.name == "nt":
+            cmd = "set OPENHERON_EXEC_TEST=hello && echo %OPENHERON_EXEC_TEST%"
+        else:
+            cmd = "export OPENHERON_EXEC_TEST=hello && echo $OPENHERON_EXEC_TEST"
+        out = exec_command(cmd)
+        self.assertIn("hello", out.lower())
+
+    def test_exec_tool_allowlist_handles_env_assignment_prefix(self) -> None:
+        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
+        if os.name == "nt":
+            cmd = "set OPENHERON_EXEC_TEST=hello && echo %OPENHERON_EXEC_TEST%"
+        else:
+            cmd = "OPENHERON_EXEC_TEST=hello echo hello"
+        out = exec_command(cmd)
+        self.assertIn("hello", out.lower())
+
+    def test_exec_tool_security_mode_deny_blocks_execution(self) -> None:
+        os.environ["OPENHERON_EXEC_SECURITY"] = "deny"
+        out = exec_command("echo hello")
+        self.assertIn("mode=deny", out.lower())
+
+    def test_exec_tool_security_mode_full_ignores_allowlist(self) -> None:
+        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "python"
+        os.environ["OPENHERON_EXEC_SECURITY"] = "full"
+        out = exec_command("echo hello")
+        self.assertIn("hello", out.lower())
+
+    def test_exec_tool_allowlist_mode_allows_safe_bins(self) -> None:
+        os.environ["OPENHERON_EXEC_ALLOWLIST"] = ""
+        os.environ["OPENHERON_EXEC_SECURITY"] = "allowlist"
+        os.environ["OPENHERON_EXEC_SAFE_BINS"] = "echo"
+        out = exec_command("echo hello")
+        self.assertIn("hello", out.lower())
+
+    def test_exec_tool_rejects_invalid_security_mode(self) -> None:
+        os.environ["OPENHERON_EXEC_SECURITY"] = "invalid"
+        out = exec_command("echo hello")
+        self.assertIn("invalid openheron_exec_security", out.lower())
+
+    def test_exec_tool_rejects_invalid_ask_mode(self) -> None:
+        os.environ["OPENHERON_EXEC_ASK"] = "invalid"
+        out = exec_command("echo hello")
+        self.assertIn("invalid openheron_exec_ask", out.lower())
+
+    def test_exec_tool_ask_always_requires_approval(self) -> None:
+        os.environ["OPENHERON_EXEC_ASK"] = "always"
+        out = exec_command("echo hello")
+        self.assertIn("approval required", out.lower())
+        self.assertIn("ask=always", out.lower())
+
+    def test_exec_tool_ask_on_miss_requires_approval_for_allowlist_miss(self) -> None:
+        os.environ["OPENHERON_EXEC_SECURITY"] = "allowlist"
+        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "python"
+        os.environ["OPENHERON_EXEC_ASK"] = "on-miss"
+        out = exec_command("echo hello")
+        self.assertIn("approval required", out.lower())
+        self.assertIn("ask=on-miss", out.lower())
+
+    def test_exec_tool_ask_on_miss_allows_allowlist_hit(self) -> None:
+        os.environ["OPENHERON_EXEC_SECURITY"] = "allowlist"
+        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
+        os.environ["OPENHERON_EXEC_ASK"] = "on-miss"
+        out = exec_command("echo hello")
+        self.assertIn("hello", out.lower())
 
     def test_exec_tool_is_disabled_when_allow_exec_is_off(self) -> None:
         os.environ["OPENHERON_ALLOW_EXEC"] = "0"
@@ -75,6 +156,13 @@ class ToolsTests(unittest.TestCase):
             os.environ["OPENHERON_WORKSPACE"] = tmp
             os.environ["OPENHERON_RESTRICT_TO_WORKSPACE"] = "1"
             out = write_file("../outside.txt", "nope")
+            self.assertIn("outside workspace", out.lower())
+
+    def test_exec_tool_chain_path_guard_blocks_outside_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENHERON_RESTRICT_TO_WORKSPACE"] = "1"
+            out = exec_command("echo ok;../outside.sh")
             self.assertIn("outside workspace", out.lower())
 
     def test_message_tool_writes_outbox(self) -> None:

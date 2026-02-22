@@ -46,5 +46,17 @@
 
 补充：
 
-- `execAllowlist` 只校验命令名（argv 第一个 token）
+- `execAllowlist` 在链式命令下会逐段校验命令名（`&&` / `||` / `;`）
 - `exec` 默认 `shell=False`，减少 shell 注入面
+
+### Exec 运行时策略（新增）
+
+`exec` 现在支持常见 shell 复合命令（如 `export ... && ...`），并可通过环境变量控制执行策略：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `OPENHERON_EXEC_SECURITY` | 自动（有 allowlist 时=`allowlist`，否则=`full`） | 执行策略：`deny` / `allowlist` / `full` |
+| `OPENHERON_EXEC_SAFE_BINS` | 空 | 在 `allowlist` 模式下允许的额外命令名（逗号分隔） |
+| `OPENHERON_EXEC_ASK` | `off` | 审批策略：`off` / `on-miss` / `always` |
+
+当前版本中，`OPENHERON_EXEC_ASK` 触发时会返回 `approval required` 占位错误（尚未接入完整审批流）。

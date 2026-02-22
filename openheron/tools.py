@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import shlex
 import subprocess
 import uuid
@@ -19,6 +20,8 @@ from urllib.request import Request, urlopen
 
 from .bus.events import OutboundMessage
 from .env_utils import env_enabled
+from .exec_policy import command_segments as _policy_command_segments
+from .exec_policy import validate_exec_security as _policy_validate_exec_security
 from .logging_utils import debug_logging_enabled, emit_debug
 from .runtime.cron_helpers import cron_store_path, format_schedule
 from .runtime.cron_schedule_parser import parse_schedule_input
@@ -210,13 +213,10 @@ _DENY_PATTERNS = [
 _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 _WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-
-
-def _command_name(argv0: str) -> str:
-    token = argv0.strip()
-    if not token:
-        return ""
-    return Path(token).name if ("/" in token or "\\" in token) else token
+_SHELL_CONTROL_TOKENS = {"&&", "||", ";", "|"}
+_SHELL_REDIRECTION_TOKENS = {">", ">>", "<", "<<"}
+_SHELL_BUILTINS = {"export", "cd", "source", ".", "alias", "unalias", "set", "unset"}
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
 
 
 def _looks_like_path_token(token: str) -> bool:
@@ -256,11 +256,83 @@ def _validate_exec_paths(argv: list[str], cwd: Path, policy: SecurityPolicy) -> 
     return None
 
 
+def _command_segments(command: str, argv: list[str]) -> list[list[str]]:
+    """Return command segments split by chain operators (&&/||/;)."""
+    return _policy_command_segments(command, argv)
+
+
+def _validate_exec_paths_for_command(
+    command: str,
+    argv: list[str],
+    cwd: Path,
+    policy: SecurityPolicy,
+) -> str | None:
+    """Validate path tokens for each parsed command segment."""
+    for segment_argv in _command_segments(command, argv):
+        path_guard_error = _validate_exec_paths(segment_argv, cwd, policy)
+        if path_guard_error:
+            return path_guard_error
+    return None
+
+
+def _should_use_shell(argv: list[str]) -> bool:
+    """Return whether a command likely requires shell semantics."""
+    if not argv:
+        return False
+    first = argv[0]
+    if first in _SHELL_BUILTINS:
+        return True
+    if _ENV_ASSIGNMENT_RE.match(first):
+        return True
+    for token in argv:
+        if token in _SHELL_CONTROL_TOKENS:
+            return True
+        if token in _SHELL_REDIRECTION_TOKENS:
+            return True
+        if token.startswith(">") or token.startswith("<"):
+            return True
+    return False
+
+
+def _build_shell_argv(command: str) -> list[str] | None:
+    """Build a shell argv list for cross-platform command execution."""
+    if os.name == "nt":
+        comspec = os.getenv("COMSPEC", "").strip() or "cmd.exe"
+        return [comspec, "/c", command]
+
+    shell_from_env = os.getenv("SHELL", "").strip()
+    if shell_from_env and Path(shell_from_env).name != "fish":
+        return [shell_from_env, "-lc", command]
+
+    bash_path = shutil.which("bash")
+    if bash_path:
+        return [bash_path, "-lc", command]
+
+    sh_path = shutil.which("sh")
+    if sh_path:
+        return [sh_path, "-lc", command]
+
+    if shell_from_env:
+        return [shell_from_env, "-lc", command]
+    return None
+
+
+def _validate_exec_security(command: str, argv: list[str], policy: SecurityPolicy) -> str | None:
+    """Validate command against configured exec security mode."""
+    return _policy_validate_exec_security(
+        command=command,
+        argv=argv,
+        policy=policy,
+        shell_builtins=_SHELL_BUILTINS,
+    )
+
+
 def exec_command(command: str, working_dir: str | None = None, timeout: int = 60) -> str:
     """Execute a command safely and return combined output.
 
     Args:
-        command: Command string (parsed by shlex, executed with shell=False).
+        command: Command string. Simple commands run directly; shell syntax
+            commands (e.g. export/&&/redirection) run via a shell.
         working_dir: Optional working directory; defaults to workspace root.
         timeout: Max execution time in seconds.
 
@@ -287,9 +359,9 @@ def exec_command(command: str, working_dir: str | None = None, timeout: int = 60
     if not argv:
         return _ret("tool.exec.output", "Error: command is empty")
 
-    command_name = _command_name(argv[0])
-    if not policy.is_exec_allowed(command_name):
-        return _ret("tool.exec.output", f"Error: Command '{command_name}' is not in exec allowlist")
+    security_error = _validate_exec_security(cmd, argv, policy)
+    if security_error:
+        return _ret("tool.exec.output", security_error)
 
     lower = cmd.lower()
     for pattern in _DENY_PATTERNS:
@@ -301,13 +373,20 @@ def exec_command(command: str, working_dir: str | None = None, timeout: int = 60
     except PermissionError as exc:
         return _ret("tool.exec.output", f"Error: {exc}")
 
-    path_guard_error = _validate_exec_paths(argv, cwd, policy)
+    path_guard_error = _validate_exec_paths_for_command(cmd, argv, cwd, policy)
     if path_guard_error:
         return _ret("tool.exec.output", path_guard_error)
 
+    command_argv = argv
+    if _should_use_shell(argv):
+        shell_argv = _build_shell_argv(cmd)
+        if not shell_argv:
+            return _ret("tool.exec.output", "Error: no compatible shell found for command execution")
+        command_argv = shell_argv
+
     try:
         completed = subprocess.run(
-            argv,
+            command_argv,
             shell=False,
             cwd=str(cwd),
             capture_output=True,
