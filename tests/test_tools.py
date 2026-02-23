@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 import os
 import re
 import tempfile
@@ -10,6 +11,9 @@ import time
 import types as pytypes
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.error import URLError
 
 from openheron.runtime.tool_context import route_context
 from openheron.tools import (
@@ -565,6 +569,7 @@ class ToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             upload_file = Path(tmp) / "upload.txt"
             upload_file.write_text("demo", encoding="utf-8")
+            os.environ["OPENHERON_BROWSER_UPLOAD_ROOT"] = tmp
             uploaded = json.loads(
                 browser(
                     action="upload",
@@ -574,7 +579,7 @@ class ToolsTests(unittest.TestCase):
                 )
             )
         self.assertTrue(uploaded["ok"])
-        self.assertEqual(uploaded["uploadedPaths"], [str(upload_file)])
+        self.assertEqual(uploaded["uploadedPaths"], [str(upload_file.resolve())])
 
         dialog = json.loads(
             browser(
@@ -647,13 +652,195 @@ class ToolsTests(unittest.TestCase):
     def test_browser_tool_supports_profiles_and_stop(self) -> None:
         profiles = json.loads(browser(action="profiles"))
         self.assertTrue(profiles["profiles"])
-        self.assertEqual(profiles["profiles"][0]["name"], "openheron")
+        names = {entry["name"] for entry in profiles["profiles"]}
+        self.assertIn("openheron", names)
+        self.assertIn("chrome", names)
 
         json.loads(browser(action="start"))
         json.loads(browser(action="open", target_url="https://example.com"))
         stopped = json.loads(browser(action="stop"))
         self.assertFalse(stopped["running"])
         self.assertEqual(stopped["tabCount"], 0)
+
+    def test_browser_tool_rejects_unsupported_profile_actions(self) -> None:
+        unsupported = json.loads(browser(action="start", profile="chrome"))
+        self.assertFalse(unsupported["ok"])
+        self.assertEqual(unsupported["status"], 501)
+        self.assertIn("not implemented", unsupported["error"])
+
+    def test_browser_tool_auto_includes_browser_service_tokens(self) -> None:
+        os.environ["OPENHERON_BROWSER_CONTROL_TOKEN"] = "token-3"
+        os.environ["OPENHERON_BROWSER_MUTATION_TOKEN"] = "mut-3"
+        configure_browser_runtime(None)
+
+        started = json.loads(browser(action="start"))
+        self.assertTrue(started["running"])
+
+        opened = json.loads(browser(action="open", target_url="https://example.com"))
+        self.assertTrue(opened["ok"])
+
+    def test_browser_tool_exposes_target_routing_errors(self) -> None:
+        unsupported = json.loads(browser(action="status", target="sandbox"))
+        self.assertFalse(unsupported["ok"])
+        self.assertEqual(unsupported["status"], 501)
+        self.assertIn("not implemented", unsupported["error"])
+
+        invalid = json.loads(browser(action="status", target="invalid"))
+        self.assertFalse(invalid["ok"])
+        self.assertEqual(invalid["status"], 400)
+        self.assertIn("target must be", invalid["error"])
+
+    def test_browser_tool_routes_node_target_to_proxy_when_configured(self) -> None:
+        class _DummyResponse:
+            def __init__(self, payload: str) -> None:
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload.encode("utf-8")
+
+            def __enter__(self) -> "_DummyResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_TOKEN"] = "node-token"
+
+        captured: dict[str, str] = {}
+
+        def _fake_urlopen(req, timeout=20):
+            captured["url"] = req.full_url
+            captured["token"] = req.headers.get("X-openheron-browser-proxy-token", "")
+            captured["timeout"] = str(timeout)
+            return _DummyResponse('{"ok": true, "via": "node-proxy"}')
+
+        with patch("openheron.tools.urlopen", side_effect=_fake_urlopen):
+            payload = json.loads(browser(action="status", target="node", node="node-1", timeout_ms=3500))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["via"], "node-proxy")
+        self.assertIn("proxy.local:8787", captured["url"])
+        self.assertIn("node=node-1", captured["url"])
+        self.assertIn("timeoutMs=3500", captured["url"])
+        self.assertEqual(captured["timeout"], "3.5")
+        self.assertEqual(captured["token"], "node-token")
+
+    def test_browser_tool_routes_sandbox_target_to_proxy_when_configured(self) -> None:
+        class _DummyResponse:
+            def __init__(self, payload: str) -> None:
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload.encode("utf-8")
+
+            def __enter__(self) -> "_DummyResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = "http://sandbox-proxy.local:9797"
+        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "shared-token"
+
+        captured: dict[str, str] = {}
+
+        def _fake_urlopen(req, timeout=20):
+            captured["url"] = req.full_url
+            captured["token"] = req.headers.get("X-openheron-browser-proxy-token", "")
+            return _DummyResponse('{"ok": true, "via": "sandbox-proxy"}')
+
+        with patch("openheron.tools.urlopen", side_effect=_fake_urlopen):
+            payload = json.loads(browser(action="status", target="sandbox"))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["via"], "sandbox-proxy")
+        self.assertIn("sandbox-proxy.local:9797", captured["url"])
+        self.assertEqual(captured["token"], "shared-token")
+
+    def test_browser_tool_rejects_node_param_without_node_target(self) -> None:
+        payload = json.loads(browser(action="status", target="host", node="node-1"))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 400)
+        self.assertIn('target="node"', payload["error"])
+
+    def test_browser_tool_rejects_invalid_timeout_ms(self) -> None:
+        payload = json.loads(browser(action="status", target="node", timeout_ms=0))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 400)
+        self.assertIn("timeout_ms", payload["error"])
+
+    def test_browser_tool_handles_proxy_non_json_response(self) -> None:
+        class _DummyResponse:
+            def read(self) -> bytes:
+                return b"not-json"
+
+            def __enter__(self) -> "_DummyResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openheron.tools.urlopen", return_value=_DummyResponse()):
+            payload = json.loads(browser(action="status", target="node"))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 502)
+        self.assertIn("invalid proxy response", payload["error"])
+
+    def test_browser_tool_uses_structured_proxy_error_payload(self) -> None:
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        http_error = HTTPError(
+            url="http://proxy.local:8787/",
+            code=502,
+            msg="Bad Gateway",
+            hdrs=None,
+            fp=BytesIO(b'{"error":"rate limited","status":429}'),
+        )
+        with patch("openheron.tools.urlopen", side_effect=http_error):
+            payload = json.loads(browser(action="status", target="node"))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 429)
+        self.assertEqual(payload["error"], "rate limited")
+
+    def test_browser_tool_maps_proxy_timeout_error(self) -> None:
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openheron.tools.urlopen", side_effect=URLError(TimeoutError("timed out"))):
+            payload = json.loads(browser(action="status", target="node"))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 504)
+        self.assertIn("timeout", payload["error"])
+
+    def test_browser_tool_maps_proxy_connection_refused_error(self) -> None:
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openheron.tools.urlopen", side_effect=URLError(ConnectionRefusedError("refused"))):
+            payload = json.loads(browser(action="status", target="node"))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 503)
+        self.assertIn("connection refused", payload["error"])
+
+    def test_browser_tool_blocks_private_navigation_by_default(self) -> None:
+        json.loads(browser(action="start"))
+        blocked = json.loads(browser(action="open", target_url="http://127.0.0.1:9222"))
+        self.assertFalse(blocked["ok"])
+        self.assertIn("blocked by policy", blocked["error"])
+
+    def test_browser_tool_allows_private_navigation_when_disabled(self) -> None:
+        os.environ["OPENHERON_BROWSER_BLOCK_PRIVATE_NETWORKS"] = "0"
+        configure_browser_runtime(None)
+        json.loads(browser(action="start"))
+        opened = json.loads(browser(action="open", target_url="http://127.0.0.1:9222"))
+        self.assertTrue(opened["ok"])
+
+    def test_browser_tool_blocks_upload_outside_upload_root(self) -> None:
+        with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            outside_file = Path(outside_tmp) / "upload.txt"
+            outside_file.write_text("demo", encoding="utf-8")
+            os.environ["OPENHERON_BROWSER_UPLOAD_ROOT"] = root_tmp
+            configure_browser_runtime(None)
+            json.loads(browser(action="start"))
+            json.loads(browser(action="open", target_url="https://example.com"))
+            blocked = json.loads(browser(action="upload", paths=[str(outside_file)]))
+            self.assertFalse(blocked["ok"])
+            self.assertIn("outside upload root", blocked["error"])
 
     def test_web_fetch_rejects_invalid_url(self) -> None:
         payload = json.loads(web_fetch("file:///tmp/test.txt"))

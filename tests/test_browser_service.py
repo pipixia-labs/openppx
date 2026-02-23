@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
-from openheron.browser_service import BrowserDispatchRequest, get_browser_control_service
+from openheron.browser_service import (
+    BrowserDispatchRequest,
+    get_browser_control_service,
+    reset_browser_control_service,
+)
 from openheron.browser_runtime import configure_browser_runtime
 
 
 class BrowserServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
+        os.environ.pop("OPENHERON_BROWSER_CONTROL_TOKEN", None)
+        os.environ.pop("OPENHERON_BROWSER_MUTATION_TOKEN", None)
+        os.environ.pop("OPENHERON_BROWSER_UPLOAD_ROOT", None)
+        os.environ.pop("OPENHERON_BROWSER_ENFORCE_UPLOAD_ROOT", None)
         configure_browser_runtime(None)
+        reset_browser_control_service()
 
     def test_dispatch_basic_lifecycle_routes(self) -> None:
         service = get_browser_control_service()
@@ -80,6 +90,7 @@ class BrowserServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             upload_file = Path(tmp) / "demo.txt"
             upload_file.write_text("demo", encoding="utf-8")
+            os.environ["OPENHERON_BROWSER_UPLOAD_ROOT"] = tmp
             uploaded = service.dispatch(
                 BrowserDispatchRequest(
                     method="POST",
@@ -88,7 +99,7 @@ class BrowserServiceTests(unittest.TestCase):
                 )
             )
         self.assertEqual(uploaded.status, 200)
-        self.assertEqual(uploaded.body["uploadedPaths"], [str(upload_file)])
+        self.assertEqual(uploaded.body["uploadedPaths"], [str(upload_file.resolve())])
 
         dialog = service.dispatch(
             BrowserDispatchRequest(
@@ -139,6 +150,86 @@ class BrowserServiceTests(unittest.TestCase):
         )
         self.assertEqual(missing_accept.status, 400)
         self.assertFalse(missing_accept.body["ok"])
+
+    def test_dispatch_rejects_unsupported_target_routing(self) -> None:
+        service = get_browser_control_service()
+
+        sandbox_req = service.dispatch(
+            BrowserDispatchRequest(method="GET", path="/", query={"target": "sandbox"})
+        )
+        self.assertEqual(sandbox_req.status, 501)
+        self.assertFalse(sandbox_req.body["ok"])
+        self.assertIn("not implemented", sandbox_req.body["error"])
+
+        invalid_req = service.dispatch(
+            BrowserDispatchRequest(method="GET", path="/", query={"target": "invalid"})
+        )
+        self.assertEqual(invalid_req.status, 400)
+        self.assertFalse(invalid_req.body["ok"])
+        self.assertIn("target must be", invalid_req.body["error"])
+
+    def test_dispatch_profiles_support_chrome_metadata(self) -> None:
+        service = get_browser_control_service()
+
+        profiles = service.dispatch(BrowserDispatchRequest(method="GET", path="/profiles"))
+        self.assertEqual(profiles.status, 200)
+        names = {entry["name"] for entry in profiles.body["profiles"]}
+        self.assertIn("openheron", names)
+        self.assertIn("chrome", names)
+
+        chrome_status = service.dispatch(
+            BrowserDispatchRequest(method="GET", path="/", query={"profile": "chrome"})
+        )
+        self.assertEqual(chrome_status.status, 200)
+        self.assertEqual(chrome_status.body["profile"], "chrome")
+        self.assertFalse(chrome_status.body["running"])
+
+        chrome_start = service.dispatch(
+            BrowserDispatchRequest(method="POST", path="/start", query={"profile": "chrome"})
+        )
+        self.assertEqual(chrome_start.status, 501)
+        self.assertFalse(chrome_start.body["ok"])
+
+    def test_dispatch_requires_auth_token_when_enabled(self) -> None:
+        os.environ["OPENHERON_BROWSER_CONTROL_TOKEN"] = "token-1"
+        reset_browser_control_service()
+        service = get_browser_control_service()
+
+        unauthorized = service.dispatch(BrowserDispatchRequest(method="GET", path="/"))
+        self.assertEqual(unauthorized.status, 401)
+        self.assertFalse(unauthorized.body["ok"])
+
+        authorized = service.dispatch(
+            BrowserDispatchRequest(method="GET", path="/", auth_token="token-1")
+        )
+        self.assertEqual(authorized.status, 200)
+        self.assertIn("running", authorized.body)
+
+    def test_dispatch_requires_mutation_token_for_mutating_routes(self) -> None:
+        os.environ["OPENHERON_BROWSER_CONTROL_TOKEN"] = "token-2"
+        os.environ["OPENHERON_BROWSER_MUTATION_TOKEN"] = "mut-2"
+        reset_browser_control_service()
+        service = get_browser_control_service()
+
+        get_ok = service.dispatch(BrowserDispatchRequest(method="GET", path="/", auth_token="token-2"))
+        self.assertEqual(get_ok.status, 200)
+
+        no_mutation_token = service.dispatch(
+            BrowserDispatchRequest(method="POST", path="/start", auth_token="token-2")
+        )
+        self.assertEqual(no_mutation_token.status, 403)
+        self.assertFalse(no_mutation_token.body["ok"])
+
+        started = service.dispatch(
+            BrowserDispatchRequest(
+                method="POST",
+                path="/start",
+                auth_token="token-2",
+                mutation_token="mut-2",
+            )
+        )
+        self.assertEqual(started.status, 200)
+        self.assertTrue(started.body["running"])
 
 
 if __name__ == "__main__":

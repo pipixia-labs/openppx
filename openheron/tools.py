@@ -9,13 +9,14 @@ import os
 import re
 import shutil
 import shlex
+import socket
 import subprocess
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from .browser_runtime import configure_browser_runtime
@@ -984,6 +985,8 @@ def browser(
     target_id: str | None = None,
     profile: str | None = None,
     target: str | None = None,
+    node: str | None = None,
+    timeout_ms: int | None = None,
     snapshot_format: str = "ai",
     request: str | None = None,
     paths: list[str] | None = None,
@@ -1001,7 +1004,9 @@ def browser(
         target_url: URL used by ``action="open"``.
         target_id: Optional tab target id for ``snapshot`` / ``act``.
         profile: Optional browser profile name (reserved for multi-profile iterations).
-        target: Reserved execution target field for future host/sandbox/node routing.
+        target: Browser execution target. Supports ``host`` (default), ``node``, ``sandbox``.
+        node: Optional node selector used with ``target="node"``.
+        timeout_ms: Optional proxy timeout override for ``target=node|sandbox`` (milliseconds).
         snapshot_format: Snapshot format for ``action="snapshot"`` (``ai`` or ``aria``).
         request: Action payload used by ``action="act"``. Pass a JSON object
             string (for model tool-call compatibility).
@@ -1018,8 +1023,13 @@ def browser(
 
     Notes:
         - Backend is selected by `OPENHERON_BROWSER_RUNTIME` (`playwright` or default memory).
-        - The ``target`` field is accepted for OpenClaw-compatible API shape, but
-          not used until remote routing iterations.
+        - Remote routing:
+          - ``target=node`` forwards to ``OPENHERON_BROWSER_NODE_PROXY_URL``.
+          - ``target=sandbox`` forwards to ``OPENHERON_BROWSER_SANDBOX_PROXY_URL``.
+          - Optional proxy auth headers are read from:
+            ``OPENHERON_BROWSER_NODE_PROXY_TOKEN`` / ``OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN``
+            / fallback ``OPENHERON_BROWSER_PROXY_TOKEN``.
+        - ``node`` is only valid when ``target="node"``.
     """
 
     _debug(
@@ -1030,6 +1040,8 @@ def browser(
             "target_id": target_id,
             "profile": profile,
             "target": target,
+            "node": node,
+            "timeout_ms": timeout_ms,
             "snapshot_format": snapshot_format,
             "request": request,
             "paths": paths,
@@ -1043,11 +1055,31 @@ def browser(
 
     normalized = (action or "").strip().lower()
     query: dict[str, Any] = {}
+    browser_auth_token = os.getenv("OPENHERON_BROWSER_CONTROL_TOKEN", "").strip() or None
+    browser_mutation_token = (
+        os.getenv("OPENHERON_BROWSER_MUTATION_TOKEN", "").strip() or browser_auth_token
+    )
     if (profile or "").strip():
         query["profile"] = profile.strip()
     if (target or "").strip():
         # Iteration 1 keeps the shape for future host/sandbox/node routing.
         query["target"] = target.strip()
+    if (node or "").strip():
+        query["node"] = node.strip()
+    if timeout_ms is not None:
+        try:
+            parsed_timeout_ms = int(timeout_ms)
+        except (TypeError, ValueError):
+            return _ret(
+                "tool.browser.output",
+                _json({"ok": False, "error": "timeout_ms must be a positive integer", "status": 400}),
+            )
+        if parsed_timeout_ms <= 0:
+            return _ret(
+                "tool.browser.output",
+                _json({"ok": False, "error": "timeout_ms must be a positive integer", "status": 400}),
+            )
+        query["timeoutMs"] = parsed_timeout_ms
 
     act_request: dict[str, Any] | None
     if isinstance(request, str):
@@ -1072,71 +1104,88 @@ def browser(
         # Backward-compatibility for direct Python calls in tests/integration.
         act_request = request if isinstance(request, dict) else None
 
+    def _req(
+        *,
+        method: str,
+        path: str,
+        query_value: dict[str, Any] | None = None,
+        body_value: dict[str, Any] | None = None,
+    ) -> BrowserDispatchRequest:
+        is_mutating = method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        return BrowserDispatchRequest(
+            method=method,
+            path=path,
+            query=query_value,
+            body=body_value,
+            auth_token=browser_auth_token,
+            mutation_token=browser_mutation_token if is_mutating else None,
+        )
+
     request_map: dict[str, BrowserDispatchRequest] = {
-        "status": BrowserDispatchRequest(method="GET", path="/", query=query),
-        "start": BrowserDispatchRequest(method="POST", path="/start", query=query),
-        "stop": BrowserDispatchRequest(method="POST", path="/stop", query=query),
-        "profiles": BrowserDispatchRequest(method="GET", path="/profiles", query=query),
-        "tabs": BrowserDispatchRequest(method="GET", path="/tabs", query=query),
-        "open": BrowserDispatchRequest(
+        "status": _req(method="GET", path="/", query_value=query),
+        "start": _req(method="POST", path="/start", query_value=query),
+        "stop": _req(method="POST", path="/stop", query_value=query),
+        "profiles": _req(method="GET", path="/profiles", query_value=query),
+        "tabs": _req(method="GET", path="/tabs", query_value=query),
+        "open": _req(
             method="POST",
             path="/tabs/open",
-            query=query,
-            body={"url": target_url},
+            query_value=query,
+            body_value={"url": target_url},
         ),
-        "snapshot": BrowserDispatchRequest(
+        "snapshot": _req(
             method="GET",
             path="/snapshot",
-            query={
+            query_value={
                 **query,
                 "targetId": (target_id or "").strip() or None,
                 "format": (snapshot_format or "ai").strip().lower() or "ai",
             },
         ),
-        "navigate": BrowserDispatchRequest(
+        "navigate": _req(
             method="POST",
             path="/navigate",
-            query=query,
-            body={
+            query_value=query,
+            body_value={
                 "targetId": (target_id or "").strip() or None,
                 "url": target_url,
             },
         ),
-        "screenshot": BrowserDispatchRequest(
+        "screenshot": _req(
             method="POST",
             path="/screenshot",
-            query=query,
-            body={
+            query_value=query,
+            body_value={
                 "targetId": (target_id or "").strip() or None,
                 "type": (screenshot_type or "png").strip().lower() or "png",
                 "path": (screenshot_path or "").strip() or None,
             },
         ),
-        "upload": BrowserDispatchRequest(
+        "upload": _req(
             method="POST",
             path="/hooks/file-chooser",
-            query=query,
-            body={
+            query_value=query,
+            body_value={
                 "targetId": (target_id or "").strip() or None,
                 "paths": paths or [],
                 "ref": (ref or "").strip() or None,
             },
         ),
-        "dialog": BrowserDispatchRequest(
+        "dialog": _req(
             method="POST",
             path="/hooks/dialog",
-            query=query,
-            body={
+            query_value=query,
+            body_value={
                 "targetId": (target_id or "").strip() or None,
                 "accept": accept,
                 "promptText": (prompt_text or "").strip() or None,
             },
         ),
-        "act": BrowserDispatchRequest(
+        "act": _req(
             method="POST",
             path="/act",
-            query=query,
-            body={
+            query_value=query,
+            body_value={
                 "targetId": (target_id or "").strip() or None,
                 "request": act_request,
             },
@@ -1156,6 +1205,128 @@ def browser(
                 }
             ),
         )
+
+    def _parse_proxy_success_payload(raw_text: str) -> dict[str, Any]:
+        text = (raw_text or "").strip()
+        if not text:
+            return {"ok": True}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "invalid proxy response (non-JSON payload)", "status": 502}
+        if isinstance(parsed, dict):
+            # Node/sandbox proxy commonly wraps actual response as {"result": {...}}.
+            wrapped = parsed.get("result")
+            if isinstance(wrapped, dict):
+                merged = dict(wrapped)
+                if "files" in parsed and "files" not in merged:
+                    merged["files"] = parsed["files"]
+                return merged
+            return parsed
+        return {"ok": False, "error": "invalid proxy response payload type", "status": 502}
+
+    def _parse_proxy_error_payload(code: int, detail_text: str, fallback: str) -> dict[str, Any]:
+        text = (detail_text or "").strip()
+        if not text:
+            return {"ok": False, "error": fallback, "status": code}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"ok": False, "error": text, "status": code}
+        if not isinstance(parsed, dict):
+            return {"ok": False, "error": text, "status": code}
+        error_text = str(parsed.get("error") or parsed.get("message") or text).strip() or fallback
+        status_value = parsed.get("status")
+        if isinstance(status_value, int):
+            return {"ok": False, "error": error_text, "status": status_value}
+        return {"ok": False, "error": error_text, "status": code}
+
+    def _proxy_unavailable_payload(reason: Any) -> dict[str, Any]:
+        # Keep error shape stable while exposing clearer connectivity classes.
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return {"ok": False, "error": "browser proxy timeout", "status": 504}
+        if isinstance(reason, ConnectionRefusedError):
+            return {"ok": False, "error": "browser proxy connection refused", "status": 503}
+        reason_text = str(reason or "").strip().lower()
+        if "timed out" in reason_text:
+            return {"ok": False, "error": "browser proxy timeout", "status": 504}
+        if "connection refused" in reason_text:
+            return {"ok": False, "error": "browser proxy connection refused", "status": 503}
+        if "name or service not known" in reason_text or "nodename nor servname provided" in reason_text:
+            return {"ok": False, "error": "browser proxy dns resolution failed", "status": 503}
+        return {"ok": False, "error": f"browser proxy unavailable: {reason}", "status": 503}
+
+    normalized_target = (target or "").strip().lower()
+    if (node or "").strip() and normalized_target != "node":
+        return _ret(
+            "tool.browser.output",
+            _json({"ok": False, "error": 'node is only supported with target="node"', "status": 400}),
+        )
+    if normalized_target in {"node", "sandbox"}:
+        proxy_url_env = (
+            "OPENHERON_BROWSER_NODE_PROXY_URL"
+            if normalized_target == "node"
+            else "OPENHERON_BROWSER_SANDBOX_PROXY_URL"
+        )
+        proxy_token_env = (
+            "OPENHERON_BROWSER_NODE_PROXY_TOKEN"
+            if normalized_target == "node"
+            else "OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"
+        )
+        proxy_base = os.getenv(proxy_url_env, "").strip()
+        if not proxy_base:
+            return _ret(
+                "tool.browser.output",
+                _json(
+                    {
+                        "ok": False,
+                        "error": f'target "{normalized_target}" is not implemented yet',
+                        "status": 501,
+                    }
+                ),
+            )
+
+        proxy_query = {
+            key: value
+            for key, value in (dispatch_req.query or {}).items()
+            if key != "target" and value is not None
+        }
+        query_string = urlencode(proxy_query)
+        full_url = f"{proxy_base.rstrip('/')}{dispatch_req.path}"
+        if query_string:
+            full_url = f"{full_url}?{query_string}"
+        timeout_seconds = 20.0
+        timeout_override = proxy_query.get("timeoutMs")
+        if isinstance(timeout_override, int):
+            timeout_seconds = max(0.1, min(timeout_override / 1000.0, 300.0))
+
+        body_bytes = (
+            json.dumps(dispatch_req.body, ensure_ascii=False).encode("utf-8")
+            if dispatch_req.body is not None
+            else None
+        )
+        headers = {"Accept": "application/json"}
+        proxy_token = os.getenv(proxy_token_env, "").strip() or os.getenv(
+            "OPENHERON_BROWSER_PROXY_TOKEN", ""
+        ).strip()
+        if proxy_token:
+            headers["X-OpenHeron-Browser-Proxy-Token"] = proxy_token
+        if body_bytes is not None:
+            headers["Content-Type"] = "application/json"
+        try:
+            with urlopen(
+                Request(full_url, data=body_bytes, headers=headers, method=dispatch_req.method),
+                timeout=timeout_seconds,
+            ) as r:
+                raw = r.read().decode("utf-8", errors="replace")
+                payload = _parse_proxy_success_payload(raw)
+                return _ret("tool.browser.output", _json(payload))
+        except HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            payload = _parse_proxy_error_payload(e.code, detail, str(e))
+            return _ret("tool.browser.output", _json(payload))
+        except URLError as e:
+            return _ret("tool.browser.output", _json(_proxy_unavailable_payload(e.reason)))
 
     res = get_browser_control_service().dispatch(dispatch_req)
     body = res.body if isinstance(res.body, dict) else {"ok": False, "error": "invalid browser response"}

@@ -6,21 +6,15 @@ import base64
 from dataclasses import dataclass
 import os
 from typing import Any
-from urllib.parse import urlparse
 import uuid
 
-from .browser_runtime import BrowserRuntimeError
+from .browser_runtime import (
+    BrowserRuntimeError,
+    validate_browser_upload_paths,
+    validate_browser_url,
+)
 
-
-_SUPPORTED_SCHEMES = {"http", "https", "about"}
-
-
-def _validate_url(url: str) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme not in _SUPPORTED_SCHEMES:
-        raise BrowserRuntimeError("target_url must use http/https/about scheme")
-    if parsed.scheme in {"http", "https"} and not parsed.netloc:
-        raise BrowserRuntimeError("target_url must include host for http/https")
+_SUPPORTED_PROFILES = {"openheron", "chrome"}
 
 
 @dataclass(slots=True)
@@ -48,10 +42,22 @@ class PlaywrightBrowserRuntime:
         self._cdp_url: str | None = None
 
     def status(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        if resolved_profile == "chrome":
+            return {
+                "enabled": True,
+                "running": False,
+                "profile": "chrome",
+                "tabCount": 0,
+                "lastTargetId": None,
+                "backend": "extension-relay",
+                "mode": "unsupported",
+                "available": False,
+            }
         return {
             "enabled": True,
             "running": self._browser is not None,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "tabCount": len(self._tabs),
             "lastTargetId": self._last_target_id,
             "backend": "playwright",
@@ -59,8 +65,10 @@ class PlaywrightBrowserRuntime:
         }
 
     def start(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         if self._browser is not None:
-            return self.status(profile=profile)
+            return self.status(profile=resolved_profile)
         try:
             from playwright.sync_api import sync_playwright
         except Exception as exc:  # pragma: no cover - dependency-gated
@@ -90,9 +98,11 @@ class PlaywrightBrowserRuntime:
             self._context = self._browser.new_context()
             self._mode = "launch"
         self._sync_existing_tabs()
-        return self.status(profile=profile)
+        return self.status(profile=resolved_profile)
 
     def stop(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         if self._context is not None:
             try:
                 self._context.close()
@@ -115,7 +125,7 @@ class PlaywrightBrowserRuntime:
         self._tabs = {}
         self._last_target_id = None
         self._mode = "idle"
-        return self.status(profile=profile)
+        return self.status(profile=resolved_profile)
 
     def profiles(self) -> dict[str, Any]:
         return {
@@ -124,31 +134,50 @@ class PlaywrightBrowserRuntime:
                     "name": "openheron",
                     "driver": "playwright",
                     "description": "Playwright runtime profile",
-                }
+                    "available": True,
+                },
+                {
+                    "name": "chrome",
+                    "driver": "extension-relay",
+                    "description": "Chrome extension relay profile (not implemented yet)",
+                    "available": False,
+                },
             ]
         }
 
     def tabs(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        if resolved_profile == "chrome":
+            return {
+                "running": False,
+                "profile": "chrome",
+                "tabs": [],
+                "backend": "extension-relay",
+                "mode": "unsupported",
+            }
+        self._ensure_profile_supported(resolved_profile)
         self._ensure_running()
         self._sync_existing_tabs()
         return {
             "running": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "tabs": [self._tab_payload(item) for item in self._tabs.values()],
             "backend": "playwright",
             "mode": self._mode,
         }
 
     def open_tab(self, *, url: str, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         self._ensure_running()
-        _validate_url(url)
+        validate_browser_url(url)
         page = self._context.new_page()  # type: ignore[union-attr]
         page.goto(url, wait_until="domcontentloaded")
         target_id = self._register_page(page)
         tab = self._tabs[target_id]
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.page.url,
             "title": tab.page.title(),
@@ -162,6 +191,8 @@ class PlaywrightBrowserRuntime:
         snapshot_format: str = "ai",
         profile: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
         fmt = snapshot_format.strip().lower()
         if fmt not in {"ai", "aria"}:
@@ -176,7 +207,7 @@ class PlaywrightBrowserRuntime:
             return {
                 "ok": True,
                 "format": "aria",
-                "profile": profile or "openheron",
+                "profile": resolved_profile,
                 "targetId": tab.target_id,
                 "url": tab.page.url,
                 "nodes": nodes,
@@ -187,7 +218,7 @@ class PlaywrightBrowserRuntime:
         return {
             "ok": True,
             "format": "ai",
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.page.url,
             "snapshot": (
@@ -206,13 +237,15 @@ class PlaywrightBrowserRuntime:
         target_id: str | None = None,
         profile: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
-        _validate_url(url)
+        validate_browser_url(url)
         tab.page.goto(url, wait_until="domcontentloaded")
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.page.url,
             "title": tab.page.title(),
@@ -226,6 +259,8 @@ class PlaywrightBrowserRuntime:
         target_id: str | None = None,
         profile: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
         kind = str(request.get("kind", "")).strip().lower()
         if not kind:
@@ -257,7 +292,7 @@ class PlaywrightBrowserRuntime:
             self._last_target_id = next(reversed(self._tabs), None) if self._tabs else None
             return {
                 "ok": True,
-                "profile": profile or "openheron",
+                "profile": resolved_profile,
                 "targetId": tab.target_id,
                 "closed": True,
                 "backend": "playwright",
@@ -266,7 +301,7 @@ class PlaywrightBrowserRuntime:
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.page.url,
             "kind": kind,
@@ -281,6 +316,8 @@ class PlaywrightBrowserRuntime:
         image_type: str = "png",
         out_path: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
         fmt = image_type.strip().lower()
         if fmt not in {"png", "jpeg"}:
@@ -296,7 +333,7 @@ class PlaywrightBrowserRuntime:
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.page.url,
             "type": fmt,
@@ -315,19 +352,10 @@ class PlaywrightBrowserRuntime:
         profile: str | None = None,
         ref: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
-        if not paths:
-            raise BrowserRuntimeError("paths are required for upload")
-        resolved: list[str] = []
-        for raw in paths:
-            path_value = str(raw).strip()
-            if not path_value:
-                continue
-            if not os.path.isfile(path_value):
-                raise BrowserRuntimeError(f"upload file not found: {path_value}", status=404)
-            resolved.append(path_value)
-        if not resolved:
-            raise BrowserRuntimeError("paths are required for upload")
+        resolved = validate_browser_upload_paths(paths)
 
         selector = (ref or "").strip()
         if selector:
@@ -337,7 +365,7 @@ class PlaywrightBrowserRuntime:
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "uploadedPaths": resolved,
             "ref": selector or None,
@@ -352,6 +380,8 @@ class PlaywrightBrowserRuntime:
         profile: str | None = None,
         prompt_text: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
 
         def _handle_dialog(dialog: Any) -> None:
@@ -364,13 +394,23 @@ class PlaywrightBrowserRuntime:
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "accept": bool(accept),
             "promptText": prompt_text or None,
             "armed": True,
             "backend": "playwright",
         }
+
+    def _resolve_profile(self, profile: str | None) -> str:
+        resolved = (profile or "").strip().lower() or "openheron"
+        if resolved not in _SUPPORTED_PROFILES:
+            raise BrowserRuntimeError("unknown profile; supported profiles are openheron, chrome")
+        return resolved
+
+    def _ensure_profile_supported(self, profile: str) -> None:
+        if profile == "chrome":
+            raise BrowserRuntimeError('profile "chrome" is not implemented yet', status=501)
 
     def _ensure_running(self) -> None:
         if self._browser is None or self._context is None:

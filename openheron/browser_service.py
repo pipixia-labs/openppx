@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Callable
 
 from .browser_routes import register_browser_routes
@@ -17,6 +18,8 @@ class BrowserDispatchRequest:
     path: str
     query: dict[str, Any] | None = None
     body: dict[str, Any] | None = None
+    auth_token: str | None = None
+    mutation_token: str | None = None
 
 
 @dataclass(slots=True)
@@ -82,6 +85,11 @@ class BrowserControlService:
 
     def __init__(self) -> None:
         self._registry = _Registry()
+        self._auth_token = os.getenv("OPENHERON_BROWSER_CONTROL_TOKEN", "").strip() or None
+        mutation_token = os.getenv("OPENHERON_BROWSER_MUTATION_TOKEN", "").strip() or None
+        # Reuse auth token as mutation token by default so enabling auth is enough
+        # to protect mutating actions.
+        self._mutation_token = mutation_token if mutation_token is not None else self._auth_token
         register_browser_routes(self._registry, get_browser_runtime())
 
     def dispatch(self, request: BrowserDispatchRequest) -> BrowserDispatchResponse:
@@ -89,6 +97,15 @@ class BrowserControlService:
         path = _normalize_path(request.path or "")
         query = request.query or {}
         body = request.body or {}
+        auth_token = (request.auth_token or "").strip()
+        mutation_token = (request.mutation_token or "").strip()
+
+        if self._auth_token and auth_token != self._auth_token:
+            return BrowserDispatchResponse(status=401, body={"ok": False, "error": "unauthorized"})
+
+        if method in {"POST", "PUT", "PATCH", "DELETE"} and self._mutation_token:
+            if mutation_token != self._mutation_token:
+                return BrowserDispatchResponse(status=403, body={"ok": False, "error": "forbidden"})
 
         route = next(
             (entry for entry in self._registry.routes if entry.method == method and entry.path == path),

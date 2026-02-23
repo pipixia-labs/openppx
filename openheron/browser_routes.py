@@ -41,6 +41,27 @@ class BrowserRouteRegistrar(Protocol):
         """Register POST route."""
 
 
+_SUPPORTED_TARGETS = {"host", "sandbox", "node"}
+
+
+def _ensure_supported_target(req: BrowserRouteRequest, res: BrowserRouteResponse) -> bool:
+    """Validate target routing hint from query.
+
+    Iteration keeps host runtime as the only executable backend while making
+    `target` semantics explicit at route layer for compatibility.
+    """
+
+    raw_target = str(req.query.get("target") or "").strip().lower()
+    target = raw_target or "host"
+    if target not in _SUPPORTED_TARGETS:
+        res.status(400).json({"ok": False, "error": "target must be host, sandbox, or node"})
+        return False
+    if target != "host":
+        res.status(501).json({"ok": False, "error": f'target "{target}" is not implemented yet'})
+        return False
+    return True
+
+
 def _runtime_error_payload(exc: BrowserRuntimeError) -> dict[str, Any]:
     return {"ok": False, "error": str(exc), "status": exc.status}
 
@@ -53,19 +74,45 @@ def register_browser_basic_routes(registrar: BrowserRouteRegistrar, runtime: Bro
     """Register browser basic routes (status/lifecycle/profile/tab list)."""
 
     def status_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
-        res.json(runtime.status(profile=str(req.query.get("profile") or "").strip() or None))
+        if not _ensure_supported_target(req, res):
+            return
+        try:
+            res.json(runtime.status(profile=str(req.query.get("profile") or "").strip() or None))
+        except BrowserRuntimeError as exc:
+            _handle_runtime_error(res, exc)
 
     def start_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
-        res.json(runtime.start(profile=str(req.query.get("profile") or "").strip() or None))
+        if not _ensure_supported_target(req, res):
+            return
+        try:
+            res.json(runtime.start(profile=str(req.query.get("profile") or "").strip() or None))
+        except BrowserRuntimeError as exc:
+            _handle_runtime_error(res, exc)
 
     def stop_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
-        res.json(runtime.stop(profile=str(req.query.get("profile") or "").strip() or None))
+        if not _ensure_supported_target(req, res):
+            return
+        try:
+            res.json(runtime.stop(profile=str(req.query.get("profile") or "").strip() or None))
+        except BrowserRuntimeError as exc:
+            _handle_runtime_error(res, exc)
 
     def profiles_route(_req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
-        res.json(runtime.profiles())
+        # profiles are runtime level; keep host-only target compatibility.
+        if not _ensure_supported_target(_req, res):
+            return
+        try:
+            res.json(runtime.profiles())
+        except BrowserRuntimeError as exc:
+            _handle_runtime_error(res, exc)
 
     def tabs_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
-        res.json(runtime.tabs(profile=str(req.query.get("profile") or "").strip() or None))
+        if not _ensure_supported_target(req, res):
+            return
+        try:
+            res.json(runtime.tabs(profile=str(req.query.get("profile") or "").strip() or None))
+        except BrowserRuntimeError as exc:
+            _handle_runtime_error(res, exc)
 
     registrar.get("/", status_route)
     registrar.post("/start", start_route)
@@ -78,6 +125,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
     """Register browser agent routes (open/navigate/snapshot/screenshot/upload/dialog/act)."""
 
     def open_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
         url = str(req.body.get("url") or "").strip()
         if not url:
             res.status(400).json({"ok": False, "error": "url is required"})
@@ -89,6 +138,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
             _handle_runtime_error(res, exc)
 
     def snapshot_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
         query = req.query
         target_id = str(query.get("targetId") or "").strip() or None
         snapshot_format = str(query.get("format") or "ai").strip().lower() or "ai"
@@ -105,6 +156,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
             _handle_runtime_error(res, exc)
 
     def navigate_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
         body = req.body
         url = str(body.get("url") or "").strip()
         if not url:
@@ -118,6 +171,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
             _handle_runtime_error(res, exc)
 
     def screenshot_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
         body = req.body
         target_id = str(body.get("targetId") or "").strip() or None
         image_type = str(body.get("type") or "png").strip().lower() or "png"
@@ -136,6 +191,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
             _handle_runtime_error(res, exc)
 
     def upload_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
         body = req.body
         raw_paths = body.get("paths")
         paths = [str(item) for item in raw_paths] if isinstance(raw_paths, list) else []
@@ -158,6 +215,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
             _handle_runtime_error(res, exc)
 
     def dialog_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
         body = req.body
         accept_raw = body.get("accept")
         if not isinstance(accept_raw, bool):
@@ -179,6 +238,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
             _handle_runtime_error(res, exc)
 
     def act_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
         body = req.body
         request = body.get("request")
         if not isinstance(request, dict):

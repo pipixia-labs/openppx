@@ -9,13 +9,19 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import ipaddress
 import os
+import socket
 from typing import Any, Protocol
 from urllib.parse import urlparse
 import uuid
 
+from .env_utils import env_enabled
+
 
 _SUPPORTED_SCHEMES = {"http", "https", "about"}
+_LOCAL_HOSTS = {"localhost", "localhost.localdomain"}
+_SUPPORTED_PROFILES = {"openheron", "chrome"}
 
 
 @dataclass(slots=True)
@@ -115,12 +121,99 @@ class BrowserRuntime(Protocol):
         """Arm dialog handling for the current page."""
 
 
-def _validate_url(url: str) -> None:
+def _is_private_or_local_ip(raw_ip: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(raw_ip)
+    except ValueError:
+        return False
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _validate_private_network_policy(hostname: str) -> None:
+    if not env_enabled("OPENHERON_BROWSER_BLOCK_PRIVATE_NETWORKS", default=True):
+        return
+
+    normalized = hostname.strip().lower()
+    if not normalized:
+        return
+    if normalized in _LOCAL_HOSTS or normalized.endswith(".localhost"):
+        raise BrowserRuntimeError("navigation to private host is blocked by policy")
+    if _is_private_or_local_ip(normalized):
+        raise BrowserRuntimeError("navigation to private host is blocked by policy")
+
+    if not env_enabled("OPENHERON_BROWSER_BLOCK_PRIVATE_DNS", default=False):
+        return
+
+    try:
+        infos = socket.getaddrinfo(normalized, None)
+    except OSError:
+        # Keep navigation available when DNS cannot be resolved in current environment.
+        return
+    for info in infos:
+        sockaddr = info[4]
+        ip_text = str(sockaddr[0]) if isinstance(sockaddr, tuple) and sockaddr else ""
+        if ip_text and _is_private_or_local_ip(ip_text):
+            raise BrowserRuntimeError("navigation to private host is blocked by policy")
+
+
+def validate_browser_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in _SUPPORTED_SCHEMES:
         raise BrowserRuntimeError("target_url must use http/https/about scheme")
     if parsed.scheme in {"http", "https"} and not parsed.netloc:
         raise BrowserRuntimeError("target_url must include host for http/https")
+    if parsed.scheme in {"http", "https"}:
+        _validate_private_network_policy(parsed.hostname or "")
+
+
+def _resolve_upload_root() -> str:
+    configured = os.getenv("OPENHERON_BROWSER_UPLOAD_ROOT", "").strip()
+    if configured:
+        return os.path.realpath(os.path.abspath(os.path.expanduser(configured)))
+    workspace = os.getenv("OPENHERON_WORKSPACE", "").strip()
+    base = workspace or os.getcwd()
+    return os.path.realpath(os.path.abspath(base))
+
+
+def _is_within_root(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([root, path]) == root
+    except ValueError:
+        return False
+
+
+def validate_browser_upload_paths(paths: list[str]) -> list[str]:
+    """Validate and normalize upload paths with optional root restriction."""
+
+    enforce_root = env_enabled("OPENHERON_BROWSER_ENFORCE_UPLOAD_ROOT", default=True)
+    upload_root = _resolve_upload_root() if enforce_root else ""
+
+    if not paths:
+        raise BrowserRuntimeError("paths are required for upload")
+
+    resolved: list[str] = []
+    for raw in paths:
+        path_value = str(raw).strip()
+        if not path_value:
+            continue
+        abs_path = os.path.abspath(path_value)
+        if not os.path.isfile(abs_path):
+            raise BrowserRuntimeError(f"upload file not found: {path_value}", status=404)
+        real_path = os.path.realpath(abs_path)
+        if enforce_root and not _is_within_root(real_path, upload_root):
+            raise BrowserRuntimeError(f"upload path is outside upload root: {path_value}")
+        resolved.append(real_path)
+
+    if not resolved:
+        raise BrowserRuntimeError("paths are required for upload")
+    return resolved
 
 
 class InMemoryBrowserRuntime:
@@ -136,23 +229,38 @@ class InMemoryBrowserRuntime:
         self._last_target_id: str | None = None
 
     def status(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        if resolved_profile == "chrome":
+            return {
+                "enabled": True,
+                "running": False,
+                "profile": "chrome",
+                "tabCount": 0,
+                "lastTargetId": None,
+                "driver": "extension-relay",
+                "available": False,
+            }
         return {
             "enabled": True,
             "running": self._running,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "tabCount": len(self._tabs),
             "lastTargetId": self._last_target_id,
         }
 
     def start(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         self._running = True
-        return self.status(profile=profile)
+        return self.status(profile=resolved_profile)
 
     def stop(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         self._running = False
         self._tabs = []
         self._last_target_id = None
-        return self.status(profile=profile)
+        return self.status(profile=resolved_profile)
 
     def profiles(self) -> dict[str, Any]:
         return {
@@ -161,14 +269,28 @@ class InMemoryBrowserRuntime:
                     "name": "openheron",
                     "driver": "memory",
                     "description": "Iteration 0 in-memory browser profile",
-                }
+                    "available": True,
+                },
+                {
+                    "name": "chrome",
+                    "driver": "extension-relay",
+                    "description": "Chrome extension relay profile (not implemented yet)",
+                    "available": False,
+                },
             ]
         }
 
     def tabs(self, *, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        if resolved_profile == "chrome":
+            return {
+                "running": False,
+                "profile": "chrome",
+                "tabs": [],
+            }
         return {
             "running": self._running,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "tabs": [
                 {
                     "targetId": tab.target_id,
@@ -181,9 +303,11 @@ class InMemoryBrowserRuntime:
         }
 
     def open_tab(self, *, url: str, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         if not self._running:
             raise BrowserRuntimeError("browser is not running; call action=start first", status=409)
-        _validate_url(url)
+        validate_browser_url(url)
         tab = BrowserTab(
             target_id=f"tab-{uuid.uuid4().hex[:8]}",
             url=url,
@@ -193,7 +317,7 @@ class InMemoryBrowserRuntime:
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.url,
             "title": tab.title,
@@ -206,6 +330,8 @@ class InMemoryBrowserRuntime:
         snapshot_format: str = "ai",
         profile: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
         if snapshot_format not in {"ai", "aria"}:
             raise BrowserRuntimeError("snapshot_format must be 'ai' or 'aria'")
@@ -214,7 +340,7 @@ class InMemoryBrowserRuntime:
             return {
                 "ok": True,
                 "format": "aria",
-                "profile": profile or "openheron",
+                "profile": resolved_profile,
                 "targetId": tab.target_id,
                 "url": tab.url,
                 "nodes": [
@@ -225,7 +351,7 @@ class InMemoryBrowserRuntime:
         return {
             "ok": True,
             "format": "ai",
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.url,
             "snapshot": f"URL: {tab.url}\nTitle: {tab.title}\nInteractive refs: e1(button), e2(input)",
@@ -242,14 +368,16 @@ class InMemoryBrowserRuntime:
         target_id: str | None = None,
         profile: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
-        _validate_url(url)
+        validate_browser_url(url)
         tab.url = url
         tab.title = f"OpenHeron: {url}"
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.url,
             "title": tab.title,
@@ -262,6 +390,8 @@ class InMemoryBrowserRuntime:
         target_id: str | None = None,
         profile: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
         kind = str(request.get("kind", "")).strip()
         if not kind:
@@ -282,14 +412,14 @@ class InMemoryBrowserRuntime:
             self._last_target_id = self._tabs[-1].target_id if self._tabs else None
             return {
                 "ok": True,
-                "profile": profile or "openheron",
+                "profile": resolved_profile,
                 "targetId": tab.target_id,
                 "closed": True,
             }
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.url,
             "kind": kind,
@@ -303,6 +433,8 @@ class InMemoryBrowserRuntime:
         image_type: str = "png",
         out_path: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
         fmt = image_type.strip().lower()
         if fmt not in {"png", "jpeg"}:
@@ -325,7 +457,7 @@ class InMemoryBrowserRuntime:
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "url": tab.url,
             "type": fmt,
@@ -343,23 +475,14 @@ class InMemoryBrowserRuntime:
         profile: str | None = None,
         ref: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
-        if not paths:
-            raise BrowserRuntimeError("paths are required for upload")
-        resolved: list[str] = []
-        for raw in paths:
-            path_value = str(raw).strip()
-            if not path_value:
-                continue
-            if not os.path.isfile(path_value):
-                raise BrowserRuntimeError(f"upload file not found: {path_value}", status=404)
-            resolved.append(path_value)
-        if not resolved:
-            raise BrowserRuntimeError("paths are required for upload")
+        resolved = validate_browser_upload_paths(paths)
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "uploadedPaths": resolved,
             "ref": ref or None,
@@ -373,16 +496,28 @@ class InMemoryBrowserRuntime:
         profile: str | None = None,
         prompt_text: str | None = None,
     ) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
         tab = self._resolve_tab(target_id)
         self._last_target_id = tab.target_id
         return {
             "ok": True,
-            "profile": profile or "openheron",
+            "profile": resolved_profile,
             "targetId": tab.target_id,
             "accept": bool(accept),
             "promptText": prompt_text or None,
             "armed": True,
         }
+
+    def _resolve_profile(self, profile: str | None) -> str:
+        resolved = (profile or "").strip().lower() or "openheron"
+        if resolved not in _SUPPORTED_PROFILES:
+            raise BrowserRuntimeError("unknown profile; supported profiles are openheron, chrome")
+        return resolved
+
+    def _ensure_profile_supported(self, profile: str) -> None:
+        if profile == "chrome":
+            raise BrowserRuntimeError('profile "chrome" is not implemented yet', status=501)
 
     def _resolve_tab(self, target_id: str | None) -> BrowserTab:
         if not self._running:
