@@ -1000,7 +1000,7 @@ def browser(
 
     Args:
         action: Browser action name. Supported now:
-            ``status/start/stop/profiles/tabs/open/navigate/snapshot/screenshot/upload/dialog/act``.
+            ``status/start/stop/profiles/tabs/open/focus/close/navigate/snapshot/screenshot/upload/dialog/act``.
         target_url: URL used by ``action="open"``.
         target_id: Optional tab target id for ``snapshot`` / ``act``.
         profile: Optional browser profile name (reserved for multi-profile iterations).
@@ -1133,6 +1133,18 @@ def browser(
             query_value=query,
             body_value={"url": target_url},
         ),
+        "focus": _req(
+            method="POST",
+            path="/tabs/focus",
+            query_value=query,
+            body_value={"targetId": (target_id or "").strip() or None},
+        ),
+        "close": _req(
+            method="POST",
+            path="/tabs/close",
+            query_value=query,
+            body_value={"targetId": (target_id or "").strip() or None},
+        ),
         "snapshot": _req(
             method="GET",
             path="/snapshot",
@@ -1200,7 +1212,7 @@ def browser(
                     "ok": False,
                     "error": (
                         "unknown action; supported actions are "
-                        "status,start,stop,profiles,tabs,open,navigate,snapshot,screenshot,upload,dialog,act"
+                        "status,start,stop,profiles,tabs,open,focus,close,navigate,snapshot,screenshot,upload,dialog,act"
                     ),
                 }
             ),

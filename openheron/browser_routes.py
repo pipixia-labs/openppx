@@ -137,6 +137,26 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
         except BrowserRuntimeError as exc:
             _handle_runtime_error(res, exc)
 
+    def focus_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
+        target_id = str(req.body.get("targetId") or "").strip() or None
+        profile = str(req.query.get("profile") or "").strip() or None
+        try:
+            res.json(runtime.focus_tab(target_id=target_id, profile=profile))
+        except BrowserRuntimeError as exc:
+            _handle_runtime_error(res, exc)
+
+    def close_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
+        if not _ensure_supported_target(req, res):
+            return
+        target_id = str(req.body.get("targetId") or "").strip() or None
+        profile = str(req.query.get("profile") or "").strip() or None
+        try:
+            res.json(runtime.close_tab(target_id=target_id, profile=profile))
+        except BrowserRuntimeError as exc:
+            _handle_runtime_error(res, exc)
+
     def snapshot_route(req: BrowserRouteRequest, res: BrowserRouteResponse) -> None:
         if not _ensure_supported_target(req, res):
             return
@@ -257,6 +277,8 @@ def register_browser_agent_routes(registrar: BrowserRouteRegistrar, runtime: Bro
             _handle_runtime_error(res, exc)
 
     registrar.post("/tabs/open", open_route)
+    registrar.post("/tabs/focus", focus_route)
+    registrar.post("/tabs/close", close_route)
     registrar.post("/navigate", navigate_route)
     registrar.get("/snapshot", snapshot_route)
     registrar.post("/screenshot", screenshot_route)

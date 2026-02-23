@@ -184,6 +184,36 @@ class PlaywrightBrowserRuntime:
             "backend": "playwright",
         }
 
+    def focus_tab(self, *, target_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
+        tab = self._resolve_tab(target_id)
+        tab.page.bring_to_front()
+        self._last_target_id = tab.target_id
+        return {
+            "ok": True,
+            "profile": resolved_profile,
+            "targetId": tab.target_id,
+            "url": tab.page.url,
+            "focused": True,
+            "backend": "playwright",
+        }
+
+    def close_tab(self, *, target_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
+        tab = self._resolve_tab(target_id)
+        tab.page.close()
+        self._tabs.pop(tab.target_id, None)
+        self._last_target_id = next(reversed(self._tabs), None) if self._tabs else None
+        return {
+            "ok": True,
+            "profile": resolved_profile,
+            "targetId": tab.target_id,
+            "closed": True,
+            "backend": "playwright",
+        }
+
     def snapshot(
         self,
         *,

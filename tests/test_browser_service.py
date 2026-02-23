@@ -53,6 +53,16 @@ class BrowserServiceTests(unittest.TestCase):
         self.assertEqual(opened.status, 200)
         target_id = opened.body["targetId"]
 
+        focused = service.dispatch(
+            BrowserDispatchRequest(
+                method="POST",
+                path="/tabs/focus",
+                body={"targetId": target_id},
+            )
+        )
+        self.assertEqual(focused.status, 200)
+        self.assertTrue(focused.body["focused"])
+
         snap = service.dispatch(
             BrowserDispatchRequest(
                 method="GET",
@@ -130,6 +140,16 @@ class BrowserServiceTests(unittest.TestCase):
         )
         self.assertEqual(acted_flat.status, 200)
         self.assertEqual(acted_flat.body["kind"], "wait")
+
+        closed = service.dispatch(
+            BrowserDispatchRequest(
+                method="POST",
+                path="/tabs/close",
+                body={"targetId": target_id},
+            )
+        )
+        self.assertEqual(closed.status, 200)
+        self.assertTrue(closed.body["closed"])
 
     def test_dispatch_reports_404_for_unknown_route(self) -> None:
         service = get_browser_control_service()

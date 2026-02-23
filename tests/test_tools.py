@@ -534,6 +534,10 @@ class ToolsTests(unittest.TestCase):
         self.assertTrue(opened["ok"])
         target_id = opened["targetId"]
 
+        focused = json.loads(browser(action="focus", target_id=target_id))
+        self.assertTrue(focused["ok"])
+        self.assertTrue(focused["focused"])
+
         tabs = json.loads(browser(action="tabs"))
         self.assertTrue(tabs["running"])
         self.assertEqual(len(tabs["tabs"]), 1)
@@ -611,6 +615,10 @@ class ToolsTests(unittest.TestCase):
         )
         self.assertTrue(acted_with_selector["ok"])
         self.assertEqual(acted_with_selector["kind"], "click")
+
+        closed = json.loads(browser(action="close", target_id=target_id))
+        self.assertTrue(closed["ok"])
+        self.assertTrue(closed["closed"])
 
         invalid_request = json.loads(browser(action="act", request="{not-json"))
         self.assertFalse(invalid_request["ok"])

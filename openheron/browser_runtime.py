@@ -60,6 +60,12 @@ class BrowserRuntime(Protocol):
     def tabs(self, *, profile: str | None = None) -> dict[str, Any]:
         """Return opened tabs."""
 
+    def focus_tab(self, *, target_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
+        """Focus one tab."""
+
+    def close_tab(self, *, target_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
+        """Close one tab."""
+
     def open_tab(self, *, url: str, profile: str | None = None) -> dict[str, Any]:
         """Open a new tab."""
 
@@ -321,6 +327,32 @@ class InMemoryBrowserRuntime:
             "targetId": tab.target_id,
             "url": tab.url,
             "title": tab.title,
+        }
+
+    def focus_tab(self, *, target_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
+        tab = self._resolve_tab(target_id)
+        self._last_target_id = tab.target_id
+        return {
+            "ok": True,
+            "profile": resolved_profile,
+            "targetId": tab.target_id,
+            "url": tab.url,
+            "focused": True,
+        }
+
+    def close_tab(self, *, target_id: str | None = None, profile: str | None = None) -> dict[str, Any]:
+        resolved_profile = self._resolve_profile(profile)
+        self._ensure_profile_supported(resolved_profile)
+        tab = self._resolve_tab(target_id)
+        self._tabs = [entry for entry in self._tabs if entry.target_id != tab.target_id]
+        self._last_target_id = self._tabs[-1].target_id if self._tabs else None
+        return {
+            "ok": True,
+            "profile": resolved_profile,
+            "targetId": tab.target_id,
+            "closed": True,
         }
 
     def snapshot(
