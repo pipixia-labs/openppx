@@ -32,6 +32,12 @@ class BrowserE2EHttpTests(unittest.TestCase):
                 relay_mode = str(captured.get("relay_mode") or "").strip().lower()
                 query = parse_qs(parsed.query)
                 node_name = str((query.get("node") or [""])[0]).strip()
+                if not node_name:
+                    node_name = str(captured.get("proxy_mode") or "").strip().lower()
+                if not node_name:
+                    token_mode = str(captured.get("proxy_token") or "").strip().lower()
+                    if token_mode.startswith("mode-"):
+                        node_name = token_mode.removeprefix("mode-")
                 if node_name == "auth-required" and captured.get("proxy_token") != "node-token-ok":
                     payload = {"error": "unauthorized", "status": 401}
                     body = json.dumps(payload).encode("utf-8")
@@ -350,6 +356,288 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["supportedActions"], ["profiles", "status", "tabs"])
         self.assertEqual(payload["recommendedActions"], ["profiles", "status"])
         self.assertEqual(payload["capability"]["recommendedOrder"], ["profiles", "status", "tabs"])
+
+    def test_browser_sandbox_proxy_minimal_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "sandbox-token-e2e"
+
+        payload = json.loads(browser(action="status", target="sandbox", timeout_ms=900))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["via"], "e2e-http")
+        self.assertEqual(payload["target"], "sandbox")
+        self.assertEqual(payload["capability"]["backend"], "sandbox-proxy")
+        self.assertIn("timeoutMs=900", self._captured["path"])
+        self.assertEqual(self._captured["proxy_token"], "sandbox-token-e2e")
+
+    def test_browser_sandbox_proxy_blocks_unsupported_action_by_capability_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles"]}}
+        )
+
+        payload = json.loads(browser(action="navigate", target="sandbox", target_url="https://example.com"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 501)
+        self.assertIn('not supported by target "sandbox"', payload["error"])
+        self.assertEqual(payload["supportedActions"], ["profiles", "status"])
+        self.assertIn("action=status or action=profiles", payload["hint"])
+
+    def test_browser_node_proxy_invalid_capability_json_warns_and_falls_back_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "node")
+        self.assertEqual(payload["capability"]["backend"], "node-proxy")
+        self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("invalid JSON", payload["capabilityWarnings"][0])
+
+    def test_browser_node_proxy_non_object_capability_json_warns_and_falls_back_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(["not-an-object"])
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "node")
+        self.assertEqual(payload["capability"]["backend"], "node-proxy")
+        self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("must be a JSON object", payload["capabilityWarnings"][0])
+
+    def test_browser_node_proxy_invalid_capability_error_codes_shape_warns_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status"], "errorCodes": "bad-shape"}}
+        )
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "node")
+        self.assertEqual(payload["capability"]["supportedActions"], ["status"])
+        self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("errorCodes", payload["capabilityWarnings"][0])
+
+    def test_browser_sandbox_proxy_invalid_capability_json_warns_and_falls_back_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "sandbox")
+        self.assertEqual(payload["capability"]["backend"], "sandbox-proxy")
+        self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("invalid JSON", payload["capabilityWarnings"][0])
+
+    def test_browser_sandbox_proxy_non_object_capability_json_warns_and_falls_back_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(["not-an-object"])
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "sandbox")
+        self.assertEqual(payload["capability"]["backend"], "sandbox-proxy")
+        self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("must be a JSON object", payload["capabilityWarnings"][0])
+
+    def test_browser_sandbox_proxy_invalid_capability_error_codes_shape_warns_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status"], "errorCodes": "bad-shape"}}
+        )
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "sandbox")
+        self.assertEqual(payload["capability"]["supportedActions"], ["status"])
+        self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("errorCodes", payload["capabilityWarnings"][0])
+
+    def test_browser_sandbox_proxy_status_includes_recommendations_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["snapshot", "status", "profiles", "act"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+            ["profiles", "status", "act", "snapshot"]
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "3"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "sandbox")
+        self.assertEqual(payload["supportedActions"], ["profiles", "status", "act", "snapshot"])
+        self.assertEqual(payload["recommendedActions"], ["profiles", "status", "act"])
+        self.assertEqual(payload["capability"]["recommendedOrder"], ["profiles", "status", "act", "snapshot"])
+
+    def test_browser_sandbox_proxy_recommendation_limit_is_clamped_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+            ["status", "profiles", "tabs"]
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "0"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "profiles", "tabs"])
+        self.assertEqual(payload["recommendedActions"], ["status"])
+
+    def test_browser_sandbox_proxy_profiles_normalizes_shape_and_recommendations_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["profiles", "status", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+            ["profiles", "status", "tabs"]
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
+
+        payload = json.loads(browser(action="profiles", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "sandbox")
+        self.assertEqual(payload["profiles"], [])
+        self.assertEqual(payload["supportedActions"], ["profiles", "status", "tabs"])
+        self.assertEqual(payload["recommendedActions"], ["profiles", "status"])
+        self.assertEqual(payload["capability"]["recommendedOrder"], ["profiles", "status", "tabs"])
+
+    def test_browser_sandbox_proxy_invalid_json_mapping_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-invalid-json"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 502)
+        self.assertEqual(payload["errorCode"], "proxy_invalid_json")
+        self.assertIn("invalid proxy response", payload["error"].lower())
+
+    def test_browser_sandbox_proxy_non_object_json_mapping_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-non-object-json"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 502)
+        self.assertEqual(payload["errorCode"], "proxy_invalid_payload_type")
+        self.assertIn("invalid proxy response", payload["error"].lower())
+
+    def test_browser_sandbox_proxy_timeout_mapping_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-slow"
+
+        payload = json.loads(browser(action="status", target="sandbox", timeout_ms=50))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 504)
+        self.assertEqual(payload["errorCode"], "proxy_timeout")
+        self.assertIn("timeout", payload["error"].lower())
+
+    def test_browser_sandbox_proxy_connection_refused_mapping_e2e(self) -> None:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        _, free_port = probe.getsockname()
+        probe.close()
+
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://127.0.0.1:{free_port}"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 503)
+        self.assertEqual(payload["errorCode"], "proxy_connection_refused")
+        self.assertIn("connection refused", payload["error"].lower())
+
+    def test_browser_sandbox_proxy_http_error_uses_structured_status_and_error_code_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-structured-error"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 431)
+        self.assertEqual(payload["errorCode"], "proxy_structured_error")
+        self.assertIn("structured error", payload["error"].lower())
+
+    def test_browser_sandbox_proxy_auth_error_mapping_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        self._captured["proxy_mode"] = "auth-required"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 401)
+        self.assertEqual(payload["errorCode"], "proxy_http_error")
+        self.assertIn("unauthorized", payload["error"].lower())
+
+    def test_browser_sandbox_proxy_auth_success_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "node-token-ok"
+        self._captured["proxy_mode"] = "auth-required"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "sandbox")
+
+    def test_browser_sandbox_proxy_empty_body_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-empty-body"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["target"], "sandbox")
+        self.assertEqual(payload["capability"]["backend"], "sandbox-proxy")
+        self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
 
     def test_browser_chrome_relay_status_minimal_e2e(self) -> None:
         self._configure_relay_runtime(token="relay-token-e2e")
@@ -731,10 +1019,14 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
         self.assertFalse(payload["ok"])
         # Some environments return direct DNS failures; others surface a 502 from
-        # upstream resolvers/proxies for non-existent hosts.
+        # upstream resolvers/proxies for non-existent hosts; in some sandboxes
+        # this can also manifest as timeout.
         if payload.get("errorCode") == "relay_dns_failed":
             self.assertEqual(payload["status"], 503)
             self.assertIn("dns", payload["error"].lower())
+        elif payload.get("errorCode") == "relay_timeout":
+            self.assertEqual(payload["status"], 504)
+            self.assertIn("timeout", payload["error"].lower())
         else:
             self.assertEqual(payload["status"], 502)
             self.assertEqual(payload["errorCode"], "relay_http_error")
