@@ -11,13 +11,17 @@ It focuses on:
 
 Compared with larger systems, this project keeps the core runtime compact and easy to iterate.
 
+## Prerequisites
+
+- Python 3.14
+- A virtual environment is strongly recommended (examples below use `.venv`)
+
 ## Quick Start
 
 ```bash
 cd openheron_root
 python3.14 -m venv .venv
 source .venv/bin/activate
-pip install -e .
 openheron install
 python -m openheron.cli -m "Describe what you can do"
 ```
@@ -78,6 +82,25 @@ openheron onboard
 
 - `~/.openheron/config.json`
 - `~/.openheron/workspace`
+
+Use `openheron install` for the full guided setup (checks + summary + suggestions),
+and use `openheron onboard` only when you want minimal file initialization.
+
+## Development
+
+Install in editable mode:
+
+```bash
+cd openheron_root
+source .venv/bin/activate
+pip install -e .
+```
+
+Run tests during development:
+
+```bash
+pytest -q
+```
 
 ## Quick Ops Summary (from `docs/OPERATIONS.md`)
 
@@ -168,6 +191,9 @@ Detailed docs are in [`docs/`](./docs/):
 - [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md)
 - [`docs/MCP_SECURITY.md`](./docs/MCP_SECURITY.md)
 - [`docs/README.md`](./docs/README.md)
+
+Recommended reading order: start with `OPERATIONS.md` (runtime and commands),
+then `CONFIGURATION.md` (settings and env mapping), then topic-specific docs as needed.
 
 Install troubleshooting tips are in `docs/OPERATIONS.md` under
 `install 常见问题`.
