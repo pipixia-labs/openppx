@@ -27,6 +27,7 @@ from openheron.tools import (
     exec_command,
     list_dir,
     message,
+    message_file,
     message_image,
     process_session,
     read_file,
@@ -501,6 +502,30 @@ class ToolsTests(unittest.TestCase):
             self.assertEqual(record["content"], "done")
             self.assertEqual(record["metadata"]["content_type"], "image")
             self.assertEqual(Path(record["metadata"]["image_path"]).resolve(), image_path.resolve())
+
+    def test_message_file_tool_writes_file_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENHERON_WORKSPACE"] = tmp
+            file_path = Path(tmp) / "tmp" / "report.txt"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text("done", encoding="utf-8")
+
+            response = message_file("tmp/report.txt", caption="see attachment", channel="feishu", chat_id="oc_2")
+            self.assertIn("File message recorded", response)
+            outbox = Path(tmp) / "messages" / "outbox.log"
+            record = json.loads(outbox.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(record["channel"], "feishu")
+            self.assertEqual(record["chat_id"], "oc_2")
+            self.assertEqual(record["content"], "see attachment")
+            self.assertEqual(record["metadata"]["content_type"], "file")
+            self.assertEqual(record["metadata"]["file_name"], "report.txt")
+            self.assertEqual(Path(record["metadata"]["file_path"]).resolve(), file_path.resolve())
+
+    def test_message_file_tool_rejects_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENHERON_WORKSPACE"] = tmp
+            response = message_file("tmp/missing.txt", channel="feishu", chat_id="oc_2")
+            self.assertIn("Error: File not found", response)
 
     def test_cron_tool_add_list_remove(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

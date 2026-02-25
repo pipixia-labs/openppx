@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 try:
     import lark_oapi as lark
     from lark_oapi.api.im.v1 import (
+        CreateFileRequest,
+        CreateFileRequestBody,
         CreateImageRequest,
         CreateImageRequestBody,
         CreateMessageRequest,
@@ -30,6 +32,8 @@ try:
     FEISHU_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment dependent
     lark = None
+    CreateFileRequest = None
+    CreateFileRequestBody = None
     CreateImageRequest = None
     CreateImageRequestBody = None
     CreateMessageRequest = None
@@ -281,6 +285,43 @@ class FeishuChannel(BaseChannel):
             raise RuntimeError("Feishu image upload returned empty image_key")
         return str(image_key)
 
+    def _upload_file_sync(self, file_path: str) -> str:
+        if not self._client or CreateFileRequest is None or CreateFileRequestBody is None:
+            raise RuntimeError("Feishu file API is unavailable in current SDK/runtime")
+
+        target = Path(file_path).expanduser().resolve()
+        if not target.exists():
+            raise FileNotFoundError(f"File not found: {target}")
+        if not target.is_file():
+            raise ValueError(f"File path is not a file: {target}")
+
+        with target.open("rb") as file_obj:
+            request = (
+                CreateFileRequest.builder()
+                .request_body(
+                    CreateFileRequestBody.builder()
+                    .file_type("stream")
+                    .file_name(target.name)
+                    .file(file_obj)
+                    .build()
+                )
+                .build()
+            )
+            response = self._client.im.v1.file.create(request)
+
+        success_fn = getattr(response, "success", None)
+        if callable(success_fn) and not success_fn():
+            code = getattr(response, "code", "")
+            message = getattr(response, "msg", "")
+            log_id_fn = getattr(response, "get_log_id", None)
+            log_id = log_id_fn() if callable(log_id_fn) else ""
+            raise RuntimeError(f"Feishu file upload failed: code={code}, msg={message}, log_id={log_id}")
+
+        file_key = getattr(getattr(response, "data", None), "file_key", "")
+        if not file_key:
+            raise RuntimeError("Feishu file upload returned empty file_key")
+        return str(file_key)
+
     def _send_image_sync(self, msg, image_path: str) -> None:
         if not self._client:
             return
@@ -301,12 +342,33 @@ class FeishuChannel(BaseChannel):
         )
         self._client.im.v1.message.create(request)
 
+    def _send_file_sync(self, msg, file_path: str) -> None:
+        if not self._client:
+            return
+        receive_id_type = self._resolve_receive_id_type(msg.chat_id)
+        file_key = self._upload_file_sync(file_path)
+        payload = json.dumps({"file_key": file_key}, ensure_ascii=False)
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(receive_id_type)
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(msg.chat_id)
+                .msg_type("file")
+                .content(payload)
+                .build()
+            )
+            .build()
+        )
+        self._client.im.v1.message.create(request)
+
     def _send_sync(self, msg) -> None:
         if not self._client:
             return
         metadata = msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {}
         content_type = str(metadata.get("content_type", "")).strip().lower()
         image_path = str(metadata.get("image_path", "")).strip() if content_type == "image" else ""
+        file_path = str(metadata.get("file_path", "")).strip() if content_type == "file" else ""
         if image_path:
             try:
                 self._send_image_sync(msg, image_path)
@@ -316,6 +378,17 @@ class FeishuChannel(BaseChannel):
             except Exception:
                 logger.exception("Failed sending Feishu image message; falling back to text")
                 fallback = (msg.content or "").strip() or f"[image send failed] {image_path}"
+                self._send_text_sync(msg, fallback)
+            return
+        if file_path:
+            try:
+                self._send_file_sync(msg, file_path)
+                caption = (msg.content or "").strip()
+                if caption:
+                    self._send_text_sync(msg, caption)
+            except Exception:
+                logger.exception("Failed sending Feishu file message; falling back to text")
+                fallback = (msg.content or "").strip() or f"[file send failed] {file_path}"
                 self._send_text_sync(msg, fallback)
             return
         self._send_text_sync(msg)

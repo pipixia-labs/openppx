@@ -2110,6 +2110,64 @@ def message_image(path: str, caption: str = "", channel: str | None = None, chat
     return result
 
 
+def message_file(path: str, caption: str = "", channel: str | None = None, chat_id: str | None = None) -> str:
+    """Send an outbound file message (optionally with caption text).
+
+    Args:
+        path: Path to local file.
+        caption: Optional follow-up text to accompany file delivery.
+        channel: Optional channel override.
+        chat_id: Optional target conversation/user id.
+
+    Returns:
+        Queue success message when gateway publisher is active; otherwise a local
+        outbox write confirmation, or an "Error: ..." message.
+    """
+    target_channel, target_chat_id = _resolve_route(channel, chat_id)
+    _debug(
+        "tool.message_file.input",
+        {"path": path, "caption_chars": len(caption), "channel": target_channel, "chat_id": target_chat_id},
+    )
+    try:
+        file_path = _resolve_path(path)
+    except PermissionError as exc:
+        return _ret("tool.message_file.output", f"Error: {exc}")
+    except Exception as exc:
+        return _ret("tool.message_file.output", f"Error resolving file path: {exc}")
+
+    if not file_path.exists():
+        return _ret("tool.message_file.output", f"Error: File not found: {path}")
+    if not file_path.is_file():
+        return _ret("tool.message_file.output", f"Error: Not a file: {path}")
+
+    outbound = OutboundMessage(
+        channel=target_channel,
+        chat_id=target_chat_id,
+        content=caption,
+        metadata={
+            "content_type": "file",
+            "file_path": str(file_path),
+            "file_name": file_path.name,
+        },
+    )
+    if _publish_outbound_if_configured(outbound):
+        result = f"File queued to {target_channel}:{target_chat_id}"
+        _debug("tool.message_file.output", result)
+        return result
+
+    outbox = _append_outbox_record(
+        {
+            "channel": target_channel,
+            "chat_id": target_chat_id,
+            "content": caption,
+            "metadata": outbound.metadata,
+        },
+    )
+    result = f"File message recorded to {outbox}"
+    _debug("tool.message_file.output", result)
+    return result
+
+
 def _cron_store_path() -> Path:
     return cron_store_path(_workspace())
 

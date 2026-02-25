@@ -249,6 +249,45 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
         send_text.assert_called_once_with(outbound, "[image send failed] /tmp/demo.png")
 
+    async def test_send_sync_routes_file_metadata(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._client = object()
+        outbound = OutboundMessage(
+            channel="feishu",
+            chat_id="oc_group_1",
+            content="attachment caption",
+            metadata={"content_type": "file", "file_path": "/tmp/report.docx"},
+        )
+
+        with (
+            patch.object(channel, "_send_file_sync") as send_file,
+            patch.object(channel, "_send_text_sync") as send_text,
+        ):
+            channel._send_sync(outbound)
+
+        send_file.assert_called_once_with(outbound, "/tmp/report.docx")
+        send_text.assert_called_once_with(outbound, "attachment caption")
+
+    async def test_send_sync_falls_back_to_text_when_file_send_fails(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._client = object()
+        outbound = OutboundMessage(
+            channel="feishu",
+            chat_id="oc_group_1",
+            content="",
+            metadata={"content_type": "file", "file_path": "/tmp/report.docx"},
+        )
+
+        with (
+            patch.object(channel, "_send_file_sync", side_effect=RuntimeError("upload failed")),
+            patch.object(channel, "_send_text_sync") as send_text,
+        ):
+            channel._send_sync(outbound)
+
+        send_text.assert_called_once_with(outbound, "[file send failed] /tmp/report.docx")
+
 
 if __name__ == "__main__":
     unittest.main()
