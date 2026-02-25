@@ -60,6 +60,7 @@
    - OpenClaw 对 channel onboarding 有插件化 adapter。
    - 参考：`../openclaw/src/plugin-sdk/index.ts:376`
    - Openheron 当前是内置分支逻辑，扩展性弱于 adapter 机制。
+   - 当前进展：install/doctor 的 provider/channel 修复规则已基本表驱动并单源化，但尚未上升到独立 plugin adapter 接口层。
 
 ## 建议实施顺序（下一阶段）
 

@@ -95,6 +95,17 @@ openheron gateway-service status --json
 
 注意：如果你在 install 交互里回车跳过了这些项，系统仍会继续安装，但 `doctor`/`gateway` 可能会提示缺失，这属于预期行为。
 
+### 安装/修复规则单源说明（开发者）
+
+当前 install 与 doctor 的核心配置修复规则已尽量走“单源表驱动”：
+
+- channel env 回填规则：`CHANNEL_ENV_BACKFILL_MAPPINGS` -> `DOCTOR_CHANNEL_ENV_BACKFILL_RULES`。
+- channel install summary 缺失项：由 `DOCTOR_CHANNEL_ENV_BACKFILL_RULES` 派生（并补 bool 规则，如 email consent）。
+- provider install summary 与 doctor env 回填：由 `INSTALL_PROVIDER_SUMMARY_REQUIREMENTS` 驱动。
+- install `fixes=[...]`：走统一渲染函数，不再在主流程内分支拼接。
+
+建议后续扩展字段时，优先改规则表，再补测试，不要直接在流程函数里新增硬编码 if/else。
+
 如果只想初始化文件，不跑安装流程：
 
 ```bash
