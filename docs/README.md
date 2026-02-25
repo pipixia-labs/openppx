@@ -3,6 +3,7 @@
 ## 文档索引
 
 - [PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md): 项目总体说明（架构、Session/Memory、Compaction、工具能力）
+- [USE_CASES.md](./USE_CASES.md): 真实任务示例与可直接复制的提示词模板
 - [OPERATIONS.md](./OPERATIONS.md): 运行方式、网关模式、WhatsApp Bridge、Cron、测试
 - [CONFIGURATION.md](./CONFIGURATION.md): 配置模型、环境变量、配置样例、平台说明
 - [MCP_SECURITY.md](./MCP_SECURITY.md): MCP 接入和安全策略
