@@ -230,9 +230,9 @@ class FeishuChannel(BaseChannel):
     def _resolve_receive_id_type(chat_id: str) -> str:
         return "chat_id" if chat_id.startswith("oc_") else "open_id"
 
-    def _send_text_sync(self, msg, text: str | None = None) -> None:
+    def _send_text_sync(self, msg, text: str | None = None) -> str | None:
         if not self._client:
-            return
+            return None
         receive_id_type = self._resolve_receive_id_type(msg.chat_id)
         payload = json.dumps({"text": text if text is not None else msg.content}, ensure_ascii=False)
         request = (
@@ -247,7 +247,22 @@ class FeishuChannel(BaseChannel):
             )
             .build()
         )
-        self._client.im.v1.message.create(request)
+        return self._send_message_request_sync(request, request_type="text")
+
+    def _send_message_request_sync(self, request, *, request_type: str) -> str:
+        if not self._client:
+            return ""
+        response = self._client.im.v1.message.create(request)
+        success_fn = getattr(response, "success", None)
+        if callable(success_fn) and not success_fn():
+            code = getattr(response, "code", "")
+            message = getattr(response, "msg", "")
+            log_id_fn = getattr(response, "get_log_id", None)
+            log_id = log_id_fn() if callable(log_id_fn) else ""
+            raise RuntimeError(
+                f"Feishu {request_type} message send failed: code={code}, msg={message}, log_id={log_id}"
+            )
+        return str(getattr(getattr(response, "data", None), "message_id", "") or "")
 
     def _upload_image_sync(self, image_path: str) -> str:
         if not self._client or CreateImageRequest is None or CreateImageRequestBody is None:
@@ -322,9 +337,9 @@ class FeishuChannel(BaseChannel):
             raise RuntimeError("Feishu file upload returned empty file_key")
         return str(file_key)
 
-    def _send_image_sync(self, msg, image_path: str) -> None:
+    def _send_image_sync(self, msg, image_path: str) -> str:
         if not self._client:
-            return
+            return ""
         receive_id_type = self._resolve_receive_id_type(msg.chat_id)
         image_key = self._upload_image_sync(image_path)
         payload = json.dumps({"image_key": image_key}, ensure_ascii=False)
@@ -340,11 +355,11 @@ class FeishuChannel(BaseChannel):
             )
             .build()
         )
-        self._client.im.v1.message.create(request)
+        return self._send_message_request_sync(request, request_type="image")
 
-    def _send_file_sync(self, msg, file_path: str) -> None:
+    def _send_file_sync(self, msg, file_path: str) -> str:
         if not self._client:
-            return
+            return ""
         receive_id_type = self._resolve_receive_id_type(msg.chat_id)
         file_key = self._upload_file_sync(file_path)
         payload = json.dumps({"file_key": file_key}, ensure_ascii=False)
@@ -360,7 +375,7 @@ class FeishuChannel(BaseChannel):
             )
             .build()
         )
-        self._client.im.v1.message.create(request)
+        return self._send_message_request_sync(request, request_type="file")
 
     def _send_sync(self, msg) -> None:
         if not self._client:
@@ -371,27 +386,58 @@ class FeishuChannel(BaseChannel):
         file_path = str(metadata.get("file_path", "")).strip() if content_type == "file" else ""
         if image_path:
             try:
-                self._send_image_sync(msg, image_path)
+                image_message_id = self._send_image_sync(msg, image_path)
+                message_ids = [image_message_id] if image_message_id else []
                 caption = (msg.content or "").strip()
                 if caption:
-                    self._send_text_sync(msg, caption)
+                    caption_id = self._send_text_sync(msg, caption)
+                    if caption_id:
+                        message_ids.append(caption_id)
+                metadata["delivery"] = {
+                    "status": "sent",
+                    "content_type": "image",
+                    "message_ids": message_ids,
+                }
             except Exception:
                 logger.exception("Failed sending Feishu image message; falling back to text")
                 fallback = (msg.content or "").strip() or f"[image send failed] {image_path}"
-                self._send_text_sync(msg, fallback)
+                fallback_id = self._send_text_sync(msg, fallback)
+                metadata["delivery"] = {
+                    "status": "fallback_text",
+                    "content_type": "image",
+                    "message_ids": [fallback_id] if fallback_id else [],
+                }
             return
         if file_path:
             try:
-                self._send_file_sync(msg, file_path)
+                file_message_id = self._send_file_sync(msg, file_path)
+                message_ids = [file_message_id] if file_message_id else []
                 caption = (msg.content or "").strip()
                 if caption:
-                    self._send_text_sync(msg, caption)
+                    caption_id = self._send_text_sync(msg, caption)
+                    if caption_id:
+                        message_ids.append(caption_id)
+                metadata["delivery"] = {
+                    "status": "sent",
+                    "content_type": "file",
+                    "message_ids": message_ids,
+                }
             except Exception:
                 logger.exception("Failed sending Feishu file message; falling back to text")
                 fallback = (msg.content or "").strip() or f"[file send failed] {file_path}"
-                self._send_text_sync(msg, fallback)
+                fallback_id = self._send_text_sync(msg, fallback)
+                metadata["delivery"] = {
+                    "status": "fallback_text",
+                    "content_type": "file",
+                    "message_ids": [fallback_id] if fallback_id else [],
+                }
             return
-        self._send_text_sync(msg)
+        text_id = self._send_text_sync(msg)
+        metadata["delivery"] = {
+            "status": "sent",
+            "content_type": "text",
+            "message_ids": [text_id] if text_id else [],
+        }
 
     def _download_resource_sync(
         self,

@@ -222,13 +222,17 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch.object(channel, "_send_image_sync") as send_image,
-            patch.object(channel, "_send_text_sync") as send_text,
+            patch.object(channel, "_send_image_sync", return_value="om_image_1") as send_image,
+            patch.object(channel, "_send_text_sync", return_value="om_text_1") as send_text,
         ):
             channel._send_sync(outbound)
 
         send_image.assert_called_once_with(outbound, "/tmp/demo.png")
         send_text.assert_called_once_with(outbound, "image caption")
+        self.assertEqual(
+            outbound.metadata.get("delivery"),
+            {"status": "sent", "content_type": "image", "message_ids": ["om_image_1", "om_text_1"]},
+        )
 
     async def test_send_sync_falls_back_to_text_when_image_send_fails(self) -> None:
         bus = MessageBus()
@@ -243,11 +247,15 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(channel, "_send_image_sync", side_effect=RuntimeError("upload failed")),
-            patch.object(channel, "_send_text_sync") as send_text,
+            patch.object(channel, "_send_text_sync", return_value="om_fallback_1") as send_text,
         ):
             channel._send_sync(outbound)
 
         send_text.assert_called_once_with(outbound, "[image send failed] /tmp/demo.png")
+        self.assertEqual(
+            outbound.metadata.get("delivery"),
+            {"status": "fallback_text", "content_type": "image", "message_ids": ["om_fallback_1"]},
+        )
 
     async def test_send_sync_routes_file_metadata(self) -> None:
         bus = MessageBus()
@@ -261,13 +269,17 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
-            patch.object(channel, "_send_file_sync") as send_file,
-            patch.object(channel, "_send_text_sync") as send_text,
+            patch.object(channel, "_send_file_sync", return_value="om_file_1") as send_file,
+            patch.object(channel, "_send_text_sync", return_value="om_text_2") as send_text,
         ):
             channel._send_sync(outbound)
 
         send_file.assert_called_once_with(outbound, "/tmp/report.docx")
         send_text.assert_called_once_with(outbound, "attachment caption")
+        self.assertEqual(
+            outbound.metadata.get("delivery"),
+            {"status": "sent", "content_type": "file", "message_ids": ["om_file_1", "om_text_2"]},
+        )
 
     async def test_send_sync_falls_back_to_text_when_file_send_fails(self) -> None:
         bus = MessageBus()
@@ -282,11 +294,30 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(channel, "_send_file_sync", side_effect=RuntimeError("upload failed")),
-            patch.object(channel, "_send_text_sync") as send_text,
+            patch.object(channel, "_send_text_sync", return_value="om_fallback_2") as send_text,
         ):
             channel._send_sync(outbound)
 
         send_text.assert_called_once_with(outbound, "[file send failed] /tmp/report.docx")
+        self.assertEqual(
+            outbound.metadata.get("delivery"),
+            {"status": "fallback_text", "content_type": "file", "message_ids": ["om_fallback_2"]},
+        )
+
+    async def test_send_sync_records_text_delivery_metadata(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._client = object()
+        outbound = OutboundMessage(channel="feishu", chat_id="oc_group_1", content="plain text")
+
+        with patch.object(channel, "_send_text_sync", return_value="om_text_plain") as send_text:
+            channel._send_sync(outbound)
+
+        send_text.assert_called_once_with(outbound)
+        self.assertEqual(
+            outbound.metadata.get("delivery"),
+            {"status": "sent", "content_type": "text", "message_ids": ["om_text_plain"]},
+        )
 
 
 if __name__ == "__main__":
