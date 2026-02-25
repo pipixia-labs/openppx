@@ -835,6 +835,37 @@ class CLITests(unittest.TestCase):
         self.assertIn("channels.qq.appId", joined)
         self.assertIn("channels.qq.secret", joined)
 
+    def test_install_summary_schema_includes_email_consent_and_password_semantics(self) -> None:
+        from openheron import cli
+
+        requirements = cli.INSTALL_CHANNEL_SUMMARY_REQUIREMENTS
+        consent_rule = next(
+            (
+                item
+                for item in requirements
+                if item.channel == "email" and item.key == "consentGranted"
+            ),
+            None,
+        )
+        password_rule = next(
+            (
+                item
+                for item in requirements
+                if item.channel == "email" and item.key == "smtpPassword"
+            ),
+            None,
+        )
+        self.assertIsNotNone(consent_rule)
+        self.assertIsNotNone(password_rule)
+        self.assertEqual(consent_rule.presence, "truthy_bool")
+        self.assertEqual(password_rule.presence, "non_empty_raw")
+
+    def test_install_summary_provider_schema_contains_api_key_requirement(self) -> None:
+        from openheron import cli
+
+        keys = [item.key for item in cli.INSTALL_PROVIDER_SUMMARY_REQUIREMENTS]
+        self.assertIn("apiKey", keys)
+
     def test_cmd_install_prints_summary_lines(self) -> None:
         from openheron import cli
 
