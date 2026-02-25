@@ -874,6 +874,7 @@ class CLITests(unittest.TestCase):
         self.assertIsNotNone(api_key_rule)
         self.assertTrue(api_key_rule.skip_for_oauth)
         self.assertIsNotNone(api_key_rule.env_name_resolver)
+        self.assertEqual(api_key_rule.doctor_env_backfill_code, "provider.env.api_key_backfilled")
 
     def test_cmd_install_prints_summary_lines(self) -> None:
         from openheron import cli

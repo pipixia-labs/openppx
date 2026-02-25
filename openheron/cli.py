@@ -896,7 +896,7 @@ def _doctor_backfill_provider_api_key_from_env(
         return
 
     for requirement in INSTALL_PROVIDER_SUMMARY_REQUIREMENTS:
-        if requirement.key != "apiKey":
+        if requirement.env_name_resolver is None:
             continue
         env_name = requirement.env_name_resolver(active_provider) if requirement.env_name_resolver else ""
         env_value = os.getenv(env_name, "").strip() if env_name else ""
@@ -905,8 +905,8 @@ def _doctor_backfill_provider_api_key_from_env(
             _doctor_add_change(
                 changes,
                 event_sink=event_sink,
-                code="provider.env.api_key_backfilled",
-                rule="provider_env_backfill",
+                code=requirement.doctor_env_backfill_code or "provider.env.backfilled",
+                rule=requirement.doctor_env_backfill_rule,
                 message=f"providers.{active_provider}.{requirement.key} <- {env_name}",
             )
 
@@ -1937,6 +1937,8 @@ class InstallProviderSummaryRequirement:
     fix_hint_template: str = "set providers.{provider}.{key} in {config_path}"
     env_name_resolver: Callable[[str], str | None] | None = None
     skip_for_oauth: bool = False
+    doctor_env_backfill_code: str | None = None
+    doctor_env_backfill_rule: str = "provider_env_backfill"
 
     @property
     def item_suffix(self) -> str:
@@ -2095,6 +2097,7 @@ INSTALL_PROVIDER_SUMMARY_REQUIREMENTS: tuple[InstallProviderSummaryRequirement, 
         "apiKey",
         env_name_resolver=provider_api_key_env,
         skip_for_oauth=True,
+        doctor_env_backfill_code="provider.env.api_key_backfilled",
     ),
 )
 
