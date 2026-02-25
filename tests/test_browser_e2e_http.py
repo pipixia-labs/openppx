@@ -69,6 +69,40 @@ class BrowserE2EHttpTests(unittest.TestCase):
                     self.end_headers()
                     self.wfile.write(body)
                     return
+                if node_name == "message-error":
+                    payload = {
+                        "message": "node proxy message error",
+                        "status": 432,
+                        "errorCode": "proxy_message_error",
+                    }
+                    body = json.dumps(payload).encode("utf-8")
+                    self.send_response(502)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if node_name == "structured-error-bad-status":
+                    payload = {
+                        "error": "node proxy structured error with bad status",
+                        "status": "not-an-int",
+                        "errorCode": "proxy_structured_error",
+                    }
+                    body = json.dumps(payload).encode("utf-8")
+                    self.send_response(502)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if node_name == "plain-http-error":
+                    body = b"proxy overloaded"
+                    self.send_response(503)
+                    self.send_header("Content-Type", "text/plain")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if node_name == "slow":
                     time.sleep(0.3)
                 if node_name == "invalid-json":
@@ -93,6 +127,43 @@ class BrowserE2EHttpTests(unittest.TestCase):
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                     return
+                if node_name == "warning-payload":
+                    payload = {"ok": True, "capabilityWarnings": ["upstream warning"]}
+                    body = json.dumps(payload).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if node_name == "warning-payload-dup-node":
+                    payload = {
+                        "ok": True,
+                        "capabilityWarnings": [
+                            "OPENHERON_BROWSER_NODE_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+                        ],
+                    }
+                    body = json.dumps(payload).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if node_name == "warning-payload-dup-sandbox":
+                    payload = {
+                        "ok": True,
+                        "capabilityWarnings": [
+                            "OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+                        ],
+                    }
+                    body = json.dumps(payload).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if parsed.path.startswith("/status") and relay_mode == "invalid-json":
                     body = b"this-is-not-json"
                     self.send_response(200)
@@ -114,6 +185,40 @@ class BrowserE2EHttpTests(unittest.TestCase):
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
+                    return
+                if parsed.path.startswith("/status") and relay_mode == "plain-http-error":
+                    body = b"relay overloaded"
+                    self.send_response(503)
+                    self.send_header("Content-Type", "text/plain")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if parsed.path.startswith("/status") and relay_mode == "structured-status":
+                    body = json.dumps({"error": "structured relay status error", "status": 418}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if parsed.path.startswith("/status") and relay_mode == "structured-bad-status":
+                    body = json.dumps({"error": "structured relay status bad status", "status": "not-an-int"}).encode(
+                        "utf-8"
+                    )
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if parsed.path.startswith("/status") and relay_mode == "message-status":
+                    body = json.dumps({"message": "relay status message error", "status": 419}).encode("utf-8")
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                     return
                 if parsed.path.startswith("/status"):
                     payload = {"running": True, "tabCount": 2, "lastTargetId": "tab-2"}
@@ -208,6 +313,35 @@ class BrowserE2EHttpTests(unittest.TestCase):
                         body = json.dumps(payload).encode("utf-8")
                         self.send_response(500)
                         self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                    if kind == "press" and str(act_request.get("key", "")).strip().upper() == "MESSAGE_STATUS":
+                        payload = {"message": "relay message error", "status": 419}
+                        body = json.dumps(payload).encode("utf-8")
+                        self.send_response(500)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                    if kind == "press" and str(act_request.get("key", "")).strip().upper() == "STRUCTURED_BAD_STATUS":
+                        payload = {
+                            "error": "structured relay failure with bad status",
+                            "status": "not-an-int",
+                        }
+                        body = json.dumps(payload).encode("utf-8")
+                        self.send_response(500)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return
+                    if kind == "press" and str(act_request.get("key", "")).strip().upper() == "PLAIN_HTTP_ERROR":
+                        body = b"relay overloaded"
+                        self.send_response(503)
+                        self.send_header("Content-Type", "text/plain")
                         self.send_header("Content-Length", str(len(body)))
                         self.end_headers()
                         self.wfile.write(body)
@@ -316,6 +450,57 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertIn("timeoutMs=1200", self._captured["path"])
         self.assertEqual(self._captured["proxy_token"], "node-token-e2e")
 
+    def test_browser_rejects_node_param_for_sandbox_target_e2e(self) -> None:
+        payload = json.loads(browser(action="status", target="sandbox", node="n1"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 400)
+        self.assertIn('node is only supported with target="node"', payload["error"])
+
+    def test_browser_rejects_node_param_for_host_target_e2e(self) -> None:
+        payload = json.loads(browser(action="status", target="host", node="n1"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 400)
+        self.assertIn('node is only supported with target="node"', payload["error"])
+
+    def test_browser_node_target_without_proxy_returns_not_implemented_e2e(self) -> None:
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 501)
+        self.assertIn('target "node" is not implemented yet', payload["error"])
+
+    def test_browser_sandbox_target_without_proxy_returns_not_implemented_e2e(self) -> None:
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 501)
+        self.assertIn('target "sandbox" is not implemented yet', payload["error"])
+
+    def test_browser_node_proxy_uses_global_proxy_token_fallback_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(self._captured["proxy_token"], "global-token-e2e")
+
+    def test_browser_node_proxy_token_takes_precedence_over_global_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_TOKEN"] = "node-token-e2e"
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(self._captured["proxy_token"], "node-token-e2e")
+
     def test_browser_node_proxy_status_includes_recommendations_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
@@ -335,6 +520,111 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["supportedActions"], ["act", "profiles", "status", "snapshot"])
         self.assertEqual(payload["recommendedActions"], ["act", "profiles"])
         self.assertEqual(payload["capability"]["recommendedOrder"], ["act", "profiles", "status", "snapshot"])
+
+    def test_browser_node_proxy_accepts_top_level_capability_shape_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"backend": "custom-node-proxy", "supportedActions": ["tabs", "status"]}
+        )
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["capability"]["backend"], "custom-node-proxy")
+        self.assertEqual(payload["supportedActions"], ["status", "tabs"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs"])
+
+    def test_browser_node_proxy_invalid_recommendation_order_json_uses_default_order_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = "{not-json"
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs", "dialog"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs", "dialog"])
+        self.assertNotIn("recommendedOrder", payload["capability"])
+
+    def test_browser_node_proxy_non_list_recommendation_order_uses_default_order_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps({"bad": "shape"})
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs", "dialog"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs", "dialog"])
+        self.assertNotIn("recommendedOrder", payload["capability"])
+
+    def test_browser_node_proxy_recommendation_order_is_normalized_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["tabs", "status", "act"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+            [" Status ", "status", "tabs", "", "ACT"]
+        )
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs", "act"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs", "act"])
+        self.assertEqual(payload["capability"]["recommendedOrder"], ["status", "tabs", "act"])
+
+    def test_browser_node_proxy_capability_error_codes_are_deduplicated_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"errorCodes": ["proxy_timeout", " proxy_timeout ", "custom_error", ""]}}
+        )
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["capability"]["error_codes"], ["proxy_timeout", "custom_error"])
+
+    def test_browser_sandbox_proxy_capability_error_codes_are_deduplicated_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"errorCodes": ["proxy_timeout", " proxy_timeout ", "custom_error", ""]}}
+        )
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["capability"]["error_codes"], ["proxy_timeout", "custom_error"])
+
+    def test_browser_node_proxy_supported_actions_are_trimmed_and_deduplicated_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": [" status ", "tabs", "status", ""]}}
+        )
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs"])
 
     def test_browser_node_proxy_profiles_normalizes_shape_and_recommendations_e2e(self) -> None:
         configure_browser_runtime(None)
@@ -357,6 +647,36 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["recommendedActions"], ["profiles", "status"])
         self.assertEqual(payload["capability"]["recommendedOrder"], ["profiles", "status", "tabs"])
 
+    def test_browser_node_proxy_blocks_unsupported_action_by_capability_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles"]}}
+        )
+
+        payload = json.loads(browser(action="navigate", target="node", target_url="https://example.com"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 501)
+        self.assertIn('not supported by target "node"', payload["error"])
+        self.assertEqual(payload["supportedActions"], ["profiles", "status"])
+        self.assertIn("action=status or action=profiles", payload["hint"])
+
+    def test_browser_node_proxy_blocked_action_normalizes_supported_actions_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": [" status ", "profiles", "status", ""]}}
+        )
+
+        payload = json.loads(browser(action="navigate", target="node", target_url="https://example.com"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 501)
+        self.assertEqual(payload["supportedActions"], ["profiles", "status"])
+
     def test_browser_sandbox_proxy_minimal_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
@@ -370,6 +690,29 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["target"], "sandbox")
         self.assertEqual(payload["capability"]["backend"], "sandbox-proxy")
         self.assertIn("timeoutMs=900", self._captured["path"])
+        self.assertEqual(self._captured["proxy_token"], "sandbox-token-e2e")
+
+    def test_browser_sandbox_proxy_uses_global_proxy_token_fallback_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(self._captured["proxy_token"], "global-token-e2e")
+
+    def test_browser_sandbox_proxy_token_takes_precedence_over_global_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "sandbox-token-e2e"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
         self.assertEqual(self._captured["proxy_token"], "sandbox-token-e2e")
 
     def test_browser_sandbox_proxy_blocks_unsupported_action_by_capability_e2e(self) -> None:
@@ -387,6 +730,20 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertIn('not supported by target "sandbox"', payload["error"])
         self.assertEqual(payload["supportedActions"], ["profiles", "status"])
         self.assertIn("action=status or action=profiles", payload["hint"])
+
+    def test_browser_sandbox_proxy_blocked_action_normalizes_supported_actions_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": [" status ", "profiles", "status", ""]}}
+        )
+
+        payload = json.loads(browser(action="navigate", target="sandbox", target_url="https://example.com"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 501)
+        self.assertEqual(payload["supportedActions"], ["profiles", "status"])
 
     def test_browser_node_proxy_invalid_capability_json_warns_and_falls_back_e2e(self) -> None:
         configure_browser_runtime(None)
@@ -417,6 +774,36 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
         self.assertIn("capabilityWarnings", payload)
         self.assertIn("must be a JSON object", payload["capabilityWarnings"][0])
+
+    def test_browser_node_proxy_merges_upstream_and_local_capability_warnings_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
+
+        payload = json.loads(browser(action="status", target="node", node="warning-payload"))
+
+        self.assertTrue(payload["ok"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("upstream warning", payload["capabilityWarnings"])
+        self.assertTrue(any("invalid JSON" in item for item in payload["capabilityWarnings"]))
+
+    def test_browser_node_proxy_capability_warnings_are_deduplicated_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
+
+        payload = json.loads(browser(action="status", target="node", node="warning-payload-dup-node"))
+
+        self.assertTrue(payload["ok"])
+        warnings = payload.get("capabilityWarnings", [])
+        self.assertEqual(
+            warnings.count(
+                "OPENHERON_BROWSER_NODE_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+            ),
+            1,
+        )
 
     def test_browser_node_proxy_invalid_capability_error_codes_shape_warns_e2e(self) -> None:
         configure_browser_runtime(None)
@@ -465,6 +852,38 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertIn("capabilityWarnings", payload)
         self.assertIn("must be a JSON object", payload["capabilityWarnings"][0])
 
+    def test_browser_sandbox_proxy_merges_upstream_and_local_capability_warnings_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
+        self._captured["proxy_mode"] = "warning-payload"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertIn("capabilityWarnings", payload)
+        self.assertIn("upstream warning", payload["capabilityWarnings"])
+        self.assertTrue(any("invalid JSON" in item for item in payload["capabilityWarnings"]))
+
+    def test_browser_sandbox_proxy_capability_warnings_are_deduplicated_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
+        self._captured["proxy_mode"] = "warning-payload-dup-sandbox"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        warnings = payload.get("capabilityWarnings", [])
+        self.assertEqual(
+            warnings.count(
+                "OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+            ),
+            1,
+        )
+
     def test_browser_sandbox_proxy_invalid_capability_error_codes_shape_warns_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
@@ -502,6 +921,85 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["recommendedActions"], ["profiles", "status", "act"])
         self.assertEqual(payload["capability"]["recommendedOrder"], ["profiles", "status", "act", "snapshot"])
 
+    def test_browser_sandbox_proxy_accepts_top_level_capability_shape_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"backend": "custom-sandbox-proxy", "supportedActions": ["tabs", "status"]}
+        )
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["capability"]["backend"], "custom-sandbox-proxy")
+        self.assertEqual(payload["supportedActions"], ["status", "tabs"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs"])
+
+    def test_browser_sandbox_proxy_non_list_recommendation_order_uses_default_order_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps({"bad": "shape"})
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs", "dialog"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs", "dialog"])
+        self.assertNotIn("recommendedOrder", payload["capability"])
+
+    def test_browser_sandbox_proxy_invalid_recommendation_order_json_uses_default_order_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = "{not-json"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs", "dialog"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs", "dialog"])
+        self.assertNotIn("recommendedOrder", payload["capability"])
+
+    def test_browser_sandbox_proxy_recommendation_order_is_normalized_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["tabs", "status", "act"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+            [" Status ", "status", "tabs", "", "ACT"]
+        )
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs", "act"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs", "act"])
+        self.assertEqual(payload["capability"]["recommendedOrder"], ["status", "tabs", "act"])
+
+    def test_browser_sandbox_proxy_supported_actions_are_trimmed_and_deduplicated_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": [" status ", "tabs", "status", ""]}}
+        )
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "tabs"])
+        self.assertEqual(payload["recommendedActions"], ["status", "tabs"])
+
     def test_browser_sandbox_proxy_recommendation_limit_is_clamped_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
@@ -519,6 +1017,77 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["supportedActions"], ["status", "profiles", "tabs"])
         self.assertEqual(payload["recommendedActions"], ["status"])
+
+    def test_browser_node_proxy_recommendation_limit_is_clamped_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "0"
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["supportedActions"], ["status", "profiles", "tabs"])
+        self.assertEqual(payload["recommendedActions"], ["status"])
+
+    def test_browser_sandbox_proxy_recommendation_limit_is_capped_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "999"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["recommendedActions"], ["status", "profiles", "tabs"])
+
+    def test_browser_node_proxy_recommendation_limit_is_capped_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "999"
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["recommendedActions"], ["status", "profiles", "tabs"])
+
+    def test_browser_node_proxy_invalid_recommendation_limit_uses_default_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles", "tabs", "snapshot", "act", "dialog"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "not-an-int"
+
+        payload = json.loads(browser(action="status", target="node"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["recommendedActions"], ["status", "profiles", "tabs", "snapshot", "act"])
+
+    def test_browser_sandbox_proxy_invalid_recommendation_limit_uses_default_e2e(self) -> None:
+        configure_browser_runtime(None)
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+            {"capability": {"supportedActions": ["status", "profiles", "tabs", "snapshot", "act", "dialog"]}}
+        )
+        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "not-an-int"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["recommendedActions"], ["status", "profiles", "tabs", "snapshot", "act"])
 
     def test_browser_sandbox_proxy_profiles_normalizes_shape_and_recommendations_e2e(self) -> None:
         configure_browser_runtime(None)
@@ -604,6 +1173,30 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["errorCode"], "proxy_structured_error")
         self.assertIn("structured error", payload["error"].lower())
 
+    def test_browser_sandbox_proxy_http_error_non_int_status_falls_back_to_http_status_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        self._captured["proxy_mode"] = "structured-error-bad-status"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 502)
+        self.assertEqual(payload["errorCode"], "proxy_structured_error")
+        self.assertIn("bad status", payload["error"].lower())
+
+    def test_browser_sandbox_proxy_http_error_prefers_message_field_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        self._captured["proxy_mode"] = "message-error"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 432)
+        self.assertEqual(payload["errorCode"], "proxy_message_error")
+        self.assertIn("message error", payload["error"].lower())
+
     def test_browser_sandbox_proxy_auth_error_mapping_e2e(self) -> None:
         host, port = self._server.server_address
         os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
@@ -638,6 +1231,18 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["target"], "sandbox")
         self.assertEqual(payload["capability"]["backend"], "sandbox-proxy")
         self.assertIn("proxy_timeout", payload["capability"]["error_codes"])
+
+    def test_browser_sandbox_proxy_plain_http_error_mapping_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        self._captured["proxy_mode"] = "plain-http-error"
+
+        payload = json.loads(browser(action="status", target="sandbox"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 503)
+        self.assertEqual(payload["errorCode"], "proxy_http_error")
+        self.assertIn("proxy overloaded", payload["error"].lower())
 
     def test_browser_chrome_relay_status_minimal_e2e(self) -> None:
         self._configure_relay_runtime(token="relay-token-e2e")
@@ -674,6 +1279,50 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["status"], 502)
         self.assertEqual(payload["errorCode"], "relay_non_object_json")
         self.assertIn("non-object", payload["error"].lower())
+
+    def test_browser_chrome_relay_status_plain_http_error_mapping_e2e(self) -> None:
+        self._captured["relay_mode"] = "plain-http-error"
+        self._configure_relay_runtime()
+
+        payload = json.loads(browser(action="status", profile="chrome"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 503)
+        self.assertEqual(payload["errorCode"], "relay_http_error")
+        self.assertIn("relay overloaded", payload["error"].lower())
+
+    def test_browser_chrome_relay_status_http_error_uses_structured_status_e2e(self) -> None:
+        self._captured["relay_mode"] = "structured-status"
+        self._configure_relay_runtime()
+
+        payload = json.loads(browser(action="status", profile="chrome"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 418)
+        self.assertEqual(payload["errorCode"], "relay_http_error")
+        self.assertIn("structured relay status error", payload["error"].lower())
+
+    def test_browser_chrome_relay_status_http_error_non_int_status_falls_back_to_http_status_e2e(self) -> None:
+        self._captured["relay_mode"] = "structured-bad-status"
+        self._configure_relay_runtime()
+
+        payload = json.loads(browser(action="status", profile="chrome"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 500)
+        self.assertEqual(payload["errorCode"], "relay_http_error")
+        self.assertIn("bad status", payload["error"].lower())
+
+    def test_browser_chrome_relay_status_http_error_prefers_message_field_e2e(self) -> None:
+        self._captured["relay_mode"] = "message-status"
+        self._configure_relay_runtime()
+
+        payload = json.loads(browser(action="status", profile="chrome"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 419)
+        self.assertEqual(payload["errorCode"], "relay_http_error")
+        self.assertIn("message error", payload["error"].lower())
 
     def test_browser_chrome_relay_status_empty_body_e2e(self) -> None:
         self._captured["relay_mode"] = "empty-body"
@@ -975,6 +1624,57 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["errorCode"], "relay_http_error")
         self.assertIn("structured relay failure", payload["error"].lower())
 
+    def test_browser_chrome_relay_act_http_error_non_int_status_falls_back_to_http_status_e2e(self) -> None:
+        self._configure_relay_runtime()
+
+        payload = json.loads(
+            browser(
+                action="act",
+                profile="chrome",
+                target_id="tab-2",
+                request=json.dumps({"kind": "press", "key": "STRUCTURED_BAD_STATUS"}),
+            )
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 500)
+        self.assertEqual(payload["errorCode"], "relay_http_error")
+        self.assertIn("bad status", payload["error"].lower())
+
+    def test_browser_chrome_relay_act_http_error_prefers_message_field_e2e(self) -> None:
+        self._configure_relay_runtime()
+
+        payload = json.loads(
+            browser(
+                action="act",
+                profile="chrome",
+                target_id="tab-2",
+                request=json.dumps({"kind": "press", "key": "MESSAGE_STATUS"}),
+            )
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 419)
+        self.assertEqual(payload["errorCode"], "relay_http_error")
+        self.assertIn("message error", payload["error"].lower())
+
+    def test_browser_chrome_relay_act_plain_http_error_mapping_e2e(self) -> None:
+        self._configure_relay_runtime()
+
+        payload = json.loads(
+            browser(
+                action="act",
+                profile="chrome",
+                target_id="tab-2",
+                request=json.dumps({"kind": "press", "key": "PLAIN_HTTP_ERROR"}),
+            )
+        )
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 503)
+        self.assertEqual(payload["errorCode"], "relay_http_error")
+        self.assertIn("relay overloaded", payload["error"].lower())
+
     def test_browser_chrome_relay_act_timeout_mapping_e2e(self) -> None:
         self._configure_relay_runtime()
         os.environ["OPENHERON_BROWSER_CHROME_RELAY_TIMEOUT_MS"] = "50"
@@ -1095,6 +1795,39 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertEqual(payload["status"], 431)
         self.assertEqual(payload["errorCode"], "proxy_structured_error")
         self.assertIn("structured error", payload["error"].lower())
+
+    def test_browser_node_proxy_http_error_non_int_status_falls_back_to_http_status_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+
+        payload = json.loads(browser(action="status", target="node", node="structured-error-bad-status"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 502)
+        self.assertEqual(payload["errorCode"], "proxy_structured_error")
+        self.assertIn("bad status", payload["error"].lower())
+
+    def test_browser_node_proxy_http_error_prefers_message_field_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+
+        payload = json.loads(browser(action="status", target="node", node="message-error"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 432)
+        self.assertEqual(payload["errorCode"], "proxy_message_error")
+        self.assertIn("message error", payload["error"].lower())
+
+    def test_browser_node_proxy_plain_http_error_mapping_e2e(self) -> None:
+        host, port = self._server.server_address
+        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+
+        payload = json.loads(browser(action="status", target="node", node="plain-http-error"))
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["status"], 503)
+        self.assertEqual(payload["errorCode"], "proxy_http_error")
+        self.assertIn("proxy overloaded", payload["error"].lower())
 
     def test_browser_node_proxy_auth_error_mapping_e2e(self) -> None:
         host, port = self._server.server_address
