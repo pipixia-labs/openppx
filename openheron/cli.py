@@ -2261,6 +2261,31 @@ def _install_summary_channel_fix_hints(config_path: Path) -> dict[str, str]:
     return hints
 
 
+def _install_summary_fix_hints(
+    *,
+    missing: list[str],
+    selected_provider: str,
+    config_path: Path,
+) -> list[str]:
+    """Render install summary fix hints for both provider and channel missing items."""
+
+    provider_fix_hints = _install_summary_provider_fix_hints(
+        selected_provider=selected_provider,
+        config_path=config_path,
+    )
+    channel_fix_hints = _install_summary_channel_fix_hints(config_path)
+    combined_hints = {**provider_fix_hints, **channel_fix_hints}
+
+    rendered: list[str] = []
+    for item in missing:
+        hint = combined_hints.get(item)
+        if hint:
+            rendered.append(hint)
+        else:
+            rendered.append(f"set {item} in {config_path}")
+    return rendered
+
+
 def _apply_install_channel_prompt_rules(
     *,
     channels_cfg: dict[str, Any],
@@ -2501,19 +2526,11 @@ def _install_summary_lines(config_path: Path) -> list[str]:
     lines = [f"Install summary: provider={selected_provider}, channels={enabled_channels or ['(none)']}"]
     if missing:
         lines.append(f"Install summary: missing={missing}")
-        fix_hints: list[str] = []
-        provider_fix_hints = _install_summary_provider_fix_hints(
+        fix_hints = _install_summary_fix_hints(
+            missing=missing,
             selected_provider=selected_provider,
             config_path=config_path,
         )
-        channel_fix_hints = _install_summary_channel_fix_hints(config_path)
-        for item in missing:
-            if item in provider_fix_hints:
-                fix_hints.append(provider_fix_hints[item])
-            elif item in channel_fix_hints:
-                fix_hints.append(channel_fix_hints[item])
-            else:
-                fix_hints.append(f"set {item} in {config_path}")
         lines.append(f"Install summary: fixes={fix_hints}")
         lines.append("Install summary: next[1]=openheron doctor")
         lines.append(f"Install summary: next[2]={gateway_cmd}")
