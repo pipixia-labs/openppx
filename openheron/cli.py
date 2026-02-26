@@ -1959,6 +1959,20 @@ def _cmd_onboard(force: bool) -> int:
     return 0
 
 
+def _cmd_onboard_alias(*, force: bool) -> int:
+    """Backward-compatible onboard entrypoint with install migration hint."""
+    _stdout_line("`openheron onboard` is kept for compatibility.")
+    _stdout_line("Recommended replacement: `openheron install --init-only`.")
+    return _cmd_install(
+        force=force,
+        non_interactive=False,
+        accept_risk=False,
+        install_daemon=False,
+        daemon_channels=None,
+        init_only=True,
+    )
+
+
 InstallChannelPromptRule = install_rules.InstallChannelPromptRule
 InstallProviderSummaryRequirement = install_rules.InstallProviderSummaryRequirement
 InstallChannelSummaryRequirement = install_rules.InstallChannelSummaryRequirement
@@ -2360,8 +2374,18 @@ def _cmd_install(
     accept_risk: bool = False,
     install_daemon: bool = False,
     daemon_channels: str | None = None,
+    init_only: bool = False,
 ) -> int:
     """Run a minimal installation flow for first-time local setup."""
+    if init_only:
+        if non_interactive or accept_risk or install_daemon or daemon_channels:
+            _stdout_line(
+                "Install init-only mode cannot be combined with non-interactive/risk/daemon options."
+            )
+            return 1
+        _install_step_line(1, 1, "initializing config and workspace...")
+        return _cmd_onboard(force=force)
+
     if non_interactive and not accept_risk:
         _stdout_line("Non-interactive install requires explicit risk acknowledgement.")
         _stdout_line("Re-run with: openheron install --non-interactive --accept-risk")
@@ -2958,7 +2982,7 @@ def main(argv: list[str] | None = None) -> None:
     subparsers = parser.add_subparsers(dest="command", required=False)
     onboard_parser = subparsers.add_parser(
         "onboard",
-        help="Initialize ~/.openheron/config.json and workspace.",
+        help="(compat) Initialize config/workspace. Prefer: `openheron install --init-only`.",
     )
     onboard_parser.add_argument(
         "--force",
@@ -2968,6 +2992,11 @@ def main(argv: list[str] | None = None) -> None:
     install_parser = subparsers.add_parser(
         "install",
         help="Run guided installation (onboard + setup + doctor + next-step hints).",
+    )
+    install_parser.add_argument(
+        "--init-only",
+        action="store_true",
+        help="Initialize config/workspace only (equivalent to legacy `openheron onboard`).",
     )
     install_parser.add_argument(
         "--force",
@@ -3202,13 +3231,14 @@ def main(argv: list[str] | None = None) -> None:
         code = _dispatch_provider_command(args, parser)
     else:
         handlers: dict[str, Callable[[], int]] = {
-            "onboard": lambda: _cmd_onboard(force=args.force),
+            "onboard": lambda: _cmd_onboard_alias(force=args.force),
             "install": lambda: _cmd_install(
                 force=args.force,
                 non_interactive=args.non_interactive,
                 accept_risk=args.accept_risk,
                 install_daemon=args.install_daemon,
                 daemon_channels=args.daemon_channels,
+                init_only=args.init_only,
             ),
             "skills": _cmd_skills,
             "mcps": _cmd_mcps,

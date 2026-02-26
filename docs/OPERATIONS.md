@@ -15,7 +15,7 @@ openheron install
 
 `openheron install` 会执行：
 
-- 初始化配置与工作区（等价 `openheron onboard`）
+- 初始化配置与工作区
 - 交互式选择 provider/channel（TTY 模式）
 - 运行 `openheron doctor`
 - 输出安装摘要与下一步命令
@@ -26,6 +26,9 @@ openheron install
 ```bash
 # 标准交互式安装（推荐）
 openheron install
+
+# 仅初始化配置与工作区（等价旧命令 onboard）
+openheron install --init-only
 
 # 非交互安装（CI/远程终端常用，需要显式风险确认）
 openheron install --non-interactive --accept-risk
@@ -116,8 +119,10 @@ openheron gateway-service status --json
 如果只想初始化文件，不跑安装流程：
 
 ```bash
-openheron onboard
+openheron install --init-only
 ```
+
+`openheron onboard` 仍可用，但推荐迁移到 `openheron install --init-only`。
 
 初始化后会生成：
 

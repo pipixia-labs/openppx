@@ -32,7 +32,7 @@ class CLITests(unittest.TestCase):
         from openheron import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
-            with patch.object(cli, "_cmd_onboard", return_value=0) as mocked_onboard:
+            with patch.object(cli, "_cmd_onboard_alias", return_value=0) as mocked_onboard:
                 with self.assertRaises(SystemExit) as ctx:
                     cli.main(["onboard"])
                 self.assertEqual(ctx.exception.code, 0)
@@ -53,6 +53,7 @@ class CLITests(unittest.TestCase):
                     accept_risk=False,
                     install_daemon=False,
                     daemon_channels=None,
+                    init_only=False,
                 )
                 mocked_bootstrap.assert_not_called()
 
@@ -70,6 +71,7 @@ class CLITests(unittest.TestCase):
                     accept_risk=False,
                     install_daemon=True,
                     daemon_channels="local,feishu",
+                    init_only=False,
                 )
                 mocked_bootstrap.assert_not_called()
 
@@ -87,6 +89,25 @@ class CLITests(unittest.TestCase):
                     accept_risk=True,
                     install_daemon=False,
                     daemon_channels=None,
+                    init_only=False,
+                )
+                mocked_bootstrap.assert_not_called()
+
+    def test_install_mode_dispatch_with_init_only(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_install", return_value=0) as mocked_install:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["install", "--init-only", "--force"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_install.assert_called_once_with(
+                    force=True,
+                    non_interactive=False,
+                    accept_risk=False,
+                    install_daemon=False,
+                    daemon_channels=None,
+                    init_only=True,
                 )
                 mocked_bootstrap.assert_not_called()
 
@@ -434,6 +455,58 @@ class CLITests(unittest.TestCase):
         mocked_doctor.assert_called_once_with(output_json=False, verbose=False)
         mocked_daemon.assert_not_called()
         mocked_bootstrap.assert_called_once()
+
+    def test_cmd_install_init_only_runs_onboard_only(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "_cmd_onboard", return_value=0) as mocked_onboard:
+            with patch.object(cli, "_cmd_doctor", return_value=0) as mocked_doctor:
+                with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+                    with patch("builtins.print"):
+                        code = cli._cmd_install(force=False, non_interactive=False, init_only=True)
+
+        self.assertEqual(code, 0)
+        mocked_onboard.assert_called_once_with(force=False)
+        mocked_doctor.assert_not_called()
+        mocked_bootstrap.assert_not_called()
+
+    def test_cmd_install_init_only_rejects_conflicting_flags(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "_cmd_onboard", return_value=0) as mocked_onboard:
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_install(
+                    force=False,
+                    non_interactive=True,
+                    accept_risk=True,
+                    install_daemon=True,
+                    daemon_channels="local",
+                    init_only=True,
+                )
+
+        self.assertEqual(code, 1)
+        mocked_onboard.assert_not_called()
+        lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
+        self.assertTrue(any("init-only mode cannot be combined" in line for line in lines))
+
+    def test_cmd_onboard_alias_prints_migration_hint(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "_cmd_install", return_value=0) as mocked_install:
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_onboard_alias(force=True)
+
+        self.assertEqual(code, 0)
+        mocked_install.assert_called_once_with(
+            force=True,
+            non_interactive=False,
+            accept_risk=False,
+            install_daemon=False,
+            daemon_channels=None,
+            init_only=True,
+        )
+        lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
+        self.assertTrue(any("install --init-only" in line for line in lines))
 
     def test_cmd_install_with_daemon_calls_gateway_service_install(self) -> None:
         from openheron import cli

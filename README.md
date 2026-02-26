@@ -29,7 +29,7 @@ python -m openheron.cli -m "Describe what you can do"
 
 `openheron install` now includes:
 
-- `openheron onboard` initialization
+- config/workspace initialization
 - optional interactive provider/channel setup
 - diagnostics (`openheron doctor`)
 - install summary + next command suggestions
@@ -38,6 +38,7 @@ Install command variants:
 
 ```bash
 openheron install
+openheron install --init-only
 openheron install --non-interactive --accept-risk
 openheron install --force
 openheron install --install-daemon
@@ -76,17 +77,18 @@ See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) for the full field-to-fix mappi
 If you only want file initialization without checks, run:
 
 ```bash
-openheron onboard
+openheron install --init-only
 ```
 
-`openheron onboard` initializes:
+`openheron install --init-only` initializes:
 
 - `~/.openheron/config.json`
 - `~/.openheron/runtime.json`
 - `~/.openheron/workspace`
 
 Use `openheron install` for the full guided setup (checks + summary + suggestions),
-and use `openheron onboard` only when you want minimal file initialization.
+and use `openheron install --init-only` when you only want minimal file initialization.
+`openheron onboard` is kept as a compatibility alias.
 
 ## Development
 
