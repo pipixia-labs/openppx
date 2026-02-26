@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-openheron = "openheron.cli:main"
+openheron = "openheron.app.cli:main"
 
 [build-system]
 requires = ["hatchling"]
