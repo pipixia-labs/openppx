@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import uuid
+from datetime import datetime, timezone
 from hashlib import sha1
 from typing import Any
 
@@ -13,6 +15,7 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 
 from ..logging_utils import debug_logging_enabled, emit_debug
+from .token_usage_store import extract_usage_tokens, write_token_usage_event
 
 _DEFAULT_MAX_TEXT_CHARS = 2000
 _MAX_TOOL_CALL_ID_CHARS = 40
@@ -21,6 +24,7 @@ _SECRET_PATTERNS = [
     re.compile(r"AIza[0-9A-Za-z_-]{16,}"),
     re.compile(r"(?i)(api[_-]?key|token|secret)\s*[:=]\s*['\"]?([^\s'\",]+)"),
 ]
+_REQUEST_META_BY_INVOCATION_ID: dict[str, dict[str, Any]] = {}
 
 
 def _max_chars() -> int:
@@ -187,19 +191,75 @@ def _write_debug(tag: str, payload: dict[str, Any]) -> None:
     emit_debug(tag, payload, depth=2)
 
 
+def _request_meta_from_context(callback_context: CallbackContext, llm_request: LlmRequest) -> dict[str, Any]:
+    """Build minimal request-side metadata for later usage persistence."""
+    request_at_ms = int(time.time() * 1000)
+    request_at = datetime.fromtimestamp(request_at_ms / 1000, tz=timezone.utc).isoformat()
+    model = str(getattr(llm_request, "model", "") or "")
+    provider = str(os.getenv("OPENHERON_PROVIDER", "") or "").strip().lower()
+    if not provider:
+        model_l = model.lower()
+        if model_l.startswith("gemini") or model_l.startswith("google/"):
+            provider = "google"
+        elif model_l.startswith("openai/") or model_l.startswith("gpt-") or model_l.startswith("o1-"):
+            provider = "openai"
+    return {
+        "request_at_ms": request_at_ms,
+        "request_at": request_at,
+        "provider": provider,
+        "model": model,
+        "session_id": str(getattr(getattr(callback_context, "session", None), "id", "") or ""),
+        "invocation_id": str(getattr(callback_context, "invocation_id", "") or ""),
+    }
+
+
+def _record_token_usage_if_possible(callback_context: CallbackContext, llm_response: LlmResponse) -> None:
+    """Persist one final LLM usage event when usage counters are available."""
+    invocation_id = str(getattr(callback_context, "invocation_id", "") or "")
+    request_meta = _REQUEST_META_BY_INVOCATION_ID.pop(invocation_id, {})
+
+    usage_tokens = extract_usage_tokens(llm_response)
+    if usage_tokens["total_tokens"] <= 0:
+        return
+
+    response_at_ms = int(time.time() * 1000)
+    response_at = datetime.fromtimestamp(response_at_ms / 1000, tz=timezone.utc).isoformat()
+    raw_usage = {
+        "usage_metadata": getattr(llm_response, "usage_metadata", None),
+        "usage": getattr(llm_response, "usage", None),
+    }
+    payload: dict[str, Any] = {
+        "request_at": request_meta.get("request_at", response_at),
+        "request_at_ms": request_meta.get("request_at_ms", response_at_ms),
+        "response_at": response_at,
+        "response_at_ms": response_at_ms,
+        "provider": request_meta.get("provider", ""),
+        "model": request_meta.get("model", ""),
+        "session_id": request_meta.get("session_id", ""),
+        "invocation_id": invocation_id,
+        "raw_usage": raw_usage,
+    }
+    payload.update(usage_tokens)
+    write_token_usage_event(payload)
+
+
 def before_model_debug_callback(callback_context: CallbackContext, llm_request: LlmRequest) -> LlmResponse | None:
     """Emit sanitized request payload before model invocation."""
     patched = _sanitize_tool_ids(callback_context, llm_request)
+    request_meta = _request_meta_from_context(callback_context, llm_request)
+    invocation_id = request_meta["invocation_id"]
+    if invocation_id:
+        _REQUEST_META_BY_INVOCATION_ID[invocation_id] = request_meta
     if not debug_logging_enabled():
         return None
 
     texts = _request_texts(llm_request)
     payload = {
-        "invocation_id": getattr(callback_context, "invocation_id", ""),
-        "session_id": getattr(getattr(callback_context, "session", None), "id", ""),
+        "invocation_id": request_meta["invocation_id"],
+        "session_id": request_meta["session_id"],
         "agent": getattr(callback_context, "agent_name", ""),
         "user_id": getattr(callback_context, "user_id", ""),
-        "model": getattr(llm_request, "model", None),
+        "model": request_meta["model"],
         "tools": sorted((getattr(llm_request, "tools_dict", {}) or {}).keys()),
         "messages": [
             {"role": row["role"], "text": _clip(_redact(row["text"]))}
@@ -214,6 +274,13 @@ def before_model_debug_callback(callback_context: CallbackContext, llm_request: 
 
 def after_model_debug_callback(callback_context: CallbackContext, llm_response: LlmResponse) -> LlmResponse | None:
     """Emit sanitized response summary after model invocation."""
+    if not bool(getattr(llm_response, "partial", False)):
+        try:
+            _record_token_usage_if_possible(callback_context, llm_response)
+        except Exception:
+            # Token accounting must never block the main response path.
+            pass
+
     if not debug_logging_enabled():
         return None
 

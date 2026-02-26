@@ -78,6 +78,7 @@ Background runtime/log files are stored under:
 - `~/.openheron/log/gateway.out.log`
 - `~/.openheron/log/gateway.err.log`
 - `~/.openheron/log/gateway.debug.log`
+- `~/.openheron/token_usage.db` (LLM token usage events)
 
 Install output highlights:
 
@@ -163,6 +164,9 @@ openheron doctor
 openheron doctor --fix
 openheron doctor --fix-dry-run
 openheron heartbeat status
+openheron token stats
+openheron token stats --provider google --limit 50
+openheron token stats --json
 openheron gateway-service status
 openheron skills
 openheron provider list
@@ -188,6 +192,14 @@ openheron cron list
 openheron cron add --name daily --message "daily report" --cron "0 9 * * 1-5" --tz Asia/Shanghai
 openheron cron status
 ```
+
+Token usage notes:
+
+- Token stats are recorded per LLM request/response with timestamps.
+- DB path is `~/.openheron/token_usage.db`.
+- `openheron token stats` shows aggregated totals and recent records.
+- `--provider` filters by provider (`google`, `openai`, etc.), `--limit` controls recent rows.
+- Counters depend on provider usage payloads; when a provider does not return usage, that turn is not counted.
 
 ## Common Commands
 

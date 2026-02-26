@@ -246,6 +246,9 @@ openheron doctor --fix
 openheron doctor --fix-dry-run
 openheron heartbeat status
 openheron heartbeat status --json
+openheron token stats
+openheron token stats --provider google --limit 50
+openheron token stats --json
 openheron gateway-service install
 openheron gateway-service status
 openheron provider list
@@ -323,6 +326,28 @@ openheron cron enable <job_id> --disable
 openheron cron remove <job_id>
 openheron cron status
 ```
+
+## Token 统计
+
+`openheron` 会在每次 LLM 调用结束后记录 token 使用信息（请求/响应、文本/图像、时间戳）。
+
+- 存储位置：`~/.openheron/token_usage.db`（SQLite）
+- 记录粒度：每次 request/response 一条事件
+- 查询命令：
+
+```bash
+openheron token stats
+openheron token stats --provider google --limit 50
+openheron token stats --provider openai --json
+```
+
+说明：
+
+- `token stats` 默认输出汇总统计 + 最近记录。
+- `--provider` 可按 provider 过滤（如 `google`、`openai`）。
+- `--limit` 控制最近记录返回条数（默认 20）。
+- `--json` 输出机器可读 JSON，适合脚本/监控接入。
+- 是否能统计到该次调用，取决于 provider 是否返回 usage 信息；无 usage 的调用不会计入。
 
 ## 测试
 

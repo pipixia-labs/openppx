@@ -201,6 +201,57 @@ class DebugCallbacksTests(unittest.TestCase):
         self.assertLessEqual(len(function_response.id), 40)
         self.assertEqual(function_response.id, function_call.id)
 
+    def test_after_model_records_token_usage_when_available(self) -> None:
+        callback_context = pytypes.SimpleNamespace(
+            invocation_id="inv-usage-1",
+            agent_name="openheron",
+            user_id="u-usage",
+            session=pytypes.SimpleNamespace(id="s-usage"),
+        )
+        llm_request = pytypes.SimpleNamespace(
+            model="gemini-2.5-pro",
+            config=pytypes.SimpleNamespace(system_instruction="sys"),
+            contents=[],
+            tools_dict={},
+        )
+        usage_metadata = pytypes.SimpleNamespace(
+            prompt_token_count=30,
+            candidates_token_count=20,
+            total_token_count=50,
+            prompt_tokens_details=[
+                pytypes.SimpleNamespace(modality=pytypes.SimpleNamespace(name="TEXT"), token_count=25),
+                pytypes.SimpleNamespace(modality=pytypes.SimpleNamespace(name="IMAGE"), token_count=5),
+            ],
+            candidates_tokens_details=[
+                pytypes.SimpleNamespace(modality=pytypes.SimpleNamespace(name="TEXT"), token_count=20),
+            ],
+        )
+        llm_response = pytypes.SimpleNamespace(
+            finish_reason="stop",
+            partial=False,
+            turn_complete=True,
+            error_code=None,
+            error_message=None,
+            usage_metadata=usage_metadata,
+            usage=None,
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="ok")]),
+        )
+
+        with patch.dict(os.environ, {"OPENHERON_DEBUG": "0", "OPENHERON_PROVIDER": "google"}, clear=False):
+            before_model_debug_callback(callback_context, llm_request)
+            with patch("openheron.runtime.debug_callbacks.write_token_usage_event") as mocked_write:
+                after_model_debug_callback(callback_context, llm_response)
+
+        mocked_write.assert_called_once()
+        payload = mocked_write.call_args.args[0]
+        self.assertEqual(payload["provider"], "google")
+        self.assertEqual(payload["model"], "gemini-2.5-pro")
+        self.assertEqual(payload["session_id"], "s-usage")
+        self.assertEqual(payload["request_tokens"], 30)
+        self.assertEqual(payload["response_tokens"], 20)
+        self.assertEqual(payload["request_image_tokens"], 5)
+        self.assertEqual(payload["total_tokens"], 50)
+
 
 if __name__ == "__main__":
     unittest.main()

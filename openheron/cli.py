@@ -61,6 +61,7 @@ from .runtime.cron_helpers import cron_store_path, format_schedule, format_times
 from .runtime.cron_service import CronService
 from .runtime.cron_schedule_parser import parse_schedule_input
 from .runtime.heartbeat_status_store import read_heartbeat_status_snapshot
+from .runtime.token_usage_store import read_token_usage_stats, token_usage_db_path
 from .runtime.gateway_service import (
     detect_service_manager,
     gateway_service_name,
@@ -3638,6 +3639,67 @@ def _cmd_heartbeat_status(*, output_json: bool) -> int:
     return 0
 
 
+def _cmd_token_stats(*, output_json: bool, limit: int, provider: str | None) -> int:
+    """Show aggregated LLM token usage and recent request records."""
+    stats = read_token_usage_stats(limit=limit, provider=provider or None)
+    payload: dict[str, Any] = {
+        "dbPath": str(token_usage_db_path()),
+        "provider": provider or "",
+        **stats,
+    }
+    if output_json:
+        _stdout_line(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    _stdout_line(
+        "Token stats: "
+        f"requests={stats['requests']}, "
+        f"request_tokens={stats['request_tokens']}, "
+        f"response_tokens={stats['response_tokens']}, "
+        f"total_tokens={stats['total_tokens']}"
+    )
+    _stdout_line(
+        "Token by modality: "
+        f"request(text={stats['request_text_tokens']}, image={stats['request_image_tokens']}), "
+        f"response(text={stats['response_text_tokens']}, image={stats['response_image_tokens']})"
+    )
+    _stdout_line(f"Token DB: {payload['dbPath']}")
+    if not stats["recent"]:
+        _stdout_line("Recent: no records")
+        return 0
+    _stdout_line("Recent records:")
+    for row in stats["recent"]:
+        _stdout_line(
+            "- "
+            f"{row.get('response_at', '-')}"
+            f" provider={row.get('provider', '-')}"
+            f" model={row.get('model', '-')}"
+            f" session={row.get('session_id', '-')}"
+            f" req={row.get('request_tokens', 0)}"
+            f" resp={row.get('response_tokens', 0)}"
+            f" total={row.get('total_tokens', 0)}"
+            f" req_img={row.get('request_image_tokens', 0)}"
+            f" resp_img={row.get('response_image_tokens', 0)}"
+        )
+    return 0
+
+
+def _dispatch_token_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Dispatch token subcommands from parsed argparse namespace."""
+    token_handlers: dict[str, Callable[[], int]] = {
+        "stats": lambda: _cmd_token_stats(
+            output_json=args.output_json,
+            limit=args.limit,
+            provider=args.provider,
+        ),
+    }
+    handler = token_handlers.get(args.token_command)
+    if handler is None:
+        parser.print_help()
+        return 2
+    return handler()
+
+
 def _gateway_service_manifest_path(manager: str, service_name: str) -> Path:
     """Return user-level gateway service manifest path for one service manager."""
 
@@ -3979,6 +4041,26 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Emit heartbeat status snapshot as one machine-readable JSON object.",
     )
+    token_parser = subparsers.add_parser("token", help="Token usage runtime helpers.")
+    token_subparsers = token_parser.add_subparsers(dest="token_command", required=True)
+    token_stats_parser = token_subparsers.add_parser("stats", help="Show token usage stats.")
+    token_stats_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Emit token stats as one machine-readable JSON object.",
+    )
+    token_stats_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Number of recent usage records to include (default: 20).",
+    )
+    token_stats_parser.add_argument(
+        "--provider",
+        default=None,
+        help="Optional provider filter, e.g. google/openai.",
+    )
     gateway_service_parser = subparsers.add_parser(
         "gateway-service",
         help="Manage user-level gateway service manifest (launchd/systemd user).",
@@ -4032,6 +4114,8 @@ def main(argv: list[str] | None = None) -> None:
         else:
             parser.print_help()
             code = 2
+    elif args.command == "token":
+        code = _dispatch_token_command(args, parser)
     elif args.command == "gateway-service":
         if args.gateway_service_command == "install":
             code = _cmd_gateway_service_install(force=args.force, channels=args.channels, enable=args.enable)

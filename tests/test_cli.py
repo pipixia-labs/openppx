@@ -2610,6 +2610,17 @@ class CLITests(unittest.TestCase):
                 mocked_status.assert_called_once_with(output_json=True)
                 mocked_bootstrap.assert_called_once()
 
+    def test_token_stats_mode_dispatch(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_token_stats", return_value=0) as mocked_stats:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["token", "stats", "--json", "--limit", "5", "--provider", "google"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_stats.assert_called_once_with(output_json=True, limit=5, provider="google")
+                mocked_bootstrap.assert_called_once()
+
     def test_cron_add_dispatch_does_not_trigger_single_turn_message(self) -> None:
         from openheron import cli
 
@@ -2775,6 +2786,73 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("running=True" in line for line in lines))
         self.assertTrue(any("last_reason=cron:job1" in line for line in lines))
         self.assertTrue(any('"cron": 2' in line for line in lines))
+
+    def test_cmd_token_stats_prints_summary_and_recent(self) -> None:
+        from openheron import cli
+
+        fake_stats = {
+            "requests": 2,
+            "request_tokens": 30,
+            "response_tokens": 12,
+            "request_text_tokens": 28,
+            "response_text_tokens": 12,
+            "request_image_tokens": 2,
+            "response_image_tokens": 0,
+            "total_tokens": 42,
+            "recent": [
+                {
+                    "response_at": "2026-02-26T10:00:01+00:00",
+                    "provider": "google",
+                    "model": "gemini-2.5-pro",
+                    "session_id": "s1",
+                    "invocation_id": "inv1",
+                    "request_tokens": 20,
+                    "response_tokens": 10,
+                    "request_text_tokens": 18,
+                    "response_text_tokens": 10,
+                    "request_image_tokens": 2,
+                    "response_image_tokens": 0,
+                    "total_tokens": 30,
+                }
+            ],
+        }
+
+        with patch.object(cli, "read_token_usage_stats", return_value=fake_stats) as mocked_read:
+            with patch.object(cli, "token_usage_db_path", return_value=Path("/tmp/token_usage.db")):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_token_stats(output_json=False, limit=10, provider=None)
+
+        self.assertEqual(code, 0)
+        mocked_read.assert_called_once_with(limit=10, provider=None)
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("requests=2" in line for line in lines))
+        self.assertTrue(any("Token DB: /tmp/token_usage.db" in line for line in lines))
+        self.assertTrue(any("provider=google" in line for line in lines))
+
+    def test_cmd_token_stats_outputs_json(self) -> None:
+        from openheron import cli
+
+        fake_stats = {
+            "requests": 0,
+            "request_tokens": 0,
+            "response_tokens": 0,
+            "request_text_tokens": 0,
+            "response_text_tokens": 0,
+            "request_image_tokens": 0,
+            "response_image_tokens": 0,
+            "total_tokens": 0,
+            "recent": [],
+        }
+        with patch.object(cli, "read_token_usage_stats", return_value=fake_stats):
+            with patch.object(cli, "token_usage_db_path", return_value=Path("/tmp/token_usage.db")):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_token_stats(output_json=True, limit=20, provider="google")
+
+        self.assertEqual(code, 0)
+        payload = json.loads(mocked_info.call_args[0][0])
+        self.assertEqual(payload["provider"], "google")
+        self.assertEqual(payload["requests"], 0)
+        self.assertEqual(payload["dbPath"], "/tmp/token_usage.db")
 
     def test_cmd_doctor_reports_whatsapp_bridge_precheck_issue(self) -> None:
         from openheron import cli
