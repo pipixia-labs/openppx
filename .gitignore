@@ -36,6 +36,7 @@ downloads/
 messages/
 .picobot/
 .adk/
+.openheron/
 
 # Node
 node_modules/
