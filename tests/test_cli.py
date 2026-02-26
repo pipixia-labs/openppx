@@ -133,6 +133,32 @@ class CLITests(unittest.TestCase):
                 mocked_status.assert_called_once_with(output_json=True)
                 mocked_bootstrap.assert_called_once()
 
+    def test_gateway_start_mode_dispatch(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_gateway_start", return_value=0) as mocked_start:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["gateway", "start", "--channels", "local,feishu"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_start.assert_called_once_with(
+                    channels="local,feishu",
+                    sender_id="local-user",
+                    chat_id="terminal",
+                )
+                mocked_bootstrap.assert_called_once()
+
+    def test_gateway_status_mode_dispatch_json(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_gateway_status", return_value=0) as mocked_status:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["gateway", "status", "--json"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_status.assert_called_once_with(output_json=True)
+                mocked_bootstrap.assert_called_once()
+
     def test_doctor_mode_bootstraps_config(self) -> None:
         from openheron import cli
 
@@ -2442,6 +2468,46 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, 1)
         messages = [call.args[0] for call in mocked_info.call_args_list if call.args]
         self.assertIn("[doctor] WhatsApp bridge precheck failed", messages)
+
+    def test_cmd_gateway_start_writes_pid_and_meta(self) -> None:
+        from openheron import cli
+
+        fake_proc = pytypes.SimpleNamespace(pid=34567)
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openheron"
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch.object(cli, "parse_enabled_channels", return_value=["local", "feishu"]):
+                    with patch("subprocess.Popen", return_value=fake_proc):
+                        with patch("builtins.print"):
+                            code = cli._cmd_gateway_start(channels="local,feishu", sender_id="u1", chat_id="c1")
+
+            self.assertEqual(code, 0)
+            pid_path = data_dir / "log" / "gateway.pid"
+            meta_path = data_dir / "log" / "gateway.meta.json"
+            self.assertTrue(pid_path.exists())
+            self.assertTrue(meta_path.exists())
+            self.assertEqual(pid_path.read_text(encoding="utf-8").strip(), "34567")
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            self.assertEqual(meta["pid"], 34567)
+            self.assertEqual(meta["channels"], "local,feishu")
+
+    def test_cmd_gateway_stop_cleans_stale_pid(self) -> None:
+        from openheron import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openheron"
+            log_dir = data_dir / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "gateway.pid").write_text("98765\n", encoding="utf-8")
+            (log_dir / "gateway.meta.json").write_text('{"pid":98765}\n', encoding="utf-8")
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch.object(cli, "_is_pid_running", return_value=False):
+                    with patch("builtins.print"):
+                        code = cli._cmd_gateway_stop()
+
+            self.assertEqual(code, 0)
+            self.assertFalse((log_dir / "gateway.pid").exists())
+            self.assertFalse((log_dir / "gateway.meta.json").exists())
 
     def test_cmd_onboard_creates_config_and_workspace(self) -> None:
         from openheron import cli

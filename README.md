@@ -62,6 +62,23 @@ openheron gateway-service install --enable
 openheron gateway-service status
 ```
 
+Gateway background service commands:
+
+```bash
+openheron gateway start --channels local,feishu
+openheron gateway status
+openheron gateway restart --channels local,feishu
+openheron gateway stop
+```
+
+Background runtime/log files are stored under:
+
+- `~/.openheron/log/gateway.pid`
+- `~/.openheron/log/gateway.meta.json`
+- `~/.openheron/log/gateway.out.log`
+- `~/.openheron/log/gateway.err.log`
+- `~/.openheron/log/gateway.debug.log`
+
 Install output highlights:
 
 - `Install summary: provider=..., channels=...`: active provider/channel selection
@@ -106,6 +123,25 @@ Run tests during development:
 ```bash
 pytest -q
 ```
+
+Uninstall (run inside the same Python environment where openheron was installed):
+
+```bash
+pip uninstall openheron
+```
+
+`pip uninstall openheron` only removes the Python package/CLI entrypoint.
+It does not delete user data under `~/.openheron/` (for example
+`config.json`, `runtime.json`, workspace, logs, and runtime state files).
+
+If you also want to remove personalized/local runtime data, delete it manually:
+
+```bash
+rm -rf ~/.openheron
+```
+
+Run this cleanup only if you are sure you no longer need existing config,
+workspace files, logs, or local runtime records.
 
 ## Quick Ops Summary (from `docs/OPERATIONS.md`)
 

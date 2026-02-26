@@ -22,6 +22,29 @@ openheron install
 - 输出安装摘要与下一步命令
 - 可选一步安装并启用 gateway daemon（`--install-daemon`）
 
+## Gateway 后台服务（进程级）
+
+```bash
+# 启动后台 gateway（写 pid/meta/log 到 ~/.openheron/log）
+openheron gateway start --channels local,feishu
+
+# 查看状态（可加 --json）
+openheron gateway status
+openheron gateway status --json
+
+# 重启 / 停止
+openheron gateway restart --channels local,feishu
+openheron gateway stop
+```
+
+后台运行相关文件：
+
+- `~/.openheron/log/gateway.pid`
+- `~/.openheron/log/gateway.meta.json`
+- `~/.openheron/log/gateway.out.log`
+- `~/.openheron/log/gateway.err.log`
+- `~/.openheron/log/gateway.debug.log`
+
 常用安装命令变体：
 
 ```bash

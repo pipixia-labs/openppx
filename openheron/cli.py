@@ -1917,7 +1917,22 @@ def _cmd_run(passthrough_args: list[str]) -> int:
     return subprocess.call(cmd)
 
 
-def _cmd_onboard(force: bool) -> int:
+_INSTALL_EMBEDDED_ONBOARD = False
+
+
+@dataclass(frozen=True)
+class OnboardResult:
+    """Resolved onboard side effects for config/runtime/workspace paths."""
+
+    config_path: Path
+    runtime_config_path: Path
+    workspace: Path
+    config_state: str
+    runtime_state: str
+
+
+def _run_onboard_setup(*, force: bool) -> OnboardResult:
+    """Create/refresh config + runtime config + workspace and return summary."""
     config_path = get_config_path()
     runtime_config_path = get_runtime_config_path()
     existed = config_path.exists()
@@ -1926,12 +1941,11 @@ def _cmd_onboard(force: bool) -> int:
     if force or not existed:
         config = default_config()
         saved_to = save_config(config, config_path=config_path)
-        state = "reset to defaults" if force and existed else "created"
+        config_state = "reset to defaults" if force and existed else "created"
     else:
-        # Refresh while preserving existing values.
         config = load_config(config_path=config_path)
         saved_to = save_config(config, config_path=config_path)
-        state = "refreshed"
+        config_state = "refreshed"
 
     if force or not runtime_existed:
         runtime_config = default_runtime_config()
@@ -1945,13 +1959,51 @@ def _cmd_onboard(force: bool) -> int:
     workspace = Path(str(config.get("agent", {}).get("workspace", ""))).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "skills").mkdir(parents=True, exist_ok=True)
+    return OnboardResult(
+        config_path=saved_to,
+        runtime_config_path=runtime_saved_to,
+        workspace=workspace,
+        config_state=config_state,
+        runtime_state=runtime_state,
+    )
 
-    print(f"Config {state}: {saved_to}")
-    print(f"Runtime config {runtime_state}: {runtime_saved_to}")
-    print(f"Workspace ready: {workspace}")
+
+def _render_onboard_compact_with_rich(result: OnboardResult) -> bool:
+    """Render onboard summary card for install-embedded setup."""
+    if not sys.stdout.isatty():
+        return False
+    try:
+        from rich.console import Console  # type: ignore
+        from rich.panel import Panel  # type: ignore
+        from rich.table import Table  # type: ignore
+    except Exception:
+        return False
+
+    table = Table(show_header=False, box=None, pad_edge=False)
+    table.add_column("key", style="bold cyan", no_wrap=True)
+    table.add_column("value", style="white")
+    table.add_row("Config", f"{result.config_state}: {result.config_path}")
+    table.add_row("Runtime", f"{result.runtime_state}: {result.runtime_config_path}")
+    table.add_row("Workspace", str(result.workspace))
+    Console().print(Panel(table, title="[bold]Setup Result[/bold]", border_style="cyan"))
+    return True
+
+
+def _cmd_onboard(force: bool) -> int:
+    result = _run_onboard_setup(force=force)
+    if _INSTALL_EMBEDDED_ONBOARD:
+        if not _render_onboard_compact_with_rich(result):
+            _stdout_line(f"Config {result.config_state}: {result.config_path}")
+            _stdout_line(f"Runtime config {result.runtime_state}: {result.runtime_config_path}")
+            _stdout_line(f"Workspace ready: {result.workspace}")
+        return 0
+
+    print(f"Config {result.config_state}: {result.config_path}")
+    print(f"Runtime config {result.runtime_state}: {result.runtime_config_path}")
+    print(f"Workspace ready: {result.workspace}")
     print("Next steps:")
-    print(f"1. Edit config: {saved_to}")
-    print(f"2. Optional advanced tuning: {runtime_saved_to}")
+    print(f"1. Edit config: {result.config_path}")
+    print(f"2. Optional advanced tuning: {result.runtime_config_path}")
     print("3. Configure providers/channels/web sections and their `enabled` flags")
     print("4. Fill providers.<provider>.apiKey for the enabled provider (and channel credentials if needed)")
     print("5. Start gateway: openheron gateway")
@@ -2091,6 +2143,101 @@ def _active_provider_name(providers_cfg: dict[str, Any]) -> str:
     return DEFAULT_PROVIDER
 
 
+def _provider_choice_label(*, name: str, cfg: dict[str, Any], is_current: bool) -> str:
+    """Build one provider select label with minimal noise."""
+    if is_current:
+        return f"{name} (current)"
+    return name
+
+
+def _channel_missing_count(channel_name: str, channel_cfg: dict[str, Any]) -> int:
+    """Return required missing field count for one channel config snapshot."""
+    count = 0
+    for requirement in INSTALL_CHANNEL_SUMMARY_REQUIREMENTS:
+        if requirement.channel != channel_name:
+            continue
+        if install_rules.install_channel_value_missing(
+            cfg=channel_cfg,
+            key=requirement.key,
+            presence=requirement.presence,
+        ):
+            count += 1
+    return count
+
+
+def _channel_choice_label(*, name: str, cfg: dict[str, Any], enabled_now: bool) -> str:
+    """Build one channel multi-select label with readiness signal."""
+    enabled_tag = "enabled" if enabled_now else "disabled"
+    if name == "local":
+        readiness = "ready"
+    else:
+        missing = _channel_missing_count(name, cfg)
+        readiness = "ready" if missing == 0 else f"missing:{missing}"
+    return f"{name} [{enabled_tag}] [{readiness}]"
+
+
+def _install_snapshot_state(config: dict[str, Any]) -> tuple[str, list[str], list[str]]:
+    """Collect provider/channels/missing snapshot for install UI rendering."""
+    providers_cfg = config.get("providers", {})
+    provider_cfg_dict = providers_cfg if isinstance(providers_cfg, dict) else {}
+    selected_provider = _active_provider_name(provider_cfg_dict)
+
+    channels_cfg = config.get("channels", {})
+    channels_cfg_dict = channels_cfg if isinstance(channels_cfg, dict) else {}
+    enabled_channels: list[str] = []
+    for name, item in channels_cfg_dict.items():
+        if isinstance(item, dict) and bool(item.get("enabled")):
+            enabled_channels.append(str(name))
+
+    missing = install_rules.install_summary_missing(
+        selected_provider=selected_provider,
+        provider_cfg=provider_cfg_dict,
+        channels_cfg=channels_cfg_dict,
+        provider_requirements=INSTALL_PROVIDER_SUMMARY_REQUIREMENTS,
+        channel_requirements=INSTALL_CHANNEL_SUMMARY_REQUIREMENTS,
+    )
+    return selected_provider, enabled_channels, missing
+
+
+def _render_install_interactive_snapshot_with_rich(*, title: str, config: dict[str, Any]) -> bool:
+    """Render one compact two-panel install snapshot in interactive setup."""
+    if not sys.stdout.isatty():
+        return False
+    try:
+        from rich.columns import Columns  # type: ignore
+        from rich.console import Console  # type: ignore
+        from rich.panel import Panel  # type: ignore
+        from rich.table import Table  # type: ignore
+    except Exception:
+        return False
+
+    selected_provider, enabled_channels, missing = _install_snapshot_state(config)
+
+    summary_table = Table(show_header=False, box=None, pad_edge=False)
+    summary_table.add_column("key", style="bold cyan", no_wrap=True)
+    summary_table.add_column("value", style="white")
+    summary_table.add_row("Provider", selected_provider)
+    summary_table.add_row("Channels", ", ".join(enabled_channels) if enabled_channels else "(none)")
+    summary_table.add_row("Missing", str(len(missing)))
+    summary_panel = Panel(summary_table, title="[bold]Current Selection[/bold]", border_style="cyan")
+
+    checklist_table = Table(show_header=False, box=None, pad_edge=False)
+    checklist_table.add_column("item", style="yellow")
+    if missing:
+        for item in missing[:8]:
+            checklist_table.add_row(f"□ {item}")
+        if len(missing) > 8:
+            checklist_table.add_row(f"... {len(missing) - 8} more")
+    else:
+        checklist_table.add_row("[green]✓ Required fields look good[/green]")
+    checklist_panel = Panel(checklist_table, title="[bold]Checklist[/bold]", border_style="yellow")
+
+    console = Console()
+    console.print(Panel(f"[bold]{title}[/bold]", border_style="blue"))
+    console.print(Columns([summary_panel, checklist_panel], equal=True, expand=True))
+    return True
+
+
 def _review_install_missing_fields(
     *,
     providers_cfg: dict[str, Any],
@@ -2170,19 +2317,27 @@ def _run_install_interactive_setup(
     """Collect minimal interactive install choices and persist config changes."""
 
     config = load_config(config_path=config_path)
+    _render_install_interactive_snapshot_with_rich(title="Setup: Provider", config=config)
     providers_cfg = config.get("providers", {})
     available = [name for name in provider_names() if name in providers_cfg]
     if not available:
         return
     enabled_now = next((name for name in available if providers_cfg.get(name, {}).get("enabled")), available[0])
-    labels = [f"{name}{' (current)' if name == enabled_now else ''}" for name in available]
+    labels = [
+        _provider_choice_label(
+            name=name,
+            cfg=providers_cfg.get(name, {}) if isinstance(providers_cfg.get(name, {}), dict) else {},
+            is_current=(name == enabled_now),
+        )
+        for name in available
+    ]
     label_to_provider = {label: name for label, name in zip(labels, available)}
 
     attempts = 0
     while attempts < 3:
         if select_fn is not None:
             raw_provider = select_fn(
-                "Choose provider",
+                "Choose provider (status shown as current/enabled/credential)",
                 [*labels, "skip"],
                 next((label for label in labels if label_to_provider[label] == enabled_now), labels[0]),
             ).strip()
@@ -2200,6 +2355,13 @@ def _run_install_interactive_setup(
             for name in available:
                 providers_cfg[name]["enabled"] = name == selected
             enabled_now = selected
+            selected_cfg = providers_cfg.get(selected, {})
+            if not isinstance(selected_cfg, dict):
+                selected_cfg = {}
+            _stdout_line(
+                "Install setup: provider selected -> "
+                f"{_provider_choice_label(name=selected, cfg=selected_cfg, is_current=True)}"
+            )
             break
         attempts += 1
         _stdout_line(f"Install setup: unknown provider '{raw_provider}', try again or input 'skip'.")
@@ -2221,6 +2383,7 @@ def _run_install_interactive_setup(
 
     channels_cfg = config.get("channels", {})
     if isinstance(channels_cfg, dict):
+        _render_install_interactive_snapshot_with_rich(title="Setup: Channels", config=config)
         channel_names = [
             str(name)
             for name, item in channels_cfg.items()
@@ -2230,12 +2393,22 @@ def _run_install_interactive_setup(
             name for name in channel_names if bool(channels_cfg.get(name, {}).get("enabled"))
         ]
         if channel_names:
-            channel_labels = [f"{name}{' (enabled)' if name in enabled_channels else ''}" for name in channel_names]
+            channel_labels = [
+                _channel_choice_label(
+                    name=name,
+                    cfg=channels_cfg.get(name, {}) if isinstance(channels_cfg.get(name, {}), dict) else {},
+                    enabled_now=(name in enabled_channels),
+                )
+                for name in channel_names
+            ]
             label_to_channel = {label: name for label, name in zip(channel_labels, channel_names)}
             raw_channels: list[str]
             if multi_select_fn is not None:
                 defaults = [label for label in channel_labels if label_to_channel[label] in enabled_channels]
-                raw_channels = [str(item).strip() for item in multi_select_fn("Enable channels", channel_labels, defaults)]
+                raw_channels = [
+                    str(item).strip()
+                    for item in multi_select_fn("Enable channels (status shown as enabled/readiness)", channel_labels, defaults)
+                ]
             else:
                 _stdout_line(
                     "Install setup: choose enabled channels "
@@ -2258,6 +2431,19 @@ def _run_install_interactive_setup(
                         channels_cfg[name]["enabled"] = name in resolved_channels
                     if not any(bool(channels_cfg.get(name, {}).get("enabled")) for name in channel_names) and "local" in channel_names:
                         channels_cfg["local"]["enabled"] = True
+                    selected_labels = [
+                        _channel_choice_label(
+                            name=name,
+                            cfg=channels_cfg.get(name, {}) if isinstance(channels_cfg.get(name, {}), dict) else {},
+                            enabled_now=bool(channels_cfg.get(name, {}).get("enabled")),
+                        )
+                        for name in channel_names
+                        if bool(channels_cfg.get(name, {}).get("enabled"))
+                    ]
+                    _stdout_line(
+                        "Install setup: enabled channels -> "
+                        + (", ".join(selected_labels) if selected_labels else "(none)")
+                    )
         enabled_after = [name for name in channel_names if bool(channels_cfg.get(name, {}).get("enabled"))]
         fallback_channels: list[str] = []
         for channel_name in enabled_after:
@@ -2283,12 +2469,14 @@ def _run_install_interactive_setup(
 
     # Second guided pass: validate missing required fields and offer refill.
     if review_missing:
+        _render_install_interactive_snapshot_with_rich(title="Setup: Review Missing Fields", config=config)
         _review_install_missing_fields(
             providers_cfg=providers_cfg if isinstance(providers_cfg, dict) else {},
             channels_cfg=channels_cfg if isinstance(channels_cfg, dict) else {},
             input_fn=input_fn,
             secret_input_fn=secret_input_fn,
         )
+        _render_install_interactive_snapshot_with_rich(title="Setup: Final", config=config)
 
     save_config(config, config_path=config_path)
     _stdout_line(f"Install setup saved: {config_path}")
@@ -2326,7 +2514,42 @@ def _interactive_install_select(prompt: str, choices: list[str], default: str) -
         answer = questionary.select(prompt, choices=choices, default=default).ask()
         return str(answer or "")
     except Exception:
-        return input(f"{prompt} {choices} (default: {default})> ")
+        _stdout_line(prompt)
+        numbered = list(enumerate(choices, start=1))
+        if "provider" in prompt.lower():
+            oauth_rows: list[tuple[int, str]] = []
+            regular_rows: list[tuple[int, str]] = []
+            for idx, choice in numbered:
+                provider_token = choice.split(" ", 1)[0].strip()
+                if canonical_provider_name(provider_token) in oauth_provider_names():
+                    oauth_rows.append((idx, choice))
+                else:
+                    regular_rows.append((idx, choice))
+            if regular_rows:
+                _stdout_line("  API key providers:")
+                for idx, choice in regular_rows:
+                    marker = " (default)" if choice == default else ""
+                    _stdout_line(f"    {idx}) {choice}{marker}")
+            if oauth_rows:
+                _stdout_line("  OAuth providers (login required, no API key input):")
+                for idx, choice in oauth_rows:
+                    marker = " (default)" if choice == default else ""
+                    _stdout_line(f"    {idx}) {choice}{marker}")
+                _stdout_line("    Use: openheron provider login <provider-name>")
+        else:
+            for idx, choice in numbered:
+                marker = " (default)" if choice == default else ""
+                _stdout_line(f"  {idx}) {choice}{marker}")
+        raw = input("Select one (index/name, Enter=default)> ").strip()
+        if not raw:
+            return default
+        try:
+            index = int(raw)
+        except Exception:
+            index = -1
+        if 1 <= index <= len(choices):
+            return choices[index - 1]
+        return raw
 
 
 def _interactive_install_secret(prompt: str) -> str:
@@ -2352,8 +2575,27 @@ def _interactive_install_multi_select(prompt: str, choices: list[str], defaults:
             return []
         return [str(item) for item in answer]
     except Exception:
-        raw = input(f"{prompt} {choices} (comma separated, Enter keeps current)> ").strip()
-        return _parse_csv_list(raw) if raw else []
+        _stdout_line(prompt)
+        for idx, choice in enumerate(choices, start=1):
+            marker = " (default)" if choice in defaults else ""
+            _stdout_line(f"  {idx}) {choice}{marker}")
+        raw = input("Select many (e.g. 1,3 or name1,name2; Enter=defaults)> ").strip()
+        if not raw:
+            return list(defaults)
+        tokens = _parse_csv_list(raw)
+        selected: list[str] = []
+        for token in tokens:
+            try:
+                index = int(token)
+            except Exception:
+                index = -1
+            if 1 <= index <= len(choices):
+                item = choices[index - 1]
+            else:
+                item = token
+            if item not in selected:
+                selected.append(item)
+        return selected
 
 
 def _install_summary_lines(config_path: Path) -> list[str]:
@@ -2589,7 +2831,7 @@ def _render_install_welcome_with_rich(
     table.add_row("Config", str(config_path))
     table.add_row("Runtime", str(runtime_config_path))
     table.add_row("Daemon", "enabled" if install_daemon else "disabled")
-    console.print(Panel(table, title="[bold]Openheron Install Wizard[/bold]", border_style="cyan"))
+    console.print(Panel(table, title="[bold]OpenHeron Install Wizard[/bold]", border_style="cyan"))
     return True
 
 
@@ -2670,7 +2912,12 @@ def _cmd_install(
 
     total_steps = 3 if install_daemon else 2
     _install_step_line(1, total_steps, "initializing config and workspace...")
-    onboard_code = _cmd_onboard(force=force)
+    global _INSTALL_EMBEDDED_ONBOARD
+    _INSTALL_EMBEDDED_ONBOARD = True
+    try:
+        onboard_code = _cmd_onboard(force=force)
+    finally:
+        _INSTALL_EMBEDDED_ONBOARD = False
     if onboard_code != 0:
         _render_install_step_outcome_with_rich(
             step=1, total=total_steps, outcome="fail", message="setup initialization failed"
@@ -2749,6 +2996,253 @@ def _cmd_install(
 
 def _cmd_gateway_local(sender_id: str, chat_id: str) -> int:
     return _cmd_gateway(channels="local", sender_id=sender_id, chat_id=chat_id, interactive_local=True)
+
+
+def _gateway_log_dir() -> Path:
+    """Return gateway runtime/log directory under ~/.openheron/log."""
+    path = get_data_dir() / "log"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _gateway_pid_path() -> Path:
+    """Return gateway background pid file path."""
+    return _gateway_log_dir() / "gateway.pid"
+
+
+def _gateway_meta_path() -> Path:
+    """Return gateway background metadata file path."""
+    return _gateway_log_dir() / "gateway.meta.json"
+
+
+def _gateway_stdout_log_path() -> Path:
+    """Return gateway background stdout log path."""
+    return _gateway_log_dir() / "gateway.out.log"
+
+
+def _gateway_stderr_log_path() -> Path:
+    """Return gateway background stderr log path."""
+    return _gateway_log_dir() / "gateway.err.log"
+
+
+def _gateway_debug_log_path() -> Path:
+    """Return gateway background debug log path."""
+    return _gateway_log_dir() / "gateway.debug.log"
+
+
+def _read_gateway_pid() -> int | None:
+    """Read gateway pid from pid file."""
+    path = _gateway_pid_path()
+    if not path.exists():
+        return None
+    try:
+        value = int(path.read_text(encoding="utf-8").strip())
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _is_pid_running(pid: int) -> bool:
+    """Return whether one pid currently exists."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _gateway_cleanup_runtime_files(*, keep_logs: bool = True) -> None:
+    """Remove gateway pid/meta files after process exits."""
+    for path in (_gateway_pid_path(), _gateway_meta_path()):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+    if not keep_logs:
+        for path in (_gateway_stdout_log_path(), _gateway_stderr_log_path(), _gateway_debug_log_path()):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except Exception:
+                continue
+
+
+def _write_gateway_runtime_metadata(*, pid: int, channels: str, command: list[str]) -> None:
+    """Write gateway background runtime metadata file."""
+    payload = {
+        "pid": pid,
+        "channels": channels,
+        "startedAt": dt.datetime.now().astimezone().isoformat(),
+        "command": command,
+        "cwd": str(Path.cwd()),
+        "python": sys.executable,
+        "platform": sys.platform,
+        "logs": {
+            "stdout": str(_gateway_stdout_log_path()),
+            "stderr": str(_gateway_stderr_log_path()),
+            "debug": str(_gateway_debug_log_path()),
+        },
+    }
+    _gateway_meta_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _read_gateway_runtime_metadata() -> dict[str, Any]:
+    """Read gateway runtime metadata file with safe fallback."""
+    path = _gateway_meta_path()
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _cmd_gateway_start(*, channels: str | None, sender_id: str, chat_id: str) -> int:
+    """Start gateway in background and persist runtime state."""
+    existing = _read_gateway_pid()
+    if existing and _is_pid_running(existing):
+        _stdout_line(f"Gateway service already running (pid={existing}).")
+        _stdout_line("Use `openheron gateway status` or `openheron gateway restart`.")
+        return 0
+
+    if existing and not _is_pid_running(existing):
+        _gateway_cleanup_runtime_files()
+
+    channels_value = ",".join(parse_enabled_channels(channels))
+    cmd = [
+        sys.executable,
+        "-m",
+        "openheron.cli",
+        "gateway",
+        "--channels",
+        channels_value,
+        "--sender-id",
+        sender_id,
+        "--chat-id",
+        chat_id,
+    ]
+    env = dict(os.environ)
+    env["OPENHERON_GATEWAY_BG"] = "1"
+    env["OPENHERON_DEBUG_LOG_PATH"] = str(_gateway_debug_log_path())
+
+    stdout_path = _gateway_stdout_log_path()
+    stderr_path = _gateway_stderr_log_path()
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    with stdout_path.open("a", encoding="utf-8") as stdout_fh, stderr_path.open("a", encoding="utf-8") as stderr_fh:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=stdout_fh,
+                stderr=stderr_fh,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=env,
+            )
+        except Exception as exc:
+            _stdout_line(f"Gateway service start failed: {exc}")
+            return 1
+
+    _gateway_pid_path().write_text(f"{proc.pid}\n", encoding="utf-8")
+    _write_gateway_runtime_metadata(pid=proc.pid, channels=channels_value, command=cmd)
+    _stdout_line(f"Gateway service started (pid={proc.pid}).")
+    _stdout_line(f"Logs: {_gateway_log_dir()}")
+    return 0
+
+
+def _cmd_gateway_stop(*, timeout_seconds: float = 8.0) -> int:
+    """Stop gateway background process by pid file."""
+    pid = _read_gateway_pid()
+    if not pid:
+        _stdout_line("Gateway service is not running (no pid file).")
+        return 0
+    if not _is_pid_running(pid):
+        _gateway_cleanup_runtime_files()
+        _stdout_line("Gateway service is not running (stale pid file removed).")
+        return 0
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except Exception as exc:
+        _stdout_line(f"Gateway service stop failed: {exc}")
+        return 1
+
+    deadline = time.time() + max(1.0, timeout_seconds)
+    while time.time() < deadline:
+        if not _is_pid_running(pid):
+            _gateway_cleanup_runtime_files()
+            _stdout_line("Gateway service stopped.")
+            return 0
+        time.sleep(0.15)
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except Exception as exc:
+        _stdout_line(f"Gateway service stop timeout and kill failed: {exc}")
+        return 1
+
+    _gateway_cleanup_runtime_files()
+    _stdout_line("Gateway service stopped (forced).")
+    return 0
+
+
+def _cmd_gateway_status(*, output_json: bool) -> int:
+    """Show gateway background process status."""
+    pid = _read_gateway_pid()
+    running = bool(pid and _is_pid_running(pid))
+    if pid and not running:
+        _gateway_cleanup_runtime_files()
+        pid = None
+    meta = _read_gateway_runtime_metadata()
+    payload: dict[str, Any] = {
+        "running": running,
+        "pid": pid,
+        "logsDir": str(_gateway_log_dir()),
+        "stdoutLog": str(_gateway_stdout_log_path()),
+        "stderrLog": str(_gateway_stderr_log_path()),
+        "debugLog": str(_gateway_debug_log_path()),
+    }
+    if meta:
+        payload["meta"] = meta
+
+    if output_json:
+        _stdout_line(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if not running:
+        _stdout_line("Gateway service status: stopped")
+        _stdout_line(f"Logs directory: {payload['logsDir']}")
+        return 0
+
+    _stdout_line(
+        "Gateway service status: "
+        f"running pid={pid}, logs={payload['logsDir']}"
+    )
+    if isinstance(meta, dict):
+        channels = str(meta.get("channels", "")).strip()
+        started_at = str(meta.get("startedAt", "")).strip()
+        if channels:
+            _stdout_line(f"Channels: {channels}")
+        if started_at:
+            _stdout_line(f"Started at: {started_at}")
+    return 0
+
+
+def _cmd_gateway_restart(*, channels: str | None, sender_id: str, chat_id: str) -> int:
+    """Restart gateway background process."""
+    stop_code = _cmd_gateway_stop()
+    if stop_code != 0:
+        return stop_code
+    return _cmd_gateway_start(channels=channels, sender_id=sender_id, chat_id=chat_id)
 
 
 def _required_mcp_servers_from_env() -> list[str]:
@@ -3368,7 +3862,13 @@ def main(argv: list[str] | None = None) -> None:
     gateway_parser.add_argument("--chat-id", default="terminal", help="Chat id used for inbound messages.")
     gateway_parser = subparsers.add_parser(
         "gateway",
-        help="Run gateway using env/CLI channels (e.g. feishu).",
+        help="Run gateway (foreground) or manage background gateway service.",
+    )
+    gateway_parser.add_argument(
+        "gateway_action",
+        nargs="?",
+        choices=["start", "stop", "restart", "status"],
+        help="Background gateway action (omit for foreground run).",
     )
     gateway_parser.add_argument(
         "--channels",
@@ -3381,6 +3881,12 @@ def main(argv: list[str] | None = None) -> None:
         "--interactive-local",
         action="store_true",
         help="Enable terminal input loop when local channel is enabled.",
+    )
+    gateway_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Emit machine-readable JSON for `gateway status`.",
     )
     provider_parser = subparsers.add_parser("provider", help="Manage runtime LLM providers.")
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command", required=True)
@@ -3560,11 +4066,21 @@ def main(argv: list[str] | None = None) -> None:
             ),
             "run": lambda: _cmd_run(args.adk_args),
             "gateway-local": lambda: _cmd_gateway_local(sender_id=args.sender_id, chat_id=args.chat_id),
-            "gateway": lambda: _cmd_gateway(
-                channels=args.channels,
-                sender_id=args.sender_id,
-                chat_id=args.chat_id,
-                interactive_local=args.interactive_local,
+            "gateway": lambda: (
+                _cmd_gateway_start(channels=args.channels, sender_id=args.sender_id, chat_id=args.chat_id)
+                if args.gateway_action == "start"
+                else _cmd_gateway_stop()
+                if args.gateway_action == "stop"
+                else _cmd_gateway_restart(channels=args.channels, sender_id=args.sender_id, chat_id=args.chat_id)
+                if args.gateway_action == "restart"
+                else _cmd_gateway_status(output_json=args.output_json)
+                if args.gateway_action == "status"
+                else _cmd_gateway(
+                    channels=args.channels,
+                    sender_id=args.sender_id,
+                    chat_id=args.chat_id,
+                    interactive_local=args.interactive_local,
+                )
             ),
         }
         handler = handlers.get(args.command)

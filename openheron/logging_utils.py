@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from loguru import logger
@@ -18,7 +19,11 @@ def debug_logging_enabled() -> bool:
 def debug_body(payload: Any) -> str:
     """Serialize debug payloads for stable structured log lines."""
     try:
-        return payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, default=str)
+        if isinstance(payload, str):
+            return payload
+        if isinstance(payload, (dict, list)):
+            return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         return str(payload)
 
@@ -29,3 +34,11 @@ def emit_debug(tag: str, payload: Any, *, depth: int = 2) -> None:
 
     # Default `depth=2` points to the original caller above local `_debug` wrappers.
     logger.opt(depth=depth).debug("[DEBUG] {}: {}", tag, body)
+    debug_log_path = os.getenv("OPENHERON_DEBUG_LOG_PATH", "").strip()
+    if debug_log_path:
+        try:
+            with open(debug_log_path, "a", encoding="utf-8") as fh:
+                fh.write(f"[DEBUG] {tag}: {body}\n")
+        except Exception:
+            # Do not break main flow when debug-file sink is unavailable.
+            return
