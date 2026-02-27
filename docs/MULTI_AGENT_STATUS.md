@@ -35,6 +35,7 @@
 - `doctor` 新增多智能体校验（默认 agent、重复 id、binding 指向、channel 必填）
 - `doctor` 新增 `multiAgent.summary` 与 `multiAgent.routePreview`
 - `doctor` 文本模式冲突提示与排查指引
+- `routes lint` 独立命令（含 `--json/--limit` 与建议动作输出）
 
 ### 1.6 文档与模板
 
@@ -45,11 +46,10 @@
 
 ## 2. 待推进（建议优先级）
 
-1. 路由规则静态冲突检查 CLI（独立命令）：如 `openheron routes lint`。
-2. 路由命中统计与审计：按 channel/account/agent 聚合最近命中情况。
-3. 更细粒度主体模型扩展：guild/team/roles（当前 v1 未覆盖）。
-4. 通道侧 accountId 标准化约定文档（各 channel 输入契约统一）。
-5. 端到端实机验证脚本（非单元测试），用于上线前快速演练。
+1. 路由命中统计与审计：按 channel/account/agent 聚合最近命中情况。
+2. 更细粒度主体模型扩展：guild/team/roles（当前 v1 未覆盖）。
+3. 通道侧 accountId 标准化约定文档（各 channel 输入契约统一）。
+4. 端到端实机验证脚本（非单元测试），用于上线前快速演练。
 
 ## 3. 已验证命令（最近回归）
 
@@ -57,7 +57,7 @@
 ./.venv/bin/python -m pytest -q tests/test_agent_routing.py tests/test_bus_gateway.py tests/test_whatsapp_channel.py tests/test_telegram_channel.py tests/test_discord_channel.py tests/test_feishu_channel.py tests/test_cli.py
 ```
 
-最近结果：`199 passed`。
+最近结果：`202 passed`。
 
 ## 4. 当前结论
 
