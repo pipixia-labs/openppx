@@ -157,6 +157,95 @@ class AgentRoutingTests(unittest.TestCase):
         self.assertEqual(router.resolve(personal_msg).agent_id, "personal")
         self.assertEqual(router.resolve(business_msg).agent_id, "business")
 
+    def test_scope_matching_with_guild_and_roles(self) -> None:
+        router = AgentRouter(
+            {
+                "agents": {
+                    "list": [
+                        {"id": "main", "default": True, "workspace": "/tmp/main", "agentDir": "/tmp/main/agent"},
+                        {"id": "ops", "workspace": "/tmp/ops", "agentDir": "/tmp/ops/agent"},
+                    ]
+                },
+                "bindings": [
+                    {
+                        "agentId": "ops",
+                        "match": {
+                            "channel": "discord",
+                            "guild": {"id": "g1"},
+                            "roles": ["admin"],
+                        },
+                    }
+                ],
+            }
+        )
+        scoped_msg = InboundMessage(
+            channel="discord",
+            sender_id="u1",
+            chat_id="c1",
+            content="hi",
+            metadata={"guildId": "g1", "roles": ["admin", "member"], "peer": {"kind": "channel", "id": "c1"}},
+        )
+        fallback_msg = InboundMessage(
+            channel="discord",
+            sender_id="u1",
+            chat_id="c1",
+            content="hi",
+            metadata={"guildId": "g1", "roles": ["member"], "peer": {"kind": "channel", "id": "c1"}},
+        )
+
+        self.assertEqual(router.resolve(scoped_msg).agent_id, "ops")
+        self.assertEqual(router.resolve(scoped_msg).matched_by, "binding.channel")
+        self.assertEqual(router.resolve(fallback_msg).agent_id, "main")
+        self.assertEqual(router.resolve(fallback_msg).matched_by, "default")
+
+    def test_scope_matching_applies_with_account_tier(self) -> None:
+        router = AgentRouter(
+            {
+                "agents": {
+                    "list": [
+                        {"id": "main", "default": True, "workspace": "/tmp/main", "agentDir": "/tmp/main/agent"},
+                        {"id": "biz", "workspace": "/tmp/biz", "agentDir": "/tmp/biz/agent"},
+                    ]
+                },
+                "bindings": [
+                    {
+                        "agentId": "biz",
+                        "match": {
+                            "channel": "whatsapp",
+                            "accountId": "business",
+                            "team": {"id": "sales"},
+                        },
+                    }
+                ],
+            }
+        )
+        team_msg = InboundMessage(
+            channel="whatsapp",
+            sender_id="u1",
+            chat_id="+10001",
+            content="hi",
+            metadata={
+                "accountId": "business",
+                "teamId": "sales",
+                "peer": {"kind": "direct", "id": "+10001"},
+            },
+        )
+        no_team_msg = InboundMessage(
+            channel="whatsapp",
+            sender_id="u1",
+            chat_id="+10001",
+            content="hi",
+            metadata={
+                "accountId": "business",
+                "peer": {"kind": "direct", "id": "+10001"},
+            },
+        )
+
+        self.assertEqual(router.resolve(team_msg).agent_id, "biz")
+        self.assertEqual(router.resolve(team_msg).matched_by, "binding.account")
+        self.assertEqual(router.resolve(no_team_msg).agent_id, "main")
+        self.assertEqual(router.resolve(no_team_msg).matched_by, "default")
+
 
 if __name__ == "__main__":
     unittest.main()

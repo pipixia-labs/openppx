@@ -1,7 +1,7 @@
 """Multi-agent routing and per-agent runtime context resolution.
 
 v1 scope:
-- bindings match keys: channel, accountId, peer(kind+id)
+- bindings match keys: channel, accountId, peer(kind+id), optional guild/team/roles
 - deterministic precedence: peer > account > channel > default
 - DM session isolation: per-peer (and account-aware)
 """
@@ -60,6 +60,13 @@ def _normalize_peer_kind(value: Any) -> str:
     return "direct"
 
 
+def _normalize_roles(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    normalized = {_normalize_lower(item) for item in value if _normalize_lower(item)}
+    return tuple(sorted(normalized))
+
+
 def _resolve_message_account_id(msg: InboundMessage) -> str:
     metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
     return _normalize_account_id(metadata.get("account_id") or metadata.get("accountId"))
@@ -79,6 +86,16 @@ def _resolve_message_peer(msg: InboundMessage) -> tuple[str, str]:
     return kind, peer_id or "unknown"
 
 
+def _resolve_message_scope(msg: InboundMessage) -> tuple[str, str, tuple[str, ...]]:
+    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    guild = metadata.get("guild") if isinstance(metadata.get("guild"), dict) else {}
+    team = metadata.get("team") if isinstance(metadata.get("team"), dict) else {}
+    guild_id = _normalize_lower(guild.get("id") or metadata.get("guild_id") or metadata.get("guildId"))
+    team_id = _normalize_lower(team.get("id") or metadata.get("team_id") or metadata.get("teamId"))
+    roles = _normalize_roles(metadata.get("roles") or metadata.get("role_ids"))
+    return guild_id, team_id, roles
+
+
 @dataclass(frozen=True, slots=True)
 class BindingMatch:
     """Binding match spec for one route rule."""
@@ -87,6 +104,9 @@ class BindingMatch:
     account_id: str | None = None
     peer_kind: str | None = None
     peer_id: str | None = None
+    guild_id: str | None = None
+    team_id: str | None = None
+    roles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +126,9 @@ class RoutedAgentRequest:
     account_id: str
     peer_kind: str
     peer_id: str
+    guild_id: str
+    team_id: str
+    roles: tuple[str, ...]
     session_id: str
     session_base_key: str
     scoped_user_id: str
@@ -163,6 +186,8 @@ class AgentRouter:
             peer = match.get("peer") if isinstance(match.get("peer"), dict) else {}
             peer_kind = _normalize_peer_kind(peer.get("kind")) if peer else None
             peer_id = _normalize_text(peer.get("id")) if peer else None
+            guild = match.get("guild") if isinstance(match.get("guild"), dict) else {}
+            team = match.get("team") if isinstance(match.get("team"), dict) else {}
             out.append(
                 AgentBinding(
                     agent_id=_normalize_agent_id(raw.get("agentId")),
@@ -171,6 +196,9 @@ class AgentRouter:
                         account_id=account_id,
                         peer_kind=peer_kind,
                         peer_id=peer_id or None,
+                        guild_id=_normalize_lower(guild.get("id")) or None,
+                        team_id=_normalize_lower(team.get("id")) or None,
+                        roles=_normalize_roles(match.get("roles")),
                     ),
                 )
             )
@@ -193,8 +221,22 @@ class AgentRouter:
         account_id: str,
         peer_kind: str,
         peer_id: str,
+        guild_id: str,
+        team_id: str,
+        roles: tuple[str, ...],
     ) -> tuple[str, str]:
         channel_bindings = [b for b in self._bindings if b.match.channel == channel]
+        role_set = set(roles)
+
+        def _scope_matches(binding: AgentBinding) -> bool:
+            match = binding.match
+            if match.guild_id and match.guild_id != guild_id:
+                return False
+            if match.team_id and match.team_id != team_id:
+                return False
+            if match.roles and not set(match.roles).issubset(role_set):
+                return False
+            return True
 
         # Tier 1: exact peer match (channel + optional account + peer)
         for binding in channel_bindings:
@@ -203,6 +245,8 @@ class AgentRouter:
             if binding.match.peer_kind != peer_kind or binding.match.peer_id != peer_id:
                 continue
             if binding.match.account_id is not None and binding.match.account_id != account_id:
+                continue
+            if not _scope_matches(binding):
                 continue
             return binding.agent_id, "binding.peer"
 
@@ -213,6 +257,8 @@ class AgentRouter:
             if binding.match.account_id is None:
                 continue
             if binding.match.account_id == account_id:
+                if not _scope_matches(binding):
+                    continue
                 return binding.agent_id, "binding.account"
 
         # Tier 3: channel match (channel only)
@@ -220,6 +266,8 @@ class AgentRouter:
             if binding.match.peer_kind or binding.match.peer_id:
                 continue
             if binding.match.account_id is not None:
+                continue
+            if not _scope_matches(binding):
                 continue
             return binding.agent_id, "binding.channel"
 
@@ -304,11 +352,15 @@ class AgentRouter:
         channel = _normalize_lower(msg.channel) or "local"
         account_id = _resolve_message_account_id(msg)
         peer_kind, peer_id = _resolve_message_peer(msg)
+        guild_id, team_id, roles = _resolve_message_scope(msg)
         agent_id, matched_by = self._resolve_agent_id(
             channel=channel,
             account_id=account_id,
             peer_kind=peer_kind,
             peer_id=peer_id,
+            guild_id=guild_id,
+            team_id=team_id,
+            roles=roles,
         )
 
         merged_agent_cfg = self._agents.get(agent_id, self._agents.get(self._default_agent_id(), {}))
@@ -325,6 +377,9 @@ class AgentRouter:
             account_id=account_id,
             peer_kind=peer_kind,
             peer_id=peer_id,
+            guild_id=guild_id,
+            team_id=team_id,
+            roles=roles,
             session_id=session_id,
             session_base_key=session_base_key,
             scoped_user_id=scoped_user_id,

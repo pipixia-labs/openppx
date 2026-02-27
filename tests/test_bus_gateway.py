@@ -83,6 +83,9 @@ class GatewayTests(unittest.TestCase):
         route_meta = outbound.metadata.get("openheron_route", {})
         self.assertEqual(route_meta.get("agentId"), "main")
         self.assertEqual(route_meta.get("matchedBy"), "default")
+        self.assertEqual(route_meta.get("guildId"), "")
+        self.assertEqual(route_meta.get("teamId"), "")
+        self.assertEqual(route_meta.get("roles"), [])
         self.assertEqual(route_meta.get("sessionId"), "agent:main:local:default:direct:c1")
 
     def test_process_message_merges_stream_snapshots(self) -> None:
@@ -305,6 +308,11 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(payload.get("totalMessages"), 1)
         self.assertEqual(payload.get("byAgent", {}).get("main"), 1)
         self.assertEqual(payload.get("byChannel", {}).get("local"), 1)
+        recent = payload.get("recent", [])
+        self.assertTrue(isinstance(recent, list) and len(recent) == 1)
+        self.assertEqual(recent[0].get("guildId"), "")
+        self.assertEqual(recent[0].get("teamId"), "")
+        self.assertEqual(recent[0].get("roles"), [])
 
 
 class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):

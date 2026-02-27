@@ -8,6 +8,7 @@
 
 - 路由键：`channel + accountId + peer`
 - 路由优先级：`peer > account > channel > default`
+- 可选 scope 过滤：`guild/team/roles`（在各 tier 内生效，不改变 tier 顺序）
 - DM 会话：每个 DM 独立会话（并区分 `accountId`）
 - 同 channel 多 accountId 路由：已支持
 
@@ -36,7 +37,7 @@
 - `doctor` 新增 `multiAgent.summary` 与 `multiAgent.routePreview`
 - `doctor` 文本模式冲突提示与排查指引
 - `routes lint` 独立命令（含 `--json/--limit` 与建议动作输出）
-- `guild/team/roles` 静态配置校验与 `routeScopeCount` 摘要统计
+- `guild/team/roles` 配置校验 + `routeScopeCount` 摘要统计 + 运行时匹配过滤
 - `routes stats` 独立命令（路由命中统计与审计，含 `--json/--limit/--window-hours`，文本模式 Top 排序 + Recent samples 预览）
 
 ### 1.6 文档与模板
@@ -54,7 +55,7 @@
 
 ## 2. 待推进（建议优先级）
 
-1. 更细粒度主体模型扩展：guild/team/roles 运行时匹配（当前已完成静态校验，尚未接入实际路由决策）。
+1. 通道侧 `guild/team/roles` 元数据标准化（目前已支持匹配能力，但不同 channel 注入一致性仍可继续增强）。
 
 ## 3. 已验证命令（最近回归）
 
@@ -62,10 +63,10 @@
 ./.venv/bin/python -m pytest -q tests/test_agent_routing.py tests/test_bus_gateway.py tests/test_whatsapp_channel.py tests/test_telegram_channel.py tests/test_discord_channel.py tests/test_feishu_channel.py tests/test_cli.py
 ```
 
-最近结果：`210 passed`。
+最近结果：`212 passed`。
 
 ## 4. 当前结论
 
 - v1 核心目标已完成并上线。
 - v1.1 的可观测性、通道元数据一致性、doctor 诊断增强已完成并上线。
-- 下一阶段建议聚焦“guild/team/roles 运行时匹配接入（保持优先级可控）”。
+- 下一阶段建议聚焦“通道侧主体元数据标准化 + 实机流量验证”。

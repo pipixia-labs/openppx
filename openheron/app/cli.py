@@ -1922,6 +1922,7 @@ def _cmd_routes_stats(*, output_json: bool = False, limit: int = 20, window_hour
                 f"channel={item.get('channel', '-')}, "
                 f"account={item.get('accountId', '-')}, "
                 f"peer={item.get('peerKind', '-')}/{item.get('peerId', '-')}, "
+                f"scope={item.get('guildId', '-')}/{item.get('teamId', '-')}/{item.get('roles', [])}, "
                 f"matchedBy={item.get('matchedBy', '-')}, "
                 f"session={item.get('sessionId', '-')}"
             )

@@ -317,7 +317,7 @@ openheron doctor --verbose
 - 作用：查看最近网关运行期的路由命中统计（按 agent/channel/matchedBy 聚合）。
 - 多账号 channel 的 `accountId` 输入契约见：`docs/CHANNEL_ACCOUNTID_CONTRACT.md`。
 - 文本模式会额外输出 Top 排名视图（按命中次数降序，受 `--limit` 控制）。
-- 文本模式会输出 `Recent samples`（最近明细预览，默认最多 5 条，仍受 `--limit` 约束）。
+- 文本模式会输出 `Recent samples`（最近明细预览，默认最多 5 条，仍受 `--limit` 约束，含 `guild/team/roles` scope）。
 - 数据文件：`<workspace>/.openheron/route_stats.json`。
 - 常用命令：
 

@@ -521,6 +521,9 @@ class Gateway:
                 "accountId": routed.account_id,
                 "peerKind": routed.peer_kind,
                 "peerId": routed.peer_id,
+                "guildId": routed.guild_id,
+                "teamId": routed.team_id,
+                "roles": list(routed.roles),
                 "sessionId": routed.session_id,
             }
         )
@@ -554,6 +557,9 @@ class Gateway:
             "accountId": routed.account_id,
             "peerKind": routed.peer_kind,
             "peerId": routed.peer_id,
+            "guildId": routed.guild_id,
+            "teamId": routed.team_id,
+            "roles": list(routed.roles),
             "sessionId": routed.session_id,
         }
         return base

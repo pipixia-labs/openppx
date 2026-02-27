@@ -56,8 +56,8 @@ v1 路由键：`channel + accountId + peer`，优先级为：
 
 - DM 会话默认按 peer 隔离（并区分 accountId）。
 - 支持同一 channel 下多 accountId 路由到不同 agent。
-- `match.guild / match.team / match.roles` 已支持静态校验与 `doctor/routes lint` 摘要展示；
-  当前运行时路由仍按 `channel + accountId + peer` 生效（后续版本再接入主体级匹配）。
+- `match.guild / match.team / match.roles` 可作为可选过滤条件参与路由匹配。
+  优先级仍保持 `peer > account > channel`，scope 仅在各 tier 内做附加约束，不改变 tier 顺序。
 
 ## `runtime.json`（高级）关键字段
 
