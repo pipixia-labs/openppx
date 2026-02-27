@@ -74,6 +74,13 @@ scripts/multi_agent_e2e.sh --strict-routes-stats
 - `peer_id`
 - `peer`
 - （适用场景）`accountId`
+- （适用场景）`guildId` / `teamId` / `roles`
+
+如果你启用了 `guild/team/roles` 绑定，额外确认：
+
+1. 对应 channel 真实入站事件里存在这些字段（或接入层已做补齐）。
+2. `routes stats --json --window-hours 24` 的 `stats.recent[*]` 中可观测到 scope 字段。
+3. 命中结果符合预期（scope 不匹配时回退到下一个可命中规则）。
 
 示例测试命令：
 
