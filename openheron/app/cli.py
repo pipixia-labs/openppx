@@ -1831,7 +1831,8 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
         f"ok={report['ok']}, "
         f"agents={summary.get('agentCount', 0)}, "
         f"bindings={summary.get('bindingCount', 0)}, "
-        f"conflicts={len(conflicts)}"
+        f"conflicts={len(conflicts)}, "
+        f"warnings={len(warnings)}"
     )
     if issues:
         _stdout_line("Routing issues:")

@@ -2580,6 +2580,22 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any(line == "Suggested actions:" for line in lines))
         self.assertTrue(any("keep exactly one target agent" in line for line in lines))
 
+    def test_cmd_routes_lint_text_output_reports_scope_warnings(self) -> None:
+        from openheron import cli
+
+        cfg = cli.default_config()
+        cfg["agents"]["list"] = [{"id": "main", "default": True}]
+        cfg["bindings"] = [
+            {"agentId": "main", "match": {"channel": "telegram", "guild": {"id": "g1"}}},
+        ]
+        with patch.object(cli, "load_config", return_value=cfg):
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_routes_lint(output_json=False, limit=4)
+        self.assertEqual(code, 0)
+        lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
+        self.assertTrue(any("warnings=1" in line for line in lines if line.startswith("Routes lint:")))
+        self.assertTrue(any(line == "Routing warnings:" for line in lines))
+
     def test_cmd_routes_stats_json_output_contains_counts(self) -> None:
         from openheron import cli
 
