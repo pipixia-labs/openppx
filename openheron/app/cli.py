@@ -1667,6 +1667,55 @@ def _cmd_doctor(
     return 0
 
 
+def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
+    """Lint multi-agent route config and report structural/routing conflicts."""
+    config_path = get_config_path()
+    config_payload = load_config(config_path=config_path)
+    issues = _doctor_validate_multi_agent_config(config_payload)
+    summary = _doctor_summarize_multi_agent_config(config_payload)
+    preview = _doctor_preview_multi_agent_routes(config_payload, limit=max(1, min(limit, 50)))
+    conflicts = summary.get("conflicts", [])
+
+    report: dict[str, Any] = {
+        "ok": not issues and not conflicts,
+        "config": {"path": str(config_path), "exists": config_path.exists()},
+        "issues": issues,
+        "summary": summary,
+        "routePreview": preview,
+    }
+
+    if output_json:
+        _stdout_line(json.dumps(report, ensure_ascii=False))
+        return 0 if report["ok"] else 1
+
+    _stdout_line(
+        "Routes lint: "
+        f"ok={report['ok']}, "
+        f"agents={summary.get('agentCount', 0)}, "
+        f"bindings={summary.get('bindingCount', 0)}, "
+        f"conflicts={len(conflicts)}"
+    )
+    if issues:
+        _stdout_line("Routing issues:")
+        for item in issues:
+            _stdout_line(f"- {item}")
+    if conflicts:
+        _stdout_line("Routing conflicts:")
+        for item in conflicts[:20]:
+            _stdout_line(f"- {item}")
+    if preview:
+        _stdout_line("Route preview:")
+        for item in preview[: min(5, len(preview))]:
+            _stdout_line(
+                "- "
+                f"type={item.get('type')}, "
+                f"tier={item.get('tier', '-')}, "
+                f"agent={item.get('agentId')}, "
+                f"session={item.get('sessionIdExample')}"
+            )
+    return 0 if report["ok"] else 1
+
+
 def _doctor_install_prereq_line(line: str) -> str:
     """Render one install prereq line with a lightweight health status tag."""
 
@@ -1874,6 +1923,17 @@ def _dispatch_provider_command(args: argparse.Namespace, parser: argparse.Argume
     handler = handlers.get(args.provider_command)
     if handler is None:
         parser.error("provider command is required")
+    return handler()
+
+
+def _dispatch_routes_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Dispatch routes subcommands from parsed argparse namespace."""
+    handlers: dict[str, Callable[[], int]] = {
+        "lint": lambda: _cmd_routes_lint(output_json=args.output_json, limit=args.limit),
+    }
+    handler = handlers.get(args.routes_command)
+    if handler is None:
+        parser.error("routes command is required")
     return handler()
 
 
@@ -4356,6 +4416,21 @@ def main(argv: list[str] | None = None) -> None:
         "provider_name",
         help="OAuth provider name, e.g. openai-codex or github-copilot.",
     )
+    routes_parser = subparsers.add_parser("routes", help="Route diagnostics helpers.")
+    routes_subparsers = routes_parser.add_subparsers(dest="routes_command", required=True)
+    routes_lint_parser = routes_subparsers.add_parser("lint", help="Lint multi-agent routing config.")
+    routes_lint_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Emit routes lint result as one machine-readable JSON object.",
+    )
+    routes_lint_parser.add_argument(
+        "--limit",
+        type=int,
+        default=8,
+        help="Max route preview items in output (default: 8).",
+    )
 
     channels_parser = subparsers.add_parser("channels", help="Manage channel helper commands.")
     channels_subparsers = channels_parser.add_subparsers(dest="channels_command", required=True)
@@ -4544,6 +4619,8 @@ def main(argv: list[str] | None = None) -> None:
         code = _dispatch_channels_command(args, parser)
     elif args.command == "provider":
         code = _dispatch_provider_command(args, parser)
+    elif args.command == "routes":
+        code = _dispatch_routes_command(args, parser)
     else:
         handlers: dict[str, Callable[[], int]] = {
             "install": lambda: _cmd_install(

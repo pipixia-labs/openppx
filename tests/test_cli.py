@@ -313,6 +313,17 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
                 mocked_status.assert_called_once_with(output_json=True)
 
+    def test_routes_lint_mode_dispatch_with_json_and_limit(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_routes_lint", return_value=0) as mocked_lint:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["routes", "lint", "--json", "--limit", "12"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+                mocked_lint.assert_called_once_with(output_json=True, limit=12)
+
     def test_channels_login_mode_dispatch(self) -> None:
         from openheron import cli
 
@@ -2391,6 +2402,39 @@ class CLITests(unittest.TestCase):
         lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
         self.assertTrue(any("Multi-agent routing conflicts detected: 1." in line for line in lines))
         self.assertTrue(any("multiAgent.summary.conflicts" in line for line in lines))
+
+    def test_cmd_routes_lint_json_output_contains_summary_and_preview(self) -> None:
+        from openheron import cli
+
+        cfg = cli.default_config()
+        cfg["agents"]["list"] = [{"id": "main", "default": True}, {"id": "biz"}]
+        cfg["bindings"] = [{"agentId": "biz", "match": {"channel": "whatsapp", "accountId": "business"}}]
+        with patch.object(cli, "load_config", return_value=cfg):
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_routes_lint(output_json=True, limit=3)
+        self.assertEqual(code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertTrue(payload["ok"])
+        self.assertIn("summary", payload)
+        self.assertIn("routePreview", payload)
+        self.assertLessEqual(len(payload["routePreview"]), 3)
+
+    def test_cmd_routes_lint_text_output_reports_conflicts(self) -> None:
+        from openheron import cli
+
+        cfg = cli.default_config()
+        cfg["agents"]["list"] = [{"id": "main", "default": True}, {"id": "biz"}]
+        cfg["bindings"] = [
+            {"agentId": "main", "match": {"channel": "whatsapp", "accountId": "business"}},
+            {"agentId": "biz", "match": {"channel": "whatsapp", "accountId": "business"}},
+        ]
+        with patch.object(cli, "load_config", return_value=cfg):
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_routes_lint(output_json=False, limit=4)
+        self.assertEqual(code, 1)
+        lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
+        self.assertTrue(any(line.startswith("Routes lint:") for line in lines))
+        self.assertTrue(any(line == "Routing conflicts:" for line in lines))
 
     def test_cmd_provider_status_json_output_includes_oauth_issue(self) -> None:
         from openheron import cli
