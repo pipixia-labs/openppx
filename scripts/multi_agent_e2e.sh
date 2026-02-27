@@ -8,10 +8,11 @@ set -euo pipefail
 #
 # Usage:
 #   scripts/multi_agent_e2e.sh
+#   scripts/multi_agent_e2e.sh --agents main,biz
 #   scripts/multi_agent_e2e.sh --strict-routes-stats
 #   scripts/multi_agent_e2e.sh --strict-warnings
 #   scripts/multi_agent_e2e.sh --with-gateway-probe
-#   scripts/multi_agent_e2e.sh --with-gateway-probe --strict-routes-stats --strict-warnings
+#   scripts/multi_agent_e2e.sh --with-gateway-probe --strict-routes-stats --strict-warnings --agents main,biz
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
@@ -19,6 +20,7 @@ cd "${ROOT_DIR}"
 STRICT_ROUTES_STATS=0
 STRICT_WARNINGS=0
 WITH_GATEWAY_PROBE=0
+AGENTS_CSV=""
 
 while (($# > 0)); do
   case "$1" in
@@ -33,6 +35,14 @@ while (($# > 0)); do
     --with-gateway-probe)
       WITH_GATEWAY_PROBE=1
       shift
+      ;;
+    --agents)
+      if (($# < 2)); then
+        echo "--agents requires one comma-separated value, e.g. --agents main,biz" >&2
+        exit 2
+      fi
+      AGENTS_CSV="$2"
+      shift 2
       ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -71,6 +81,23 @@ supported = payload.get("multiAgent", {}).get("scopeSupportedChannels", [])
 if isinstance(supported, list) and supported:
     print("[info] doctor scopeSupportedChannels:", ",".join(str(item) for item in supported))
 PY
+
+if [[ -z "${AGENTS_CSV}" ]]; then
+  AGENTS_CSV="$(python3 - "${TMP_DIR}/doctor.json" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+by_agent = payload.get("observability", {}).get("byAgent", {})
+if isinstance(by_agent, dict) and by_agent:
+    print(",".join(sorted(str(k) for k in by_agent.keys())))
+else:
+    print("main")
+PY
+)"
+fi
+echo "[multi-agent-e2e] agent targets: ${AGENTS_CSV}"
 
 if [[ "${STRICT_WARNINGS}" == "1" ]]; then
   python3 - "${TMP_DIR}/doctor.json" <<'PY'
@@ -132,26 +159,57 @@ if [[ "${WITH_GATEWAY_PROBE}" == "1" ]]; then
   fi
 fi
 
-echo "[multi-agent-e2e] routes stats --json"
-if openheron routes stats --json >"${TMP_DIR}/routes_stats.json"; then
-  python3 - "${TMP_DIR}/routes_stats.json" <<'PY'
+for agent in ${AGENTS_CSV//,/ }; do
+  echo "[multi-agent-e2e] heartbeat status --json --agent-id ${agent}"
+  if openheron heartbeat status --json --agent-id "${agent}" >"${TMP_DIR}/heartbeat_status_${agent}.json"; then
+    python3 - "${TMP_DIR}/heartbeat_status_${agent}.json" "${agent}" <<'PY'
 import json
 import pathlib
 import sys
 
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+agent = sys.argv[2]
+if not isinstance(payload, dict):
+    print(f"[fail] heartbeat status for agent={agent} is invalid JSON object")
+    raise SystemExit(1)
+print(
+    "[ok] heartbeat status available for agent="
+    f"{agent}, last_status={payload.get('last_status')}, target_mode={payload.get('target_mode')}"
+)
+PY
+  else
+    if [[ "${STRICT_ROUTES_STATS}" == "1" ]]; then
+      echo "[fail] heartbeat status unavailable for agent=${agent} (strict mode enabled)." >&2
+      exit 1
+    fi
+    echo "[warn] heartbeat status unavailable for agent=${agent}."
+  fi
+
+  echo "[multi-agent-e2e] routes stats --json --agent-id ${agent}"
+  if openheron routes stats --json --agent-id "${agent}" >"${TMP_DIR}/routes_stats_${agent}.json"; then
+    python3 - "${TMP_DIR}/routes_stats_${agent}.json" "${agent}" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+agent = sys.argv[2]
 if not payload.get("ok", False):
-    print("[fail] routes stats returned ok=false")
+    print(f"[fail] routes stats returned ok=false for agent={agent}")
     raise SystemExit(1)
 stats = payload.get("stats", {})
-print("[ok] routes stats available, totalMessagesInWindow=", stats.get("totalMessagesInWindow", 0))
+print(
+    "[ok] routes stats available for agent="
+    f"{agent}, totalMessagesInWindow={stats.get('totalMessagesInWindow', 0)}"
+)
 PY
-else
-  if [[ "${STRICT_ROUTES_STATS}" == "1" ]]; then
-    echo "[fail] routes stats unavailable (strict mode enabled)." >&2
-    exit 1
+  else
+    if [[ "${STRICT_ROUTES_STATS}" == "1" ]]; then
+      echo "[fail] routes stats unavailable for agent=${agent} (strict mode enabled)." >&2
+      exit 1
+    fi
+    echo "[warn] routes stats unavailable for agent=${agent} (likely no gateway traffic yet)."
   fi
-  echo "[warn] routes stats unavailable (likely no gateway traffic yet)."
-fi
+done
 
 echo "[multi-agent-e2e] done"

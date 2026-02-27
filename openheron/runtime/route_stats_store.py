@@ -39,6 +39,3 @@ def write_route_stats_snapshot(workspace: Path, payload: dict[str, Any]) -> None
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     path.write_text(text + "\n", encoding="utf-8")
-    legacy_path = _legacy_route_stats_path(workspace)
-    legacy_path.parent.mkdir(parents=True, exist_ok=True)
-    legacy_path.write_text(text + "\n", encoding="utf-8")

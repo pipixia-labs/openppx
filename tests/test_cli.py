@@ -2387,6 +2387,9 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
         self.assertTrue(any("Heartbeat: last_status=ran, last_reason=exec:foreground" in line for line in lines))
+        self.assertTrue(
+            any("Agent observability: main(heartbeat=ok,route_stats=missing)" in line for line in lines)
+        )
         self.assertTrue(any("GUI runtime: mode=builtin_only" in line for line in lines))
         self.assertTrue(any("Environment looks good." in line for line in lines))
 

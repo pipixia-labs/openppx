@@ -79,6 +79,7 @@ scripts/install_smoke.sh --with-gateway
 
 ```bash
 scripts/multi_agent_e2e.sh
+scripts/multi_agent_e2e.sh --agents main,biz
 scripts/multi_agent_e2e.sh --with-gateway-probe
 scripts/multi_agent_e2e.sh --strict-routes-stats
 scripts/multi_agent_e2e.sh --strict-warnings

@@ -40,6 +40,3 @@ def write_heartbeat_status_snapshot(agent_dir: Path, payload: dict[str, Any]) ->
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     path.write_text(text + "\n", encoding="utf-8")
-    legacy_path = _legacy_heartbeat_status_path(agent_dir)
-    legacy_path.parent.mkdir(parents=True, exist_ok=True)
-    legacy_path.write_text(text + "\n", encoding="utf-8")

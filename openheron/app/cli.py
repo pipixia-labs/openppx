@@ -1801,6 +1801,21 @@ def _cmd_doctor(
             f"last_reason={heartbeat_snapshot.get('last_reason', '-')}, "
             f"reasons={json.dumps(heartbeat_snapshot.get('recent_reason_counts', {}), ensure_ascii=False)}"
         )
+    if observability_by_agent:
+        summary_parts: list[str] = []
+        for agent_id in sorted(observability_by_agent.keys()):
+            entry = observability_by_agent.get(agent_id, {})
+            if not isinstance(entry, dict):
+                continue
+            hb = entry.get("heartbeat", {})
+            rs = entry.get("routeStats", {})
+            hb_ok = bool(hb.get("snapshot_available")) if isinstance(hb, dict) else False
+            rs_ok = bool(rs.get("snapshot_available")) if isinstance(rs, dict) else False
+            summary_parts.append(
+                f"{agent_id}(heartbeat={'ok' if hb_ok else 'missing'},route_stats={'ok' if rs_ok else 'missing'})"
+            )
+        if summary_parts:
+            _stdout_line("Agent observability: " + ", ".join(summary_parts))
     _stdout_line(
         "GUI runtime: "
         f"mode={gui_mode}, "
