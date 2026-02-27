@@ -29,9 +29,9 @@ class SessionServiceFactoryTests(unittest.TestCase):
                 os.environ.pop("OPENHERON_SESSION_DB_URL", None)
                 cfg = load_session_config()
                 self.assertTrue(cfg.db_url.startswith("sqlite+aiosqlite:///"))
-                self.assertIn(".openheron/database/sessions.db", cfg.db_url)
+                self.assertIn(".openheron/agents/main/sessions/sessions.db", cfg.db_url)
                 db_file = Path(cfg.db_url.replace("sqlite+aiosqlite:///", "", 1))
-                self.assertEqual(db_file.parent, Path(tmp) / ".openheron" / "database")
+                self.assertTrue(str(db_file.parent).endswith("/.openheron/agents/main/sessions"))
 
     def test_load_uses_explicit_db_url_when_set(self) -> None:
         db_url = "sqlite+aiosqlite:////tmp/custom.db"

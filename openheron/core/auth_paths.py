@@ -9,7 +9,7 @@ _DEFAULT_AGENT_ID = "main"
 
 
 def _default_agent_dir() -> Path:
-    return (Path.home() / ".openheron" / "agents" / _DEFAULT_AGENT_ID / "agent").resolve()
+    return (Path.home() / ".openheron" / "agents" / _DEFAULT_AGENT_ID).resolve()
 
 
 def resolve_current_agent_dir() -> Path:

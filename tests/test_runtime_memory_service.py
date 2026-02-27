@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from google.adk.memory import InMemoryMemoryService
 
@@ -27,20 +29,23 @@ class MemoryServiceFactoryTests(unittest.TestCase):
         os.environ.pop("OPENHERON_MEMORY_ENABLED", None)
         os.environ.pop("OPENHERON_MEMORY_BACKEND", None)
         os.environ.pop("OPENHERON_WORKSPACE", None)
+        os.environ.pop("OPENHERON_AGENT_DIR", None)
 
-        cfg = load_memory_config()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"HOME": tmp}, clear=False):
+                cfg = load_memory_config()
 
         self.assertTrue(cfg.enabled)
         self.assertEqual(cfg.backend, "markdown")
-        self.assertIn(".openheron/workspace/memory", cfg.markdown_dir)
+        self.assertIn(".openheron/agents/main/memory", cfg.markdown_dir)
 
-    def test_load_memory_config_prefers_workspace_memory_dir_when_available(self) -> None:
-        os.environ["OPENHERON_WORKSPACE"] = "/tmp/openheron-workspace"
+    def test_load_memory_config_prefers_agent_dir_memory_dir_when_available(self) -> None:
+        os.environ["OPENHERON_AGENT_DIR"] = "/tmp/openheron-agent"
         os.environ.pop("OPENHERON_MEMORY_MARKDOWN_DIR", None)
 
         cfg = load_memory_config()
 
-        self.assertEqual(cfg.markdown_dir, "/tmp/openheron-workspace/memory")
+        self.assertTrue(cfg.markdown_dir.endswith("/openheron-agent/memory"))
 
     def test_create_memory_service_can_be_disabled(self) -> None:
         service = create_memory_service(MemoryConfig(False, "in_memory", ""))

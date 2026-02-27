@@ -319,7 +319,13 @@ class Gateway:
         finally:
             self._persist_heartbeat_status_snapshot()
 
-    async def _persist_session_memory_snapshot(self, *, user_id: str, session_id: str) -> None:
+    async def _persist_session_memory_snapshot(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        agent_runtime: AgentRuntimeContext | None = None,
+    ) -> None:
         """Persist one session snapshot into configured memory service.
 
         This is used by explicit session-boundary commands (for example `/new`)
@@ -347,7 +353,11 @@ class Gateway:
             return
 
         try:
-            await memory_service.add_session_to_memory(session)
+            if agent_runtime is None:
+                await memory_service.add_session_to_memory(session)
+            else:
+                with agent_runtime_context(agent_runtime):
+                    await memory_service.add_session_to_memory(session)
         except ValueError:
             # Align with root agent callback: memory service may be absent/disabled.
             return
@@ -465,6 +475,7 @@ class Gateway:
             await self._persist_session_memory_snapshot(
                 user_id=routed.scoped_user_id,
                 session_id=active_session_id,
+                agent_runtime=routed.runtime,
             )
             self._session_overrides[routed.session_base_key] = (
                 f"{routed.session_base_key}:new:{uuid.uuid4().hex[:12]}"

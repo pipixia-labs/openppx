@@ -134,9 +134,15 @@ def get_runtime_config_path() -> Path:
     return get_data_dir() / "runtime.json"
 
 
-def get_default_workspace_path() -> Path:
-    """Return default workspace path used by install initialization."""
-    return get_data_dir() / "workspace"
+def get_agent_home_path(agent_id: str = "main") -> Path:
+    """Return one agent home path under ``~/.openheron/agents/<agentId>``."""
+    normalized = str(agent_id).strip() or "main"
+    return get_data_dir() / "agents" / normalized
+
+
+def get_default_workspace_path(agent_id: str = "main") -> Path:
+    """Return default per-agent workspace path used by install initialization."""
+    return get_agent_home_path(agent_id) / "workspace"
 
 
 def _default_runtime_env_overrides() -> dict[str, Any]:
@@ -149,7 +155,8 @@ def _default_runtime_env_overrides() -> dict[str, Any]:
     return {
         "OPENHERON_MEMORY_ENABLED": True,
         "OPENHERON_MEMORY_BACKEND": "markdown",
-        "OPENHERON_MEMORY_MARKDOWN_DIR": str(get_default_workspace_path() / "memory"),
+        # Keep empty by default so runtime can resolve per-agent memory roots.
+        "OPENHERON_MEMORY_MARKDOWN_DIR": "",
         "OPENHERON_COMPACTION_ENABLED": True,
         "OPENHERON_COMPACTION_INTERVAL": 8,
         "OPENHERON_COMPACTION_OVERLAP": 1,
@@ -193,8 +200,8 @@ def default_config() -> dict[str, Any]:
         },
         "agents": {
             "defaults": {
-                "workspace": str(get_default_workspace_path()),
-                "agentDir": str(get_data_dir() / "agents" / "main" / "agent"),
+                "workspace": str(get_data_dir() / "agents" / "{agentId}" / "workspace"),
+                "agentDir": str(get_data_dir() / "agents" / "{agentId}"),
                 "security": {
                     "restrictToWorkspace": False,
                     "allowExec": True,
@@ -221,8 +228,8 @@ def default_config() -> dict[str, Any]:
                 {
                     "id": "main",
                     "default": True,
-                    "workspace": str(get_default_workspace_path()),
-                    "agentDir": str(get_data_dir() / "agents" / "main" / "agent"),
+                    "workspace": str(get_default_workspace_path("main")),
+                    "agentDir": str(get_agent_home_path("main")),
                     "skills": [],
                 }
             ],
@@ -615,8 +622,17 @@ def _resolve_default_agent_dir(cfg: dict[str, Any]) -> str:
     default_agent = _resolve_default_agent_config(cfg)
     candidate = str(default_agent.get("agentDir", "")).strip()
     if candidate:
-        return candidate
-    return str(get_data_dir() / "agents" / "main" / "agent")
+        agent_id = str(default_agent.get("id", "")).strip() or "main"
+        return _expand_agent_path_template(candidate, agent_id=agent_id)
+    return str(get_agent_home_path("main"))
+
+
+def _expand_agent_path_template(raw: str, *, agent_id: str) -> str:
+    """Expand ``{agentId}``/``{agent_id}`` placeholders in one path string."""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    return text.replace("{agentId}", agent_id).replace("{agent_id}", agent_id)
 
 
 def _resolve_mcp_servers_json(cfg: dict[str, Any]) -> str:
@@ -792,6 +808,11 @@ def config_to_env(
     debug = cfg.get("debug", False)
 
     provider_key_env = provider_api_key_env(provider_name) if provider_enabled else None
+    default_agent_id = str(default_agent.get("id", "")).strip() or "main"
+    workspace_value = _expand_agent_path_template(
+        str(default_agent.get("workspace", agent.get("workspace", ""))).strip(),
+        agent_id=default_agent_id,
+    )
     env = {
         **{env_key: "" for env_key in provider_api_key_env_keys()},
         "OPENHERON_MODEL": model,
@@ -799,7 +820,7 @@ def config_to_env(
         "OPENHERON_PROVIDER_ENABLED": "1" if provider_enabled else "0",
         "OPENHERON_PROVIDER_API_BASE": provider_api_base,
         "OPENHERON_PROVIDER_EXTRA_HEADERS_JSON": provider_extra_headers,
-        "OPENHERON_WORKSPACE": str(default_agent.get("workspace", agent.get("workspace", ""))).strip(),
+        "OPENHERON_WORKSPACE": workspace_value,
         "OPENHERON_AGENT_DIR": _resolve_default_agent_dir(cfg),
         "OPENHERON_BUILTIN_SKILLS_DIR": str(agent.get("builtinSkillsDir", "")).strip(),
         "OPENHERON_HEARTBEAT_EVERY": str(heartbeat.get("every", "30m")).strip() or "30m",

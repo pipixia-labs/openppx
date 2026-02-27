@@ -3101,8 +3101,12 @@ class CLITests(unittest.TestCase):
             self.assertTrue(runtime_config_path.exists())
             data = json.loads(config_path.read_text(encoding="utf-8"))
             workspace = Path(data["agent"]["workspace"]).expanduser()
+            agent_dir = Path(data["agents"]["list"][0]["agentDir"]).expanduser()
+            self.assertTrue(agent_dir.exists())
             self.assertTrue(workspace.exists())
             self.assertTrue((workspace / "skills").exists())
+            self.assertTrue((agent_dir / "sessions").exists())
+            self.assertTrue((agent_dir / "memory").exists())
 
     def test_script_entrypoint_accepts_m(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

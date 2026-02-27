@@ -9,6 +9,7 @@ from typing import Any
 
 from google.adk.memory import InMemoryMemoryService
 
+from ..core.auth_paths import resolve_current_agent_dir
 from .markdown_memory_service import MarkdownMemoryService
 
 
@@ -42,13 +43,10 @@ def _parse_enabled(raw: str | None, *, default: bool) -> bool:
 def _default_markdown_dir() -> Path:
     """Resolve default markdown memory directory.
 
-    By default memory files are colocated with workspace bootstrap files so the
-    runtime consistently uses ``<workspace>/memory/{MEMORY.md,HISTORY.md}``.
+    By default memory files live under one agent home:
+    ``<agentDir>/memory/{MEMORY.md,HISTORY.md}``.
     """
-    workspace = os.getenv("OPENHERON_WORKSPACE", "").strip()
-    if workspace:
-        return Path(workspace).expanduser() / "memory"
-    return Path.home() / ".openheron" / "workspace" / "memory"
+    return resolve_current_agent_dir() / "memory"
 
 
 def load_memory_config() -> MemoryConfig:
@@ -74,6 +72,42 @@ def load_memory_config() -> MemoryConfig:
     )
 
 
+class AgentScopedMemoryService:
+    """Route memory-service calls into per-agent backends and storage roots."""
+
+    def __init__(self, *, backend: str, markdown_dir_override: str = "") -> None:
+        self._backend = backend
+        self._markdown_dir_override = markdown_dir_override.strip()
+        self._services_by_key: dict[str, Any] = {}
+
+    def _service_for_current_agent(self) -> Any:
+        agent_dir = resolve_current_agent_dir().expanduser().resolve(strict=False)
+        key = str(agent_dir)
+        service = self._services_by_key.get(key)
+        if service is not None:
+            return service
+        if self._backend == "markdown":
+            if self._markdown_dir_override:
+                root = Path(self._markdown_dir_override).expanduser().resolve(strict=False)
+            else:
+                root = agent_dir / "memory"
+            service = MarkdownMemoryService(root_dir=str(root))
+        else:
+            service = InMemoryMemoryService()
+        self._services_by_key[key] = service
+        return service
+
+    def __getattr__(self, name: str) -> Any:
+        target = getattr(self._service_for_current_agent(), name)
+        if callable(target):
+
+            def _wrapped(*args: Any, **kwargs: Any) -> Any:
+                return getattr(self._service_for_current_agent(), name)(*args, **kwargs)
+
+            return _wrapped
+        return target
+
+
 def create_memory_service(config: MemoryConfig | None = None) -> Any | None:
     """Create an ADK memory service instance from runtime config.
 
@@ -84,6 +118,12 @@ def create_memory_service(config: MemoryConfig | None = None) -> Any | None:
     cfg = config or load_memory_config()
     if not cfg.enabled:
         return None
+
+    if config is None:
+        return AgentScopedMemoryService(
+            backend=cfg.backend,
+            markdown_dir_override=os.getenv("OPENHERON_MEMORY_MARKDOWN_DIR", "").strip(),
+        )
 
     if cfg.backend == "markdown":
         return MarkdownMemoryService(root_dir=cfg.markdown_dir)

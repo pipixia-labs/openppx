@@ -2638,6 +2638,7 @@ class InstallInitResult:
 
     config_path: Path
     runtime_config_path: Path
+    agent_dir: Path
     workspace: Path
     config_state: str
     runtime_state: str
@@ -2668,12 +2669,27 @@ def _run_install_init_setup(*, force: bool) -> InstallInitResult:
         runtime_saved_to = save_runtime_config(runtime_config, runtime_config_path=runtime_config_path)
         runtime_state = "refreshed"
 
-    workspace = Path(str(config.get("agent", {}).get("workspace", ""))).expanduser()
+    default_agent = {}
+    for entry in config.get("agents", {}).get("list", []):
+        if not isinstance(entry, dict):
+            continue
+        if not default_agent:
+            default_agent = entry
+        if bool(entry.get("default")):
+            default_agent = entry
+            break
+    workspace = Path(str(default_agent.get("workspace") or config.get("agent", {}).get("workspace", ""))).expanduser()
+    agent_dir_raw = str(default_agent.get("agentDir", "")).strip()
+    agent_dir = Path(agent_dir_raw).expanduser() if agent_dir_raw else workspace.parent
+    agent_dir.mkdir(parents=True, exist_ok=True)
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "skills").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "sessions").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "memory").mkdir(parents=True, exist_ok=True)
     return InstallInitResult(
         config_path=saved_to,
         runtime_config_path=runtime_saved_to,
+        agent_dir=agent_dir,
         workspace=workspace,
         config_state=config_state,
         runtime_state=runtime_state,
@@ -2696,6 +2712,7 @@ def _render_install_init_compact_with_rich(result: InstallInitResult) -> bool:
     table.add_column("value", style="white")
     table.add_row("Config", f"{result.config_state}: {result.config_path}")
     table.add_row("Runtime", f"{result.runtime_state}: {result.runtime_config_path}")
+    table.add_row("AgentDir", str(result.agent_dir))
     table.add_row("Workspace", str(result.workspace))
     Console().print(Panel(table, title="[bold]Setup Result[/bold]", border_style="cyan"))
     return True
@@ -2707,11 +2724,13 @@ def _cmd_install_init_setup(force: bool) -> int:
         if not _render_install_init_compact_with_rich(result):
             _stdout_line(f"Config {result.config_state}: {result.config_path}")
             _stdout_line(f"Runtime config {result.runtime_state}: {result.runtime_config_path}")
+            _stdout_line(f"Agent dir ready: {result.agent_dir}")
             _stdout_line(f"Workspace ready: {result.workspace}")
         return 0
 
     print(f"Config {result.config_state}: {result.config_path}")
     print(f"Runtime config {result.runtime_state}: {result.runtime_config_path}")
+    print(f"Agent dir ready: {result.agent_dir}")
     print(f"Workspace ready: {result.workspace}")
     print("Next steps:")
     print(f"1. Edit config: {result.config_path}")

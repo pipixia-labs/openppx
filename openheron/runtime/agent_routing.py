@@ -20,6 +20,17 @@ _DEFAULT_AGENT_ID = "main"
 _DEFAULT_ACCOUNT_ID = "default"
 
 
+def _default_agent_home(agent_id: str) -> Path:
+    return Path.home() / ".openheron" / "agents" / agent_id
+
+
+def _expand_agent_path(raw: Any, *, agent_id: str) -> str:
+    text = _normalize_text(raw)
+    if not text:
+        return ""
+    return text.replace("{agentId}", agent_id).replace("{agent_id}", agent_id)
+
+
 def _normalize_text(value: Any) -> str:
     if value is None:
         return ""
@@ -301,11 +312,14 @@ class AgentRouter:
         return tuple(out)
 
     def _build_runtime_context(self, agent_id: str, merged_agent_cfg: dict[str, Any]) -> AgentRuntimeContext:
-        workspace = Path(_normalize_text(merged_agent_cfg.get("workspace")) or ".").expanduser().resolve(strict=False)
-        agent_dir = Path(
-            _normalize_text(merged_agent_cfg.get("agentDir"))
-            or (workspace / ".openheron" / "agent")
-        ).expanduser().resolve(strict=False)
+        workspace_text = _expand_agent_path(merged_agent_cfg.get("workspace"), agent_id=agent_id)
+        if not workspace_text:
+            workspace_text = str(_default_agent_home(agent_id) / "workspace")
+        agent_dir_text = _expand_agent_path(merged_agent_cfg.get("agentDir"), agent_id=agent_id)
+        if not agent_dir_text:
+            agent_dir_text = str(_default_agent_home(agent_id))
+        workspace = Path(workspace_text).expanduser().resolve(strict=False)
+        agent_dir = Path(agent_dir_text).expanduser().resolve(strict=False)
 
         security = merged_agent_cfg.get("security") if isinstance(merged_agent_cfg.get("security"), dict) else {}
         tools = merged_agent_cfg.get("tools") if isinstance(merged_agent_cfg.get("tools"), dict) else {}

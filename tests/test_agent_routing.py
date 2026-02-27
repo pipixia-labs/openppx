@@ -246,6 +246,33 @@ class AgentRoutingTests(unittest.TestCase):
         self.assertEqual(router.resolve(no_team_msg).agent_id, "main")
         self.assertEqual(router.resolve(no_team_msg).matched_by, "default")
 
+    def test_defaults_support_agent_path_templates(self) -> None:
+        router = AgentRouter(
+            {
+                "agents": {
+                    "defaults": {
+                        "workspace": "~/.openheron/agents/{agentId}/workspace",
+                        "agentDir": "~/.openheron/agents/{agentId}",
+                    },
+                    "list": [
+                        {"id": "main", "default": True},
+                        {"id": "biz"},
+                    ],
+                }
+            }
+        )
+        msg = InboundMessage(
+            channel="whatsapp",
+            sender_id="u1",
+            chat_id="+1888",
+            content="hi",
+            metadata={"accountId": "business", "peer": {"kind": "direct", "id": "+1888"}},
+        )
+        routed = router.resolve(msg)
+        self.assertEqual(routed.agent_id, "main")
+        self.assertIn("/.openheron/agents/main/workspace", str(routed.runtime.workspace_root))
+        self.assertIn("/.openheron/agents/main", str(routed.runtime.agent_dir))
+
 
 if __name__ == "__main__":
     unittest.main()
