@@ -42,14 +42,14 @@
 
 - 多智能体配置模板：`docs/examples/multi-agent.v1.config.json`
 - 迁移文档：`docs/MULTI_AGENT_MIGRATION.md`
+- channel accountId 输入契约：`docs/CHANNEL_ACCOUNTID_CONTRACT.md`
 - 运维诊断说明：`docs/OPERATIONS.md`（multiAgent 章节）
 - 发布前检查清单：`docs/MULTI_AGENT_RELEASE_CHECKLIST.md`
 
 ## 2. 待推进（建议优先级）
 
 1. 更细粒度主体模型扩展：guild/team/roles（当前 v1 未覆盖）。
-2. 通道侧 accountId 标准化约定文档（各 channel 输入契约统一）。
-3. 端到端实机验证脚本（非单元测试），用于上线前快速演练。
+2. 端到端实机验证脚本（非单元测试），用于上线前快速演练。
 
 ## 3. 已验证命令（最近回归）
 

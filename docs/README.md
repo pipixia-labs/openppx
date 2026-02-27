@@ -11,6 +11,7 @@
 - [MULTI_AGENT_MIGRATION.md](./MULTI_AGENT_MIGRATION.md): 单 agent 到多 agent（v1）的迁移步骤与验证清单
 - [MULTI_AGENT_RELEASE_CHECKLIST.md](./MULTI_AGENT_RELEASE_CHECKLIST.md): 多智能体发布前检查清单（routes lint/stats、doctor、权限、通道、auth）
 - [MULTI_AGENT_STATUS.md](./MULTI_AGENT_STATUS.md): 多智能体阶段状态（已完成/待推进/回归命令，含 routes lint）
+- [CHANNEL_ACCOUNTID_CONTRACT.md](./CHANNEL_ACCOUNTID_CONTRACT.md): channel 侧 `accountId` 输入契约（多账号路由场景）
 
 ## 维护建议
 
