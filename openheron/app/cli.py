@@ -36,7 +36,7 @@ from ..core.config import (
     save_config,
     save_runtime_config,
 )
-from ..core.env_utils import env_enabled
+from ..core.env_utils import env_enabled, is_enabled
 from ..core import doctor_rules, install_rules
 from ..core.logging_utils import debug_logging_enabled, emit_debug
 from ..core.gui_mcp import resolve_gui_mcp_from_env, resolve_gui_mcp_from_summaries
@@ -3098,6 +3098,11 @@ def _gateway_debug_log_path() -> Path:
     return _gateway_log_dir() / "gateway.debug.log"
 
 
+def _gateway_multi_meta_path() -> Path:
+    """Return multi-agent gateway runtime metadata path."""
+    return _gateway_log_dir() / "gateway.multi.meta.json"
+
+
 def _read_gateway_pid() -> int | None:
     """Read gateway pid from pid file."""
     path = _gateway_pid_path()
@@ -3144,6 +3149,16 @@ def _gateway_cleanup_runtime_files(*, keep_logs: bool = True) -> None:
                 continue
 
 
+def _gateway_cleanup_multi_runtime_files() -> None:
+    """Remove multi-agent gateway runtime metadata file."""
+    try:
+        _gateway_multi_meta_path().unlink()
+    except FileNotFoundError:
+        return
+    except Exception:
+        return
+
+
 def _write_gateway_runtime_metadata(*, pid: int, channels: str, command: list[str]) -> None:
     """Write gateway background runtime metadata file."""
     payload = {
@@ -3175,8 +3190,232 @@ def _read_gateway_runtime_metadata() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def _cmd_gateway_start(*, channels: str | None, sender_id: str, chat_id: str) -> int:
-    """Start gateway in background and persist runtime state."""
+def _read_gateway_multi_runtime_metadata() -> dict[str, Any]:
+    """Read multi-agent gateway runtime metadata file with safe fallback."""
+    path = _gateway_multi_meta_path()
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _write_gateway_multi_runtime_metadata(
+    *,
+    channels_override: str,
+    agent_entries: list[dict[str, Any]],
+) -> None:
+    """Write multi-agent gateway runtime metadata file."""
+    payload = {
+        "mode": "multi-agent",
+        "channelsOverride": channels_override,
+        "startedAt": dt.datetime.now().astimezone().isoformat(),
+        "cwd": str(Path.cwd()),
+        "python": sys.executable,
+        "platform": sys.platform,
+        "agents": agent_entries,
+    }
+    _gateway_multi_meta_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _normalize_agent_name(value: Any) -> str:
+    """Normalize one agent name for filesystem/process labels."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    out: list[str] = []
+    for ch in raw:
+        if ch.isalnum() or ch in {"-", "_"}:
+            out.append(ch)
+        else:
+            out.append("-")
+    normalized = "".join(out).strip("-")
+    return normalized
+
+
+def _global_config_path() -> Path:
+    """Return global multi-agent config path."""
+    return get_data_dir() / "global_config.json"
+
+
+def _global_enabled_agent_names() -> list[str]:
+    """Read enabled agent names from ~/.openheron/global_config.json."""
+    path = _global_config_path()
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(raw, dict):
+        return []
+
+    agents_raw = raw.get("agents")
+    entries: list[Any] = []
+    if isinstance(agents_raw, list):
+        entries = agents_raw
+    elif isinstance(agents_raw, dict) and isinstance(agents_raw.get("list"), list):
+        entries = agents_raw.get("list", [])
+
+    enabled_names: list[str] = []
+    seen: set[str] = set()
+    for item in entries:
+        enabled = True
+        name = ""
+        if isinstance(item, str):
+            name = _normalize_agent_name(item)
+        elif isinstance(item, dict):
+            name = _normalize_agent_name(item.get("name") or item.get("id"))
+            enabled = is_enabled(item.get("enabled"), default=True)
+        else:
+            continue
+        if not name or not enabled or name in seen:
+            continue
+        seen.add(name)
+        enabled_names.append(name)
+    return enabled_names
+
+
+def _agent_config_path(agent_name: str) -> Path:
+    """Resolve one per-agent config path under ~/.openheron/<agent>/config.json."""
+    return get_data_dir() / agent_name / "config.json"
+
+
+def _agent_gateway_log_paths(agent_name: str, config_path: Path) -> tuple[Path, Path, Path]:
+    """Resolve per-agent gateway stdout/stderr/debug log paths."""
+    _ = agent_name
+    log_dir = config_path.parent / "log"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return (
+        log_dir / "gateway.out.log",
+        log_dir / "gateway.err.log",
+        log_dir / "gateway.debug.log",
+    )
+
+
+def _multi_agent_channel_conflict_warnings(config_paths_by_agent: dict[str, Path]) -> list[str]:
+    """Build best-effort channel conflict warnings for multi-agent startup."""
+    loaded: dict[str, dict[str, Any]] = {}
+    warnings: list[str] = []
+    for agent_name, path in config_paths_by_agent.items():
+        try:
+            loaded[agent_name] = load_config(config_path=path)
+        except Exception as exc:
+            warnings.append(f"agent '{agent_name}' config failed to load ({exc})")
+
+    channel_to_agents: dict[str, list[str]] = {}
+    external_channels: set[str] = {
+        "feishu",
+        "telegram",
+        "whatsapp",
+        "discord",
+        "mochat",
+        "dingtalk",
+        "email",
+        "slack",
+        "qq",
+    }
+    signature_keys: dict[str, tuple[str, ...]] = {
+        "feishu": ("appId", "verificationToken"),
+        "telegram": ("token",),
+        "whatsapp": ("bridgeUrl",),
+        "discord": ("token", "gatewayUrl"),
+        "dingtalk": ("clientId",),
+        "slack": ("botToken", "appToken"),
+        "qq": ("appId",),
+    }
+    signature_to_agents: dict[tuple[str, str, str], list[str]] = {}
+
+    for agent_name, cfg in loaded.items():
+        channels = cfg.get("channels")
+        if not isinstance(channels, dict):
+            continue
+        for channel_name, raw_cfg in channels.items():
+            if not isinstance(raw_cfg, dict):
+                continue
+            if not is_enabled(raw_cfg.get("enabled"), default=False):
+                continue
+            normalized_channel = str(channel_name).strip().lower()
+            if normalized_channel not in external_channels:
+                continue
+            channel_to_agents.setdefault(normalized_channel, []).append(agent_name)
+            for key in signature_keys.get(normalized_channel, ()):
+                value = str(raw_cfg.get(key, "")).strip()
+                if not value:
+                    continue
+                signature_to_agents.setdefault((normalized_channel, key, value), []).append(agent_name)
+
+    for channel_name, agents in sorted(channel_to_agents.items()):
+        unique_agents = sorted(set(agents))
+        if len(unique_agents) <= 1:
+            continue
+        warnings.append(
+            f"channel '{channel_name}' is enabled by multiple agents ({', '.join(unique_agents)}); "
+            "verify webhook/port/account settings manually."
+        )
+
+    for (channel_name, key, _value), agents in sorted(signature_to_agents.items()):
+        unique_agents = sorted(set(agents))
+        if len(unique_agents) <= 1:
+            continue
+        warnings.append(
+            f"channel '{channel_name}' key '{key}' appears duplicated across agents ({', '.join(unique_agents)}); "
+            "verify webhook/port/account settings manually."
+        )
+
+    return warnings
+
+
+def _multi_agent_workspace_warnings(config_paths_by_agent: dict[str, Path]) -> list[str]:
+    """Warn when agent workspace still points to global default workspace path."""
+    warnings: list[str] = []
+    global_workspace = (get_data_dir() / "workspace").expanduser().resolve(strict=False)
+    for agent_name, path in sorted(config_paths_by_agent.items()):
+        try:
+            cfg = load_config(config_path=path)
+        except Exception as exc:
+            warnings.append(f"agent '{agent_name}' workspace check skipped (config load failed: {exc})")
+            continue
+        agent_cfg = cfg.get("agent")
+        if not isinstance(agent_cfg, dict):
+            continue
+        workspace_text = str(agent_cfg.get("workspace", "")).strip()
+        if not workspace_text:
+            continue
+        workspace = Path(workspace_text).expanduser().resolve(strict=False)
+        if workspace == global_workspace:
+            warnings.append(
+                f"agent '{agent_name}' workspace points to global default path ({workspace}); "
+                "set agent.workspace to a per-agent directory."
+            )
+    return warnings
+
+
+def _collect_running_multi_agent_entries(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return running agent entries from one multi-agent runtime metadata payload."""
+    entries = meta.get("agents")
+    if not isinstance(entries, list):
+        return []
+    running: list[dict[str, Any]] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        pid_raw = item.get("pid")
+        try:
+            pid = int(pid_raw)
+        except Exception:
+            continue
+        if pid <= 0:
+            continue
+        if _is_pid_running(pid):
+            running.append(item)
+    return running
+
+
+def _cmd_gateway_start_single(*, channels: str | None, sender_id: str, chat_id: str) -> int:
+    """Start one gateway background process and persist runtime state."""
     existing = _read_gateway_pid()
     if existing and _is_pid_running(existing):
         _stdout_line(f"Gateway service already running (pid={existing}).")
@@ -3187,10 +3426,13 @@ def _cmd_gateway_start(*, channels: str | None, sender_id: str, chat_id: str) ->
         _gateway_cleanup_runtime_files()
 
     channels_value = ",".join(parse_enabled_channels(channels))
+    config_path = get_config_path()
     cmd = [
         sys.executable,
         "-m",
         "openheron.app.cli",
+        "--config-path",
+        str(config_path),
         "gateway",
         "--channels",
         channels_value,
@@ -3227,8 +3469,155 @@ def _cmd_gateway_start(*, channels: str | None, sender_id: str, chat_id: str) ->
     return 0
 
 
-def _cmd_gateway_stop(*, timeout_seconds: float = 8.0) -> int:
-    """Stop gateway background process by pid file."""
+def _cmd_gateway_start_multi(*, channels: str | None, sender_id: str, chat_id: str) -> int:
+    """Start one gateway background process per enabled agent config."""
+    channels_override = ",".join(parse_enabled_channels(channels)) if channels is not None else ""
+    enabled_agents = _global_enabled_agent_names()
+    if not enabled_agents:
+        _stdout_line("Gateway multi-agent start skipped: no enabled agents in global_config.json.")
+        return 1
+
+    config_paths: dict[str, Path] = {}
+    for agent_name in enabled_agents:
+        config_path = _agent_config_path(agent_name)
+        if not config_path.exists():
+            _stdout_line(
+                f"[warn] agent '{agent_name}' missing config: {config_path}. "
+                "Skipping this agent."
+            )
+            continue
+        config_paths[agent_name] = config_path
+    if not config_paths:
+        _stdout_line("Gateway multi-agent start failed: no valid agent config file found.")
+        return 1
+
+    for warning in _multi_agent_channel_conflict_warnings(config_paths):
+        _stdout_line(f"[warn] {warning}")
+    for warning in _multi_agent_workspace_warnings(config_paths):
+        _stdout_line(f"[warn] {warning}")
+
+    started_entries: list[dict[str, Any]] = []
+    failed_agents: list[str] = []
+    for agent_name, config_path in config_paths.items():
+        cmd = [
+            sys.executable,
+            "-m",
+            "openheron.app.cli",
+            "--config-path",
+            str(config_path),
+            "gateway",
+            "--sender-id",
+            sender_id,
+            "--chat-id",
+            chat_id,
+        ]
+        if channels_override:
+            cmd.extend(["--channels", channels_override])
+        stdout_path, stderr_path, debug_path = _agent_gateway_log_paths(agent_name, config_path)
+        env = dict(os.environ)
+        env["OPENHERON_GATEWAY_BG"] = "1"
+        env["OPENHERON_DEBUG_LOG_PATH"] = str(debug_path)
+
+        with stdout_path.open("a", encoding="utf-8") as stdout_fh, stderr_path.open("a", encoding="utf-8") as stderr_fh:
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=stdout_fh,
+                    stderr=stderr_fh,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    env=env,
+                )
+            except Exception as exc:
+                _stdout_line(f"[warn] agent '{agent_name}' start failed: {exc}")
+                failed_agents.append(agent_name)
+                continue
+
+        started_entries.append(
+            {
+                "agent": agent_name,
+                "pid": proc.pid,
+                "configPath": str(config_path),
+                "startedAt": dt.datetime.now().astimezone().isoformat(),
+                "command": cmd,
+                "logs": {
+                    "stdout": str(stdout_path),
+                    "stderr": str(stderr_path),
+                    "debug": str(debug_path),
+                },
+            }
+        )
+        _stdout_line(f"Gateway agent started: agent={agent_name}, pid={proc.pid}")
+
+    if not started_entries:
+        _stdout_line("Gateway multi-agent start failed: no agent process started.")
+        return 1
+
+    _write_gateway_multi_runtime_metadata(
+        channels_override=channels_override,
+        agent_entries=started_entries,
+    )
+    _stdout_line(f"Gateway multi-agent service started: agents={len(started_entries)}")
+    if failed_agents:
+        _stdout_line(f"[warn] Failed agents: {', '.join(sorted(failed_agents))}")
+        return 1
+    return 0
+
+
+def _cmd_gateway_start(*, channels: str | None, sender_id: str, chat_id: str) -> int:
+    """Start gateway background process (single or multi-agent)."""
+    multi_meta = _read_gateway_multi_runtime_metadata()
+    running_multi = _collect_running_multi_agent_entries(multi_meta)
+    if running_multi:
+        names = sorted({str(item.get("agent", "")) for item in running_multi if str(item.get("agent", "")).strip()})
+        _stdout_line(
+            "Gateway service already running in multi-agent mode: "
+            + (", ".join(names) if names else f"{len(running_multi)} process(es)")
+        )
+        _stdout_line("Use `openheron gateway status` or `openheron gateway restart`.")
+        return 0
+    if multi_meta and not running_multi:
+        _gateway_cleanup_multi_runtime_files()
+
+    existing_single = _read_gateway_pid()
+    if existing_single and _is_pid_running(existing_single):
+        _stdout_line(f"Gateway service already running (pid={existing_single}).")
+        _stdout_line("Use `openheron gateway status` or `openheron gateway restart`.")
+        return 0
+    if existing_single and not _is_pid_running(existing_single):
+        _gateway_cleanup_runtime_files()
+
+    if _global_enabled_agent_names():
+        return _cmd_gateway_start_multi(channels=channels, sender_id=sender_id, chat_id=chat_id)
+    return _cmd_gateway_start_single(channels=channels, sender_id=sender_id, chat_id=chat_id)
+
+
+def _stop_gateway_pid(pid: int, *, timeout_seconds: float) -> tuple[bool, bool]:
+    """Stop one pid. Returns (stopped, forced)."""
+    if pid <= 0:
+        return True, False
+    if not _is_pid_running(pid):
+        return True, False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        return False, False
+
+    deadline = time.time() + max(1.0, timeout_seconds)
+    while time.time() < deadline:
+        if not _is_pid_running(pid):
+            return True, False
+        time.sleep(0.15)
+
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except Exception:
+        return False, False
+    return (not _is_pid_running(pid)), True
+
+
+def _cmd_gateway_stop_single(*, timeout_seconds: float = 8.0) -> int:
+    """Stop one gateway background process by pid file."""
     pid = _read_gateway_pid()
     if not pid:
         _stdout_line("Gateway service is not running (no pid file).")
@@ -3263,8 +3652,68 @@ def _cmd_gateway_stop(*, timeout_seconds: float = 8.0) -> int:
     return 0
 
 
-def _cmd_gateway_status(*, output_json: bool) -> int:
-    """Show gateway background process status."""
+def _cmd_gateway_stop_multi(*, timeout_seconds: float = 8.0) -> int:
+    """Stop all gateway background processes tracked by multi-agent metadata."""
+    meta = _read_gateway_multi_runtime_metadata()
+    entries = meta.get("agents")
+    if not isinstance(entries, list) or not entries:
+        _gateway_cleanup_multi_runtime_files()
+        _stdout_line("Gateway multi-agent service is not running.")
+        return 0
+
+    failures: list[str] = []
+    forced_count = 0
+    stopped_count = 0
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        agent = str(item.get("agent", "unknown")).strip() or "unknown"
+        try:
+            pid = int(item.get("pid", 0))
+        except Exception:
+            pid = 0
+        if pid <= 0:
+            continue
+        stopped, forced = _stop_gateway_pid(pid, timeout_seconds=timeout_seconds)
+        if not stopped:
+            failures.append(f"{agent}(pid={pid})")
+            continue
+        if forced:
+            forced_count += 1
+        stopped_count += 1
+
+    still_running = _collect_running_multi_agent_entries(meta)
+    if still_running:
+        _write_gateway_multi_runtime_metadata(
+            channels_override=str(meta.get("channelsOverride", "")).strip(),
+            agent_entries=still_running,
+        )
+    else:
+        _gateway_cleanup_multi_runtime_files()
+
+    if failures or still_running:
+        if failures:
+            _stdout_line(f"Gateway multi-agent stop failed for: {', '.join(failures)}")
+        if still_running:
+            names = [str(item.get("agent", "unknown")) for item in still_running]
+            _stdout_line(f"Gateway multi-agent still running: {', '.join(names)}")
+        return 1
+
+    suffix = " (forced)" if forced_count > 0 else ""
+    _stdout_line(f"Gateway multi-agent service stopped: agents={stopped_count}{suffix}.")
+    return 0
+
+
+def _cmd_gateway_stop(*, timeout_seconds: float = 8.0) -> int:
+    """Stop gateway background process(es)."""
+    meta = _read_gateway_multi_runtime_metadata()
+    if isinstance(meta.get("agents"), list) and meta.get("agents"):
+        return _cmd_gateway_stop_multi(timeout_seconds=timeout_seconds)
+    return _cmd_gateway_stop_single(timeout_seconds=timeout_seconds)
+
+
+def _cmd_gateway_status_single(*, output_json: bool) -> int:
+    """Show single-process gateway background status."""
     pid = _read_gateway_pid()
     running = bool(pid and _is_pid_running(pid))
     if pid and not running:
@@ -3305,8 +3754,71 @@ def _cmd_gateway_status(*, output_json: bool) -> int:
     return 0
 
 
+def _cmd_gateway_status_multi(*, output_json: bool) -> int:
+    """Show multi-agent gateway background status."""
+    meta = _read_gateway_multi_runtime_metadata()
+    entries = meta.get("agents")
+    if not isinstance(entries, list):
+        entries = []
+    rows: list[dict[str, Any]] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        try:
+            pid = int(row.get("pid", 0))
+        except Exception:
+            pid = 0
+        row["running"] = bool(pid and _is_pid_running(pid))
+        rows.append(row)
+    running_rows = [row for row in rows if bool(row.get("running"))]
+
+    payload: dict[str, Any] = {
+        "mode": "multi-agent",
+        "running": bool(running_rows),
+        "runningCount": len(running_rows),
+        "agentCount": len(rows),
+        "logsDir": str(_gateway_log_dir()),
+        "meta": {
+            "channelsOverride": str(meta.get("channelsOverride", "")).strip(),
+            "startedAt": str(meta.get("startedAt", "")).strip(),
+        },
+        "agents": rows,
+    }
+    if output_json:
+        _stdout_line(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if not rows:
+        _stdout_line("Gateway multi-agent service status: stopped")
+        _stdout_line(f"Logs directory: {payload['logsDir']}")
+        return 0
+
+    _stdout_line(
+        "Gateway multi-agent service status: "
+        f"running={payload['runningCount']}/{payload['agentCount']}, logs={payload['logsDir']}"
+    )
+    for row in rows:
+        agent = str(row.get("agent", "unknown"))
+        pid = row.get("pid")
+        state = "running" if row.get("running") else "stopped"
+        _stdout_line(f"- {agent}: {state}, pid={pid}")
+    channels_override = str(meta.get("channelsOverride", "")).strip()
+    if channels_override:
+        _stdout_line(f"Channels override: {channels_override}")
+    return 0
+
+
+def _cmd_gateway_status(*, output_json: bool) -> int:
+    """Show gateway background status."""
+    meta = _read_gateway_multi_runtime_metadata()
+    if isinstance(meta.get("agents"), list) and meta.get("agents"):
+        return _cmd_gateway_status_multi(output_json=output_json)
+    return _cmd_gateway_status_single(output_json=output_json)
+
+
 def _cmd_gateway_restart(*, channels: str | None, sender_id: str, chat_id: str) -> int:
-    """Restart gateway background process."""
+    """Restart gateway background process(es)."""
     stop_code = _cmd_gateway_stop()
     if stop_code != 0:
         return stop_code
@@ -3961,6 +4473,11 @@ def main(argv: list[str] | None = None) -> None:
         default="",
         help="Session id for ADK session mode (auto-generated if omitted).",
     )
+    parser.add_argument(
+        "--config-path",
+        default="",
+        help=argparse.SUPPRESS,
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=False)
     install_parser = subparsers.add_parser(
@@ -4242,7 +4759,11 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     if args.command != "install":
-        bootstrap_env_from_config()
+        config_path = str(getattr(args, "config_path", "")).strip()
+        if config_path:
+            bootstrap_env_from_config(Path(config_path).expanduser())
+        else:
+            bootstrap_env_from_config()
 
     # Global `-m/--message` is single-turn mode only when no subcommand is used.
     if args.command is None and args.message:

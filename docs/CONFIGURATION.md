@@ -46,7 +46,7 @@ Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true
 }
 ```
 
-默认由 `openheron install --init-only` 生成的 `runtime.json` 已包含常见运行时开关的默认值（如 memory/compaction/mcp probe/debug chars 等），可直接在 `env` 段内修改。
+默认生成的 `runtime.json` 已包含常见运行时开关的默认值（如 memory/compaction/mcp probe/debug chars 等），可直接在 `env` 段内修改。
 
 兼容说明：历史版本中写在 `config.json.env` 的内容仍可读取；后续保存配置时会迁移到 `runtime.json`。
 

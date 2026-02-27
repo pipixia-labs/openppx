@@ -23,23 +23,14 @@ cd openheron_root
 python3.14 -m venv .venv
 source .venv/bin/activate
 pip install .
-openheron install
+openheron doctor --fix
 python -m openheron.cli -m "Describe what you can do"
 ```
-
-`openheron install` now includes:
-
-- config/workspace initialization
-- optional interactive provider/channel setup
-- guided missing-field review for enabled provider/channels (interactive mode)
-- diagnostics (`openheron doctor`)
-- install summary + next command suggestions
 
 Command discovery (`--help` first):
 
 ```bash
 openheron --help
-openheron install --help
 openheron gateway --help
 openheron gateway-service --help
 openheron gateway-service install --help
@@ -49,20 +40,11 @@ openheron cron --help
 openheron token --help
 ```
 
-Install smoke script:
+Smoke script:
 
 ```bash
 scripts/install_smoke.sh
 scripts/install_smoke.sh --with-gateway
-```
-
-Install examples:
-
-```bash
-openheron install
-openheron install --init-only
-openheron install --non-interactive --accept-risk
-openheron install --install-daemon --daemon-channels local,feishu
 ```
 
 Gateway and gateway-service:
@@ -88,33 +70,7 @@ Background runtime/log files are stored under:
 - `~/.openheron/log/gateway.debug.log`
 - `~/.openheron/token_usage.db` (LLM token usage events)
 
-Install output highlights:
-
-- `Install summary: provider=..., channels=...`: active provider/channel selection
-- `Install summary: missing=[...]`: key fields still missing for enabled components
-- `Install summary: fixes=[...]`: direct config fix hints (`~/.openheron/config.json`)
-- `Install summary: next[1]/next[2]`: recommended follow-up commands
-- `Install prereq: ...`: local prerequisite checks (`.venv`, `adk`, optional `questionary/rich`)
-  (`doctor` text mode renders them as `Install prereq [ok]` / `Install prereq [warn]`)
-
-Typical `missing` entries include provider API key plus channel credentials
-(feishu/telegram/discord/dingtalk/slack/whatsapp/mochat/email/qq).  
-See [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) for the full field-to-fix mapping.
-
-If you only want file initialization without checks, run:
-
-```bash
-openheron install --init-only
-```
-
-`openheron install --init-only` initializes:
-
-- `~/.openheron/config.json`
-- `~/.openheron/runtime.json`
-- `~/.openheron/workspace`
-
-Use `openheron install` for the full guided setup (checks + summary + suggestions),
-and use `openheron install --init-only` when you only want minimal file initialization.
+首次启动建议先跑 `openheron doctor --fix`，它会补齐最小可运行配置并给出缺失项提示。
 
 ## Development
 
@@ -238,10 +194,6 @@ Detailed docs are in [`docs/`](./docs/):
 Recommended reading order: start with `OPERATIONS.md` (runtime and commands),
 then `CONFIGURATION.md` (settings and env mapping), then topic-specific docs as needed.
 
-Install troubleshooting tips are in `docs/OPERATIONS.md` under
-`install 常见问题`.
-When `openheron install` reports missing setup, prioritize the
-`Install summary: fixes=[...]` hints first.
 If you consume doctor results programmatically, use
 `openheron doctor --fix --json` and read
 `fix.reasonCodes` / `fix.byRule` (see `docs/OPERATIONS.md` for examples).

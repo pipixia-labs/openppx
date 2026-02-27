@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from google.adk.sessions import DatabaseSessionService
+from ..core.config import get_data_dir
 
 
 @dataclass(slots=True)
@@ -18,7 +19,7 @@ class SessionConfig:
 
 
 def _default_sqlite_db_url() -> str:
-    db_path = Path.home() / ".openheron" / "database" / "sessions.db"
+    db_path = get_data_dir() / "database" / "sessions.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite+aiosqlite:///{db_path}"
 

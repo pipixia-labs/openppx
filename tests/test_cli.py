@@ -208,6 +208,17 @@ class CLITests(unittest.TestCase):
                 mocked_status.assert_called_once_with(output_json=True)
                 mocked_bootstrap.assert_called_once()
 
+    def test_main_bootstrap_uses_explicit_config_path_when_provided(self) -> None:
+        from openheron import cli
+
+        explicit = Path("/tmp/openheron/agent_a/config.json")
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_doctor", return_value=0):
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["--config-path", str(explicit), "doctor"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once_with(explicit)
+
     def test_doctor_mode_bootstraps_config(self) -> None:
         from openheron import cli
 
@@ -2558,10 +2569,11 @@ class CLITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp) / ".openheron"
             with patch.object(cli, "get_data_dir", return_value=data_dir):
-                with patch.object(cli, "parse_enabled_channels", return_value=["local", "feishu"]):
-                    with patch("subprocess.Popen", return_value=fake_proc):
-                        with patch("builtins.print"):
-                            code = cli._cmd_gateway_start(channels="local,feishu", sender_id="u1", chat_id="c1")
+                with patch.object(cli, "get_config_path", return_value=data_dir / "config.json"):
+                    with patch.object(cli, "parse_enabled_channels", return_value=["local", "feishu"]):
+                        with patch("subprocess.Popen", return_value=fake_proc):
+                            with patch("builtins.print"):
+                                code = cli._cmd_gateway_start(channels="local,feishu", sender_id="u1", chat_id="c1")
 
             self.assertEqual(code, 0)
             pid_path = data_dir / "log" / "gateway.pid"
@@ -2572,6 +2584,104 @@ class CLITests(unittest.TestCase):
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             self.assertEqual(meta["pid"], 34567)
             self.assertEqual(meta["channels"], "local,feishu")
+
+    def test_cmd_gateway_start_uses_global_config_for_multi_agent(self) -> None:
+        from openheron import cli
+
+        fake_proc_main = pytypes.SimpleNamespace(pid=10001)
+        fake_proc_ops = pytypes.SimpleNamespace(pid=10002)
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openheron"
+            agent_main_cfg = data_dir / "main" / "config.json"
+            agent_ops_cfg = data_dir / "ops" / "config.json"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            cli.save_config(cli.default_config(), config_path=agent_main_cfg)
+            cli.save_config(cli.default_config(), config_path=agent_ops_cfg)
+            (data_dir / "global_config.json").write_text(
+                json.dumps(
+                    {
+                        "agents": [
+                            {"name": "main", "enabled": True},
+                            {"name": "ops", "enabled": True},
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("subprocess.Popen", side_effect=[fake_proc_main, fake_proc_ops]):
+                    with patch("builtins.print"):
+                        code = cli._cmd_gateway_start(channels=None, sender_id="u1", chat_id="c1")
+
+            self.assertEqual(code, 0)
+            multi_meta_path = data_dir / "log" / "gateway.multi.meta.json"
+            self.assertTrue(multi_meta_path.exists())
+            payload = json.loads(multi_meta_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload.get("mode"), "multi-agent")
+            self.assertEqual(len(payload.get("agents", [])), 2)
+            agent_names = sorted(str(item.get("agent", "")) for item in payload.get("agents", []))
+            self.assertEqual(agent_names, ["main", "ops"])
+
+    def test_cmd_gateway_status_prefers_multi_agent_metadata(self) -> None:
+        from openheron import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openheron"
+            log_dir = data_dir / "log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "gateway.multi.meta.json").write_text(
+                json.dumps(
+                    {
+                        "mode": "multi-agent",
+                        "agents": [
+                            {"agent": "main", "pid": 22334},
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch.object(cli, "_is_pid_running", return_value=True):
+                    with patch("builtins.print") as mocked_print:
+                        code = cli._cmd_gateway_status(output_json=True)
+
+        self.assertEqual(code, 0)
+        self.assertTrue(mocked_print.called)
+        payload = json.loads(mocked_print.call_args[0][0])
+        self.assertEqual(payload.get("mode"), "multi-agent")
+        self.assertEqual(payload.get("runningCount"), 1)
+
+    def test_cmd_gateway_start_warns_when_agent_workspace_is_global_default(self) -> None:
+        from openheron import cli
+
+        fake_proc = pytypes.SimpleNamespace(pid=19001)
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openheron"
+            agent_cfg = data_dir / "agent_name_1" / "config.json"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            cfg = cli.default_config()
+            cfg["agent"]["workspace"] = str(data_dir / "workspace")
+            cli.save_config(cfg, config_path=agent_cfg)
+            (data_dir / "global_config.json").write_text(
+                json.dumps({"agents": [{"name": "agent_name_1", "enabled": True}]}, ensure_ascii=False, indent=2)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("subprocess.Popen", return_value=fake_proc):
+                    with patch("builtins.print") as mocked_print:
+                        code = cli._cmd_gateway_start(channels=None, sender_id="u1", chat_id="c1")
+
+        self.assertEqual(code, 0)
+        lines = [str(call.args[0]) for call in mocked_print.call_args_list if call.args]
+        self.assertTrue(any("workspace points to global default path" in line for line in lines))
 
     def test_cmd_gateway_stop_cleans_stale_pid(self) -> None:
         from openheron import cli

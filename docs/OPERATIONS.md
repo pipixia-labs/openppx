@@ -9,18 +9,15 @@ pip install -e .
 
 ## 初始化（推荐）
 
+安装向导模块暂时不对外使用。请改用 `doctor` + 手动配置：
+
 ```bash
-openheron install
+# 初始化/修复最小可运行配置
+openheron doctor --fix
+
+# 查看完整诊断结果
+openheron doctor
 ```
-
-`openheron install` 会执行：
-
-- 初始化配置与工作区
-- 交互式选择 provider/channel（TTY 模式）
-- 交互式缺失字段复核与补填（仅交互模式）
-- 运行 `openheron doctor`
-- 输出安装摘要与下一步命令
-- 可选一步安装并启用 gateway daemon（`--install-daemon`）
 
 ## Gateway 后台服务（进程级）
 
@@ -45,29 +42,7 @@ openheron gateway stop
 - `~/.openheron/log/gateway.err.log`
 - `~/.openheron/log/gateway.debug.log`
 
-常用安装命令变体：
-
-```bash
-# 标准交互式安装（推荐）
-openheron install
-
-# 仅初始化配置与工作区
-openheron install --init-only
-
-# 非交互安装（CI/远程终端常用，需要显式风险确认）
-openheron install --non-interactive --accept-risk
-
-# 重置后重新安装引导
-openheron install --force
-
-# 安装并启用用户级 gateway daemon（launchd/systemd user）
-openheron install --install-daemon
-
-# 安装 daemon 且显式指定 daemon channels
-openheron install --install-daemon --daemon-channels local,feishu
-```
-
-一键 smoke（install -> doctor，可选 gateway 探活）：
+一键 smoke（doctor，可选 gateway 探活）：
 
 ```bash
 scripts/install_smoke.sh
@@ -90,23 +65,7 @@ openheron gateway-service status
 openheron gateway-service status --json
 ```
 
-### install 输出字段说明
-
-安装结束后，会先看到 `Install summary`，再看到 `Install prereq`。可按下面理解：
-
-- `Install summary: provider=..., channels=...`  
-  当前启用的模型 provider 与 channel 列表。
-- `Install summary: missing=[...]`  
-  当前启用配置里，网关启动前建议补齐的关键字段。
-- `Install summary: fixes=[...]`  
-  对应 `missing` 的直接修复建议（告诉你去 `~/.openheron/config.json` 填什么）。
-- `Install summary: next[1]` / `next[2]`  
-  推荐下一步命令，一般是先 `openheron doctor` 再启动 `openheron gateway ...`。
-- `Install prereq: ...`  
-  本地环境前置检查（如 `.venv`、`adk`、可选的 `questionary/rich`）。
-  在 `doctor` 文本模式下会显示为 `Install prereq [ok]: ...` 或 `Install prereq [warn]: ...`。
-
-常见 `missing` 字段与修复路径（按目前实现）：
+### 常见缺失字段与修复路径
 
 - provider: `<provider>.apiKey`  
   填 `providers.<provider>.apiKey`。
@@ -120,41 +79,21 @@ openheron gateway-service status --json
 - email: `channels.email.consentGranted` / `channels.email.smtpHost` / `channels.email.smtpUsername` / `channels.email.smtpPassword`
 - qq: `channels.qq.appId` / `channels.qq.secret`
 
-注意：如果你在 install 交互里回车跳过了这些项，系统仍会继续安装，但 `doctor`/`gateway` 可能会提示缺失，这属于预期行为。
-
 ### 安装/修复规则单源说明（开发者）
 
-当前 install 与 doctor 的核心配置修复规则已尽量走“单源表驱动”：
+当前 `doctor --fix` 的核心配置修复规则已尽量走“单源表驱动”：
 
 - channel env 回填规则：`CHANNEL_ENV_BACKFILL_MAPPINGS` -> `DOCTOR_CHANNEL_ENV_BACKFILL_RULES`。
-- channel install summary 缺失项：由 `DOCTOR_CHANNEL_ENV_BACKFILL_RULES` 派生（并补 bool 规则，如 email consent）。
-- provider install summary 与 doctor env 回填：由 `INSTALL_PROVIDER_SUMMARY_REQUIREMENTS` 驱动。
-- install `fixes=[...]`：走统一渲染函数，不再在主流程内分支拼接。
+- provider doctor env 回填：由 `INSTALL_PROVIDER_SUMMARY_REQUIREMENTS` 驱动。
 
 当前相关代码位置：
 
 - `openheron/doctor_rules.py`：doctor/install 共用的基础规则表与 doctor backfill 元数据。
-- `openheron/install_rules.py`：install summary/prompt 规则模型与渲染、缺失项聚合逻辑。
 - `openheron/onboarding_adapters.py`：provider/channel onboarding adapter 协议、默认 adapter 与注册表。
 - `openheron/cli.py`：命令编排层，调用上述模块执行规则与 adapter。
 
 建议后续扩展字段时，优先改规则表，再补测试，不要直接在流程函数里新增硬编码 if/else。
-
-如果只想初始化文件，不跑安装流程：
-
-```bash
-openheron install --init-only
-```
-
-初始化入口统一为 `openheron install --init-only`。
-
-初始化后会生成：
-
-- `~/.openheron/config.json`
-- `~/.openheron/runtime.json`（高级运行时 env 调优配置）
-- `~/.openheron/workspace`
-
-### install 常见问题
+### 常见问题
 
 - `Missing ... API key`  
   打开 `~/.openheron/config.json`，给启用 provider 填 `apiKey`，再运行 `openheron doctor`。
@@ -162,13 +101,10 @@ openheron install --init-only
 
 - `channels....` 凭证字段缺失（例如 feishu/telegram/discord/dingtalk/slack/whatsapp/mochat/email/qq）  
   在 `~/.openheron/config.json` 的 `channels` 段补齐对应字段，再运行 `openheron doctor`。
-  如果不确定具体字段，直接看 install 输出里的 `Install summary: fixes=[...]`。
+  如果不确定具体字段，直接看 `openheron doctor --json` 的缺失项。
 
 - `MCP server ... health check failed`  
   先确认 MCP 服务进程可达，再用 `openheron doctor --json` 查看 `mcp.health` 明细错误。
-
-- 想重新走安装向导  
-  执行 `openheron install --force`（会重置配置后重新引导）。
 
 - provider/channel 全部被关闭导致无法运行  
   执行 `openheron doctor --fix`，会自动启用默认 provider 与 `channels.local`（最小可运行修复）。

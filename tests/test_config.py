@@ -12,6 +12,9 @@ from openheron.core.config import (
     apply_config_to_env,
     bootstrap_env_from_config,
     default_config,
+    get_config_path,
+    get_data_dir,
+    get_runtime_config_path,
     load_runtime_config,
     load_config,
     save_config,
@@ -63,6 +66,43 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["security"]["execAllowlist"], [])
         self.assertEqual(cfg["tools"]["mcpServers"], {})
         self.assertNotIn("env", cfg)
+
+    def test_path_helpers_follow_explicit_config_env_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "agent_1" / "config.json"
+            runtime_path = config_path.with_name("runtime.json")
+            os.environ["OPENHERON_CONFIG_FILE"] = str(config_path)
+            os.environ.pop("OPENHERON_RUNTIME_CONFIG_FILE", None)
+            os.environ.pop("OPENHERON_DATA_DIR", None)
+
+            self.assertEqual(get_config_path(), config_path)
+            self.assertEqual(get_runtime_config_path(), runtime_path)
+            self.assertEqual(get_data_dir(), Path.home() / ".openheron")
+
+    def test_bootstrap_sets_process_config_runtime_data_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "agent_a" / "config.json"
+            cfg = default_config()
+            save_config(cfg, config_path)
+            os.environ.pop("OPENHERON_CONFIG_FILE", None)
+            os.environ.pop("OPENHERON_RUNTIME_CONFIG_FILE", None)
+            os.environ.pop("OPENHERON_DATA_DIR", None)
+
+            loaded = bootstrap_env_from_config(config_path)
+
+        self.assertIsNotNone(loaded)
+        self.assertEqual(
+            Path(os.environ["OPENHERON_CONFIG_FILE"]).resolve(),
+            config_path.resolve(),
+        )
+        self.assertEqual(
+            Path(os.environ["OPENHERON_RUNTIME_CONFIG_FILE"]).resolve(),
+            config_path.with_name("runtime.json").resolve(),
+        )
+        self.assertEqual(
+            Path(os.environ["OPENHERON_DATA_DIR"]).resolve(),
+            config_path.parent.resolve(),
+        )
 
     def test_load_runtime_missing_returns_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

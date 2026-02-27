@@ -117,20 +117,35 @@ _CHANNEL_DEFAULT_VALUE_FIELDS: tuple[tuple[str, str, str, Any], ...] = (
 )
 
 _EXTENSIBLE_MAP_KEYS: frozenset[str] = frozenset({"env"})
+_CONFIG_PATH_ENV = "OPENHERON_CONFIG_FILE"
+_RUNTIME_CONFIG_PATH_ENV = "OPENHERON_RUNTIME_CONFIG_FILE"
+_DATA_DIR_ENV = "OPENHERON_DATA_DIR"
 
 
 def get_data_dir() -> Path:
     """Return the data directory used by openheron."""
+    explicit = os.getenv(_DATA_DIR_ENV, "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
     return Path.home() / ".openheron"
 
 
 def get_config_path() -> Path:
     """Return the default config file path."""
+    explicit = os.getenv(_CONFIG_PATH_ENV, "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
     return get_data_dir() / "config.json"
 
 
 def get_runtime_config_path() -> Path:
     """Return the default runtime config path for advanced env overrides."""
+    explicit = os.getenv(_RUNTIME_CONFIG_PATH_ENV, "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    config_explicit = os.getenv(_CONFIG_PATH_ENV, "").strip()
+    if config_explicit:
+        return Path(config_explicit).expanduser().with_name("runtime.json")
     return get_data_dir() / "runtime.json"
 
 
@@ -422,6 +437,16 @@ def load_runtime_config(runtime_config_path: Path | None = None) -> dict[str, An
 def _runtime_config_path_for_config_path(config_path: Path) -> Path:
     """Resolve sibling runtime config path for one config file path."""
     return config_path.with_name("runtime.json")
+
+
+def _activate_config_context(config_path: Path) -> None:
+    """Bind process-level config/runtime/data root for one selected config file."""
+    resolved = config_path.expanduser().resolve(strict=False)
+    runtime_path = _runtime_config_path_for_config_path(resolved).resolve(strict=False)
+    data_dir = resolved.parent.resolve(strict=False)
+    os.environ[_CONFIG_PATH_ENV] = str(resolved)
+    os.environ[_RUNTIME_CONFIG_PATH_ENV] = str(runtime_path)
+    os.environ[_DATA_DIR_ENV] = str(data_dir)
 
 
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> Path:
@@ -840,6 +865,7 @@ def bootstrap_env_from_config(config_path: Path | None = None) -> dict[str, Any]
     if not isinstance(raw, dict) or not raw:
         return None
 
+    _activate_config_context(path)
     cfg = normalize_config(raw)
     runtime_path = _runtime_config_path_for_config_path(path)
     runtime_overrides = _env_overrides(load_runtime_config(runtime_config_path=runtime_path))

@@ -127,12 +127,13 @@
 ### 6.1 推荐初始化
 
 ```bash
-openheron install --init-only
+openheron doctor --fix
 ```
 
 会生成：
 
 - `~/.openheron/config.json`
+- `~/.openheron/runtime.json`
 - `~/.openheron/workspace`
 
 ### 6.2 常用运行方式
