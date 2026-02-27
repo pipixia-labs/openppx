@@ -24,12 +24,13 @@ openheron doctor --verbose
 检查点：
 
 1. `routes lint --json` 返回 `ok=true`，且 `summary.conflicts` 为空。
-2. `routes stats --json` 返回 `ok=true`，并且 `stats.totalMessagesInWindow` 与预期流量量级一致。
-3. `routes stats --json --window-hours 24` 的窗口统计与近期流量预期一致。
-4. `doctor --json` 的 `issues` 为空。
-5. `doctor --json` 的 `multiAgent.issues` 为空。
-6. `doctor --json` 的 `multiAgent.summary.conflicts` 为空。
-7. `doctor --json` 的 `multiAgent.routePreview` 中 `sessionIdExample` 与预期一致。
+2. 若使用 `guild/team/roles`，确认 `routes lint --json` 的 `scopeSupportedChannels` 覆盖目标 channel。
+3. `routes stats --json` 返回 `ok=true`，并且 `stats.totalMessagesInWindow` 与预期流量量级一致。
+4. `routes stats --json --window-hours 24` 的窗口统计与近期流量预期一致。
+5. `doctor --json` 的 `issues` 为空。
+6. `doctor --json` 的 `multiAgent.issues` 为空。
+7. `doctor --json` 的 `multiAgent.summary.conflicts` 为空。
+8. `doctor --json` 的 `multiAgent.routePreview` 中 `sessionIdExample` 与预期一致。
 
 可选一键脚本（本节命令聚合）：
 
