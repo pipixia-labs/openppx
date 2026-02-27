@@ -1744,19 +1744,23 @@ class CLITests(unittest.TestCase):
         from openheron import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp)
-            snapshot_path = workspace / ".openheron" / "heartbeat_status.json"
-            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot = {"running": True, "recent_reason_counts": {"exec": 1}}
-            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
-
-            fake_registry = pytypes.SimpleNamespace(workspace=workspace, list_skills=lambda: [])
+            fake_registry = pytypes.SimpleNamespace(workspace=Path(tmp), list_skills=lambda: [])
             fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
             fake_security_policy = pytypes.SimpleNamespace(
                 restrict_to_workspace=False,
                 allow_exec=True,
                 allow_network=True,
                 exec_allowlist=(),
+            )
+            fake_runtime = pytypes.SimpleNamespace(
+                agent_id="main",
+                agent_dir=Path(tmp) / "agents" / "main",
+                workspace_root=Path(tmp) / "agents" / "main" / "workspace",
+            )
+            fake_router = pytypes.SimpleNamespace(
+                runtime_for_agent=Mock(return_value=fake_runtime),
+                all_agent_runtimes=Mock(return_value={"main": fake_runtime}),
             )
             with patch.dict(
                 os.environ,
@@ -1776,13 +1780,18 @@ class CLITests(unittest.TestCase):
                                         with patch.object(cli, "load_security_policy", return_value=fake_security_policy):
                                             with patch.object(cli, "build_mcp_toolsets_from_env", return_value=[]):
                                                 with patch.object(cli.logger, "debug"):
-                                                    with patch("builtins.print") as mocked_print:
-                                                        code = cli._cmd_doctor(output_json=True, verbose=False)
+                                                    with patch.object(cli, "AgentRouter", return_value=fake_router):
+                                                        with patch.object(cli, "read_heartbeat_status_snapshot", return_value=snapshot):
+                                                            with patch.object(cli, "read_route_stats_snapshot", return_value=None):
+                                                                with patch("builtins.print") as mocked_print:
+                                                                    code = cli._cmd_doctor(output_json=True, verbose=False)
 
         self.assertEqual(code, 0)
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertTrue(payload["heartbeat"]["snapshot_available"])
         self.assertEqual(payload["heartbeat"]["status"], snapshot)
+        self.assertEqual(payload["heartbeat"]["agentId"], "main")
+        self.assertEqual(payload["observability"]["heartbeatSnapshots"], 1)
 
     def test_cmd_doctor_json_output_includes_install_prereqs(self) -> None:
         from openheron import cli
@@ -2333,20 +2342,23 @@ class CLITests(unittest.TestCase):
         from openheron import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp)
-            snapshot_path = workspace / ".openheron" / "heartbeat_status.json"
-            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-            snapshot_path.write_text(
-                json.dumps({"last_status": "ran", "last_reason": "exec:foreground", "recent_reason_counts": {"exec": 2}}),
-                encoding="utf-8",
-            )
-            fake_registry = pytypes.SimpleNamespace(workspace=workspace, list_skills=lambda: [])
+            snapshot = {"last_status": "ran", "last_reason": "exec:foreground", "recent_reason_counts": {"exec": 2}}
+            fake_registry = pytypes.SimpleNamespace(workspace=Path(tmp), list_skills=lambda: [])
             fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
             fake_security_policy = pytypes.SimpleNamespace(
                 restrict_to_workspace=False,
                 allow_exec=True,
                 allow_network=True,
                 exec_allowlist=(),
+            )
+            fake_runtime = pytypes.SimpleNamespace(
+                agent_id="main",
+                agent_dir=Path(tmp) / "agents" / "main",
+                workspace_root=Path(tmp) / "agents" / "main" / "workspace",
+            )
+            fake_router = pytypes.SimpleNamespace(
+                runtime_for_agent=Mock(return_value=fake_runtime),
+                all_agent_runtimes=Mock(return_value={"main": fake_runtime}),
             )
             with patch.dict(
                 os.environ,
@@ -2366,8 +2378,11 @@ class CLITests(unittest.TestCase):
                                         with patch.object(cli, "load_security_policy", return_value=fake_security_policy):
                                             with patch.object(cli, "build_mcp_toolsets_from_env", return_value=[]):
                                                 with patch.object(cli.logger, "debug"):
-                                                    with patch("builtins.print") as mocked_print:
-                                                        code = cli._cmd_doctor(output_json=False, verbose=False)
+                                                    with patch.object(cli, "AgentRouter", return_value=fake_router):
+                                                        with patch.object(cli, "read_heartbeat_status_snapshot", return_value=snapshot):
+                                                            with patch.object(cli, "read_route_stats_snapshot", return_value=None):
+                                                                with patch("builtins.print") as mocked_print:
+                                                                    code = cli._cmd_doctor(output_json=False, verbose=False)
 
         self.assertEqual(code, 0)
         lines = [call.args[0] for call in mocked_print.call_args_list if call.args]

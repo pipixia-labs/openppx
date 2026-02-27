@@ -1537,7 +1537,38 @@ def _cmd_doctor(
         bridge_issue = _check_whatsapp_bridge_ready()
         if bridge_issue:
             issues.append(bridge_issue)
-    heartbeat_snapshot = read_heartbeat_status_snapshot(registry.workspace)
+    router = AgentRouter(config_payload)
+    agent_runtimes = router.all_agent_runtimes()
+    default_runtime = router.runtime_for_agent(None)
+    observability_by_agent: dict[str, Any] = {}
+    heartbeat_snapshot_count = 0
+    route_stats_snapshot_count = 0
+    for agent_id, runtime in agent_runtimes.items():
+        heartbeat_snapshot = read_heartbeat_status_snapshot(runtime.agent_dir)
+        route_stats_snapshot = read_route_stats_snapshot(runtime.agent_dir)
+        if heartbeat_snapshot is not None:
+            heartbeat_snapshot_count += 1
+        if route_stats_snapshot is not None:
+            route_stats_snapshot_count += 1
+        observability_by_agent[agent_id] = {
+            "agentId": agent_id,
+            "agentDir": str(runtime.agent_dir),
+            "workspace": str(runtime.workspace_root),
+            "heartbeat": {
+                "snapshot_available": heartbeat_snapshot is not None,
+                "status": heartbeat_snapshot or {},
+            },
+            "routeStats": {
+                "snapshot_available": route_stats_snapshot is not None,
+                "status": route_stats_snapshot or {},
+            },
+        }
+    # Backward-compatible heartbeat summary keeps default-agent view.
+    default_observability = observability_by_agent.get(default_runtime.agent_id, {})
+    default_heartbeat = default_observability.get("heartbeat", {}) if isinstance(default_observability, dict) else {}
+    heartbeat_snapshot = default_heartbeat.get("status") if isinstance(default_heartbeat, dict) else {}
+    if not isinstance(heartbeat_snapshot, dict):
+        heartbeat_snapshot = {}
     install_prereqs = _install_prereq_lines()
     web_enabled = env_enabled("OPENHERON_WEB_ENABLED", default=True)
     web_search_enabled = env_enabled("OPENHERON_WEB_SEARCH_ENABLED", default=True)
@@ -1622,8 +1653,17 @@ def _cmd_doctor(
         },
         "installPrereqs": install_prereqs,
         "heartbeat": {
-            "snapshot_available": heartbeat_snapshot is not None,
-            "status": heartbeat_snapshot or {},
+            "snapshot_available": bool(default_heartbeat.get("snapshot_available"))
+            if isinstance(default_heartbeat, dict)
+            else False,
+            "status": heartbeat_snapshot,
+            "agentId": default_runtime.agent_id,
+        },
+        "observability": {
+            "agentCount": len(agent_runtimes),
+            "heartbeatSnapshots": heartbeat_snapshot_count,
+            "routeStatsSnapshots": route_stats_snapshot_count,
+            "byAgent": observability_by_agent,
         },
         "web": {
             "enabled": web_enabled and web_search_enabled,
@@ -1672,7 +1712,12 @@ def _cmd_doctor(
     logger.debug(f"Configured channels: {', '.join(configured_channels) if configured_channels else '(none)'}")
     logger.debug(
         "Heartbeat status snapshot: "
-        f"{'available' if heartbeat_snapshot is not None else 'missing'}"
+        f"{'available' if bool(default_heartbeat.get('snapshot_available')) else 'missing'}"
+    )
+    logger.debug(
+        "Agent observability: "
+        f"heartbeat_snapshots={heartbeat_snapshot_count}/{len(agent_runtimes)}, "
+        f"route_stats_snapshots={route_stats_snapshot_count}/{len(agent_runtimes)}"
     )
     logger.debug(
         "Web search: "
@@ -1747,7 +1792,7 @@ def _cmd_doctor(
     for line in install_prereqs:
         _stdout_line(_doctor_install_prereq_line(line))
 
-    if heartbeat_snapshot is None:
+    if not bool(default_heartbeat.get("snapshot_available")):
         _stdout_line("Heartbeat: snapshot=missing")
     else:
         _stdout_line(
