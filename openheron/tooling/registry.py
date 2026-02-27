@@ -36,6 +36,7 @@ from ..core.logging_utils import debug_logging_enabled, emit_debug
 from ..runtime.cron_helpers import cron_store_path, format_schedule
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.cron_service import CronService
+from ..runtime.agent_runtime import get_current_agent_runtime
 from ..runtime.process_sessions import get_process_session_manager
 from ..runtime.tool_context import get_route
 from ..core.security import PathGuard, SecurityPolicy, load_security_policy
@@ -75,10 +76,87 @@ def _workspace(policy: SecurityPolicy | None = None) -> Path:
     return (policy or _security_policy()).workspace_root
 
 
-def _resolve_path(path: str, *, base_dir: Path | None = None, policy: SecurityPolicy | None = None) -> Path:
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _enforce_fs_policy(path: Path, *, operation: str) -> None:
+    runtime = get_current_agent_runtime()
+    if runtime is None:
+        return
+
+    if runtime.fs_workspace_only and not _is_under(path, runtime.workspace_root):
+        raise PermissionError(f"Path '{path}' is outside agent workspace '{runtime.workspace_root}'")
+
+    for deny_root in runtime.fs_deny_paths:
+        if _is_under(path, deny_root):
+            raise PermissionError(f"Path '{path}' is denied by fs policy")
+
+    if runtime.fs_allowed_paths:
+        if not any(_is_under(path, allow_root) for allow_root in runtime.fs_allowed_paths):
+            raise PermissionError(f"Path '{path}' is not in allowedPaths")
+
+    if operation == "write":
+        for read_only_root in runtime.fs_read_only_paths:
+            if _is_under(path, read_only_root):
+                raise PermissionError(f"Path '{path}' is read-only by fs policy")
+
+
+def _resolve_path(
+    path: str,
+    *,
+    base_dir: Path | None = None,
+    policy: SecurityPolicy | None = None,
+    operation: str = "read",
+) -> Path:
     active = policy or _security_policy()
     guard = PathGuard(active)
-    return guard.resolve_path(path, base_dir=base_dir)
+    resolved = guard.resolve_path(path, base_dir=base_dir)
+    _enforce_fs_policy(resolved, operation=operation)
+    return resolved
+
+
+def _guard_tool(tool_name: str, *, permission: str | None = None) -> str | None:
+    runtime = get_current_agent_runtime()
+    if runtime is None:
+        return None
+
+    normalized_tool = tool_name.strip().lower()
+    aliases = {
+        "read_file": {"read_file", "read"},
+        "write_file": {"write_file", "write"},
+        "edit_file": {"edit_file", "edit"},
+        "list_dir": {"list_dir", "list"},
+        "exec": {"exec", "exec_command"},
+        "web_search": {"web_search"},
+        "web_fetch": {"web_fetch"},
+        "browser": {"browser"},
+        "computer_use": {"computer_use", "gui_action"},
+        "computer_task": {"computer_task", "gui_task"},
+        "message_image": {"message_image", "screenshot"},
+        "message_file": {"message_file"},
+        "message": {"message"},
+        "spawn_subagent": {"spawn_subagent"},
+        "cron": {"cron"},
+    }
+    names = aliases.get(normalized_tool, {normalized_tool})
+    deny = {item.strip().lower() for item in runtime.tools_deny if item.strip()}
+    allow = {item.strip().lower() for item in runtime.tools_allow if item.strip()}
+
+    if any(name in deny for name in names):
+        return f"Error: tool '{normalized_tool}' is denied for agent '{runtime.agent_id}'."
+    if allow and not any(name in allow for name in names):
+        return f"Error: tool '{normalized_tool}' is not allowed for agent '{runtime.agent_id}'."
+
+    if permission:
+        key = permission.strip().lower()
+        if key and runtime.system_permissions.get(key) is False:
+            return f"Error: system permission '{key}' is disabled for agent '{runtime.agent_id}'."
+    return None
 
 
 def _json(obj: Any) -> str:
@@ -185,6 +263,9 @@ def read_file(
         "tool.read_file.input",
         {"path": path, "file_path": file_path, "offset": offset, "limit": limit},
     )
+    denied = _guard_tool("read_file")
+    if denied:
+        return _ret("tool.read_file.output", denied)
     try:
         effective_path = _resolve_read_path(path=path, file_path=file_path)
         if not effective_path:
@@ -204,7 +285,7 @@ def read_file(
                 return _ret("tool.read_file.output", parsed_limit)
             limit_value = parsed_limit
 
-        target = _resolve_path(effective_path)
+        target = _resolve_path(effective_path, operation="read")
         if not target.exists():
             return _ret("tool.read_file.output", f"Error: File not found: {effective_path}")
         if not target.is_file():
@@ -278,8 +359,11 @@ def write_file(path: str, content: str) -> str:
         Success message with byte count, or an "Error: ..." message.
     """
     _debug("tool.write_file.input", {"path": path, "chars": len(content)})
+    denied = _guard_tool("write_file")
+    if denied:
+        return _ret("tool.write_file.output", denied)
     try:
-        target = _resolve_path(path)
+        target = _resolve_path(path, operation="write")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         result = f"Successfully wrote {len(content)} bytes to {target}"
@@ -309,8 +393,11 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
         "tool.edit_file.input",
         {"path": path, "old_text_chars": len(old_text), "new_text_chars": len(new_text)},
     )
+    denied = _guard_tool("edit_file")
+    if denied:
+        return _ret("tool.edit_file.output", denied)
     try:
-        target = _resolve_path(path)
+        target = _resolve_path(path, operation="write")
         if not target.exists():
             return _ret("tool.edit_file.output", f"Error: File not found: {path}")
         if not target.is_file():
@@ -345,8 +432,11 @@ def list_dir(path: str) -> str:
         or an "Error: ..." message.
     """
     _debug("tool.list_dir.input", {"path": path})
+    denied = _guard_tool("list_dir")
+    if denied:
+        return _ret("tool.list_dir.output", denied)
     try:
-        target = _resolve_path(path)
+        target = _resolve_path(path, operation="read")
         if not target.exists():
             return _ret("tool.list_dir.output", f"Error: Directory not found: {path}")
         if not target.is_dir():
@@ -687,6 +777,9 @@ def exec_command(
             "scope": scope,
         },
     )
+    denied = _guard_tool("exec")
+    if denied:
+        return _ret("tool.exec.output", denied)
     cmd = command.strip()
     if not cmd:
         return _ret("tool.exec.output", "Error: command is empty")
@@ -712,7 +805,11 @@ def exec_command(
             return _ret("tool.exec.output", "Error: Command blocked by safety guard (dangerous pattern detected)")
 
     try:
-        cwd = _resolve_path(working_dir, base_dir=_workspace(policy), policy=policy) if working_dir else _workspace(policy)
+        cwd = (
+            _resolve_path(working_dir, base_dir=_workspace(policy), policy=policy, operation="read")
+            if working_dir
+            else _workspace(policy)
+        )
     except PermissionError as exc:
         return _ret("tool.exec.output", f"Error: {exc}")
 
@@ -1080,6 +1177,9 @@ def browser(
             "console_path": console_path,
         },
     )
+    denied = _guard_tool("browser", permission="browser")
+    if denied:
+        return _ret("tool.browser.output", _json({"ok": False, "error": denied, "status": 403}))
 
     normalized = (action or "").strip().lower()
     query: dict[str, Any] = {}
@@ -1720,6 +1820,9 @@ def web_search(query: str, count: int = 5) -> str:
         - Requires network enabled and BRAVE_API_KEY configured.
     """
     _debug("tool.web_search.input", {"query": query, "count": count})
+    denied = _guard_tool("web_search")
+    if denied:
+        return _ret("tool.web_search.output", denied)
     if not _security_policy().allow_network:
         return _ret("tool.web_search.output", "Error: network access is disabled by security policy")
     if not env_enabled("OPENHERON_WEB_ENABLED", default=True):
@@ -1787,6 +1890,9 @@ def web_fetch(url: str, max_chars: int = 50000) -> str:
         or JSON-formatted error payload.
     """
     _debug("tool.web_fetch.input", {"url": url, "max_chars": max_chars})
+    denied = _guard_tool("web_fetch")
+    if denied:
+        return _ret("tool.web_fetch.output", _json({"error": denied, "url": url}))
     if not _security_policy().allow_network:
         return _ret("tool.web_fetch.output", _json({"error": "network access is disabled by security policy", "url": url}))
     ok, err = _validate_http_url(url)
@@ -1868,6 +1974,9 @@ def computer_use(
             "has_base_url_override": bool((base_url or "").strip()),
         },
     )
+    denied = _guard_tool("computer_use", permission="gui")
+    if denied:
+        return _ret("tool.computer_use.output", _json({"ok": False, "error": denied, "status": 403}))
     if not (action or "").strip():
         return _ret("tool.computer_use.output", _json({"ok": False, "error": "action is required"}))
 
@@ -1916,6 +2025,9 @@ def computer_task(
             "has_planner_base_url_override": bool((planner_base_url or "").strip()),
         },
     )
+    denied = _guard_tool("computer_task", permission="gui")
+    if denied:
+        return _ret("tool.computer_task.output", _json({"ok": False, "error": denied, "status": 403}))
     if not (task or "").strip():
         return _ret("tool.computer_task.output", _json({"ok": False, "error": "task is required"}))
     try:
@@ -2042,6 +2154,9 @@ def message(content: str, channel: str | None = None, chat_id: str | None = None
         - Falls back to current route context.
         - Final fallback is local/default.
     """
+    denied = _guard_tool("message")
+    if denied:
+        return _ret("tool.message.output", denied)
     target_channel, target_chat_id = _resolve_route(channel, chat_id)
     _debug("tool.message.input", {"channel": target_channel, "chat_id": target_chat_id, "chars": len(content)})
 
@@ -2096,6 +2211,11 @@ def spawn_subagent(
             "chat_id": chat_id,
         },
     )
+    denied = _guard_tool("spawn_subagent")
+    if denied:
+        result = {"status": "error", "error": denied}
+        _debug("tool.spawn_subagent.output", result)
+        return result
 
     if not (prompt or "").strip():
         result = {"status": "error", "error": "prompt is required"}
@@ -2198,8 +2318,11 @@ def message_image(path: str, caption: str = "", channel: str | None = None, chat
         "tool.message_image.input",
         {"path": path, "caption_chars": len(caption), "channel": target_channel, "chat_id": target_chat_id},
     )
+    denied = _guard_tool("message_image", permission="screenshot")
+    if denied:
+        return _ret("tool.message_image.output", denied)
     try:
-        image_path = _resolve_path(path)
+        image_path = _resolve_path(path, operation="read")
     except PermissionError as exc:
         return _ret("tool.message_image.output", f"Error: {exc}")
     except Exception as exc:
@@ -2261,8 +2384,11 @@ def message_file(path: str, caption: str = "", channel: str | None = None, chat_
         "tool.message_file.input",
         {"path": path, "caption_chars": len(caption), "channel": target_channel, "chat_id": target_chat_id},
     )
+    denied = _guard_tool("message_file")
+    if denied:
+        return _ret("tool.message_file.output", denied)
     try:
-        file_path = _resolve_path(path)
+        file_path = _resolve_path(path, operation="read")
     except PermissionError as exc:
         return _ret("tool.message_file.output", f"Error: {exc}")
     except Exception as exc:
@@ -2386,6 +2512,9 @@ def cron(
             "chat_id": chat_id,
         },
     )
+    denied = _guard_tool("cron")
+    if denied:
+        return _ret("tool.cron.output", denied)
     service = _cron_service()
 
     if action == "list":

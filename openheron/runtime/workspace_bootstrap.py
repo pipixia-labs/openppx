@@ -35,6 +35,14 @@ class BootstrapSection:
 
 def _workspace_root() -> Path:
     """Resolve workspace root from environment with a safe fallback."""
+    try:
+        from .agent_runtime import get_current_agent_runtime
+
+        runtime = get_current_agent_runtime()
+        if runtime is not None:
+            return runtime.workspace_root
+    except Exception:
+        pass
     raw = os.getenv("OPENHERON_WORKSPACE", "").strip()
     if raw:
         return Path(raw).expanduser()

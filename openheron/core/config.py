@@ -191,6 +191,43 @@ def default_config() -> dict[str, Any]:
                 },
             },
         },
+        "agents": {
+            "defaults": {
+                "workspace": str(get_default_workspace_path()),
+                "agentDir": str(get_data_dir() / "agents" / "main" / "agent"),
+                "security": {
+                    "restrictToWorkspace": False,
+                    "allowExec": True,
+                    "allowNetwork": True,
+                    "execAllowlist": [],
+                },
+                "fs": {
+                    "workspaceOnly": False,
+                    "allowedPaths": [],
+                    "denyPaths": [],
+                    "readOnlyPaths": [],
+                },
+                "tools": {
+                    "allow": [],
+                    "deny": [],
+                },
+                "systemPermissions": {
+                    "browser": True,
+                    "gui": True,
+                    "screenshot": True,
+                },
+            },
+            "list": [
+                {
+                    "id": "main",
+                    "default": True,
+                    "workspace": str(get_default_workspace_path()),
+                    "agentDir": str(get_data_dir() / "agents" / "main" / "agent"),
+                    "skills": [],
+                }
+            ],
+        },
+        "bindings": [],
         "providers": {
             name: {
                 "enabled": name == DEFAULT_PROVIDER,
@@ -555,6 +592,33 @@ def _resolve_security(cfg: dict[str, Any]) -> tuple[bool, bool, bool, str]:
     return restrict, allow_exec, allow_network, allowlist
 
 
+def _resolve_default_agent_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Resolve default agent entry from ``agents.list`` with safe fallback."""
+    agents = _as_dict(cfg.get("agents"))
+    entries = _as_list(agents.get("list"))
+    picked: dict[str, Any] | None = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if picked is None:
+            picked = entry
+        if bool(entry.get("default")):
+            picked = entry
+            break
+    if isinstance(picked, dict):
+        return picked
+    return _as_dict(cfg.get("agent"))
+
+
+def _resolve_default_agent_dir(cfg: dict[str, Any]) -> str:
+    """Resolve default agentDir from agents config with fallback."""
+    default_agent = _resolve_default_agent_config(cfg)
+    candidate = str(default_agent.get("agentDir", "")).strip()
+    if candidate:
+        return candidate
+    return str(get_data_dir() / "agents" / "main" / "agent")
+
+
 def _resolve_mcp_servers_json(cfg: dict[str, Any]) -> str:
     """Serialize configured MCP servers into a stable JSON string."""
     tools = cfg.get("tools")
@@ -709,6 +773,7 @@ def config_to_env(
     """Map config payload into runtime environment variables."""
     cfg = normalize_config(config)
     agent = _as_dict(cfg.get("agent"))
+    default_agent = _resolve_default_agent_config(cfg)
     heartbeat = _as_dict(agent.get("heartbeat"))
     active_hours = _as_dict(heartbeat.get("activeHours"))
     gui = _as_dict(cfg.get("gui"))
@@ -734,7 +799,8 @@ def config_to_env(
         "OPENHERON_PROVIDER_ENABLED": "1" if provider_enabled else "0",
         "OPENHERON_PROVIDER_API_BASE": provider_api_base,
         "OPENHERON_PROVIDER_EXTRA_HEADERS_JSON": provider_extra_headers,
-        "OPENHERON_WORKSPACE": str(agent.get("workspace", "")).strip(),
+        "OPENHERON_WORKSPACE": str(default_agent.get("workspace", agent.get("workspace", ""))).strip(),
+        "OPENHERON_AGENT_DIR": _resolve_default_agent_dir(cfg),
         "OPENHERON_BUILTIN_SKILLS_DIR": str(agent.get("builtinSkillsDir", "")).strip(),
         "OPENHERON_HEARTBEAT_EVERY": str(heartbeat.get("every", "30m")).strip() or "30m",
         "OPENHERON_HEARTBEAT_PROMPT": str(heartbeat.get("prompt", "")).strip(),

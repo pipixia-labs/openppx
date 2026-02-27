@@ -70,6 +70,14 @@ def _parse_allowlist(raw_value: str) -> tuple[str, ...]:
 
 
 def _workspace_from_env() -> Path:
+    try:
+        from ..runtime.agent_runtime import get_current_agent_runtime
+
+        runtime = get_current_agent_runtime()
+        if runtime is not None:
+            return runtime.workspace_root.resolve()
+    except Exception:
+        pass
     workspace_env = os.getenv("OPENHERON_WORKSPACE", "").strip()
     if workspace_env:
         return Path(workspace_env).expanduser().resolve()
@@ -78,10 +86,24 @@ def _workspace_from_env() -> Path:
 
 def load_security_policy() -> SecurityPolicy:
     """Load security policy from runtime environment."""
+    runtime = None
+    try:
+        from ..runtime.agent_runtime import get_current_agent_runtime
+
+        runtime = get_current_agent_runtime()
+    except Exception:
+        runtime = None
+
     restrict_to_workspace = env_enabled("OPENHERON_RESTRICT_TO_WORKSPACE", default=False)
     allow_exec = env_enabled("OPENHERON_ALLOW_EXEC", default=True)
     allow_network = env_enabled("OPENHERON_ALLOW_NETWORK", default=True)
     exec_allowlist = _parse_allowlist(os.getenv("OPENHERON_EXEC_ALLOWLIST", ""))
+
+    if runtime is not None:
+        restrict_to_workspace = runtime.restrict_to_workspace
+        allow_exec = runtime.allow_exec
+        allow_network = runtime.allow_network
+        exec_allowlist = tuple(runtime.exec_allowlist)
 
     return SecurityPolicy(
         workspace_root=_workspace_from_env(),

@@ -21,6 +21,8 @@ from ..runtime.heartbeat_status_store import write_heartbeat_status_snapshot
 from ..runtime.heartbeat_utils import HEARTBEAT_TOKEN, strip_heartbeat_token
 from ..runtime.heartbeat_runner import HeartbeatRunRequest, HeartbeatRunner
 from ..runtime.message_time import append_execution_time, inject_request_time
+from ..runtime.agent_routing import AgentRouter, RoutedAgentRequest
+from ..runtime.agent_runtime import AgentRuntimeContext, agent_runtime_context
 from ..runtime.runner_factory import create_runner
 from ..runtime.subagent_agent import build_restricted_subagent
 from ..runtime.tool_context import route_context
@@ -79,9 +81,11 @@ class Gateway:
         bus: MessageBus,
         channel_manager: ChannelManager | None = None,
         session_service: Any | None = None,
+        config: dict[str, Any] | None = None,
     ) -> None:
         self.bus = bus
         self.channel_manager = channel_manager
+        self._router = AgentRouter(config)
         self.runner, self.session_service = create_runner(
             agent=agent,
             app_name=app_name,
@@ -351,15 +355,22 @@ class Gateway:
         runner: Any,
         channel: str,
         chat_id: str,
+        agent_runtime: AgentRuntimeContext | None = None,
         default_when_empty: str | None = "(no response)",
         **run_kwargs: Any,
     ) -> str:
         """Run one ADK stream and merge emitted text parts into final output."""
         final = ""
-        with route_context(channel, chat_id):
-            async for event in runner.run_async(**run_kwargs):
-                text = extract_text(getattr(event, "content", None))
-                final = merge_text_stream(final, text)
+        if agent_runtime is None:
+            with route_context(channel, chat_id):
+                async for event in runner.run_async(**run_kwargs):
+                    text = extract_text(getattr(event, "content", None))
+                    final = merge_text_stream(final, text)
+        else:
+            with route_context(channel, chat_id), agent_runtime_context(agent_runtime):
+                async for event in runner.run_async(**run_kwargs):
+                    text = extract_text(getattr(event, "content", None))
+                    final = merge_text_stream(final, text)
         if final:
             return final
         if default_when_empty is None:
@@ -430,6 +441,7 @@ class Gateway:
             await self.channel_manager.stop_all()
 
     async def process_message(self, msg: InboundMessage) -> OutboundMessage:
+        routed: RoutedAgentRequest = self._router.resolve(msg)
         command = msg.content.strip().lower()
         if command == "/help":
             return OutboundMessage(
@@ -439,12 +451,14 @@ class Gateway:
                 metadata=msg.metadata,
             )
         if command == "/new":
-            active_session_id = self._session_overrides.get(msg.session_key, msg.session_key)
+            active_session_id = self._session_overrides.get(routed.session_base_key, routed.session_base_key)
             await self._persist_session_memory_snapshot(
-                user_id=msg.sender_id,
+                user_id=routed.scoped_user_id,
                 session_id=active_session_id,
             )
-            self._session_overrides[msg.session_key] = f"{msg.session_key}:new:{uuid.uuid4().hex[:12]}"
+            self._session_overrides[routed.session_base_key] = (
+                f"{routed.session_base_key}:new:{uuid.uuid4().hex[:12]}"
+            )
             return OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
@@ -452,7 +466,7 @@ class Gateway:
                 metadata=msg.metadata,
             )
 
-        active_session_id = self._session_overrides.get(msg.session_key, msg.session_key)
+        active_session_id = self._session_overrides.get(routed.session_base_key, routed.session_base_key)
         prompt = inject_request_time(msg.content, received_at=msg.timestamp)
         request = types.UserContent(parts=[types.Part.from_text(text=prompt)])
         # Route context lets tools like `message(...)` infer the current target.
@@ -460,7 +474,8 @@ class Gateway:
             runner=self.runner,
             channel=msg.channel,
             chat_id=msg.chat_id,
-            user_id=msg.sender_id,
+            agent_runtime=routed.runtime,
+            user_id=routed.scoped_user_id,
             session_id=active_session_id,
             new_message=request,
         )

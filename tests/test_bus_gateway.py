@@ -148,13 +148,13 @@ class GatewayTests(unittest.TestCase):
 
             second = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="hello again")
             second_outbound = asyncio.run(gateway.process_message(second))
-            self.assertEqual(second_outbound.content, "ok")
+        self.assertEqual(second_outbound.content, "ok")
 
         self.assertEqual(len(captured_calls), 2)
-        self.assertEqual(captured_calls[0]["session_id"], "local:c1")
+        self.assertEqual(captured_calls[0]["session_id"], "agent:main:local:default:direct:c1")
         rotated_session_id = captured_calls[1]["session_id"]
-        self.assertNotEqual(rotated_session_id, "local:c1")
-        self.assertTrue(str(rotated_session_id).startswith("local:c1:new:"))
+        self.assertNotEqual(rotated_session_id, "agent:main:local:default:direct:c1")
+        self.assertTrue(str(rotated_session_id).startswith("agent:main:local:default:direct:c1:new:"))
 
     def test_process_message_new_command_persists_current_session_to_memory(self) -> None:
         fake_event = pytypes.SimpleNamespace(
@@ -187,10 +187,96 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(outbound.content, "Started a new conversation session.")
         session_service.get_session.assert_awaited_once_with(
             app_name="openheron",
-            user_id="u1",
-            session_id="local:c1",
+            user_id="agent:main:u1",
+            session_id="agent:main:local:default:direct:c1",
         )
         memory_service.add_session_to_memory.assert_awaited_once_with(fake_session)
+
+    def test_process_message_routes_by_account_and_applies_agent_runtime_context(self) -> None:
+        fake_event = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="ok")])
+        )
+        captured: list[dict[str, object]] = []
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                from openheron.runtime.agent_runtime import get_current_agent_runtime
+
+                runtime = get_current_agent_runtime()
+                captured.append(
+                    {
+                        "session_id": kwargs.get("session_id"),
+                        "user_id": kwargs.get("user_id"),
+                        "agent_id": runtime.agent_id if runtime else None,
+                        "allow_exec": runtime.allow_exec if runtime else None,
+                    }
+                )
+                yield fake_event
+
+        config = {
+            "agents": {
+                "defaults": {
+                    "workspace": "/tmp/main",
+                    "agentDir": "/tmp/main/agent",
+                    "security": {"allowExec": True},
+                },
+                "list": [
+                    {
+                        "id": "main",
+                        "default": True,
+                        "workspace": "/tmp/main",
+                        "agentDir": "/tmp/main/agent",
+                    },
+                    {
+                        "id": "personal",
+                        "workspace": "/tmp/personal",
+                        "agentDir": "/tmp/personal/agent",
+                        "security": {"allowExec": True},
+                    },
+                    {
+                        "id": "business",
+                        "workspace": "/tmp/business",
+                        "agentDir": "/tmp/business/agent",
+                        "security": {"allowExec": False},
+                    },
+                ],
+            },
+            "bindings": [
+                {"agentId": "personal", "match": {"channel": "whatsapp", "accountId": "personal"}},
+                {"agentId": "business", "match": {"channel": "whatsapp", "accountId": "business"}},
+            ],
+        }
+
+        fake_agent = pytypes.SimpleNamespace(name="openheron")
+        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus(), config=config)
+            personal_msg = InboundMessage(
+                channel="whatsapp",
+                sender_id="u1",
+                chat_id="+10001",
+                content="hello",
+                metadata={"accountId": "personal", "peer": {"kind": "direct", "id": "+10001"}},
+            )
+            business_msg = InboundMessage(
+                channel="whatsapp",
+                sender_id="u1",
+                chat_id="+10001",
+                content="hello",
+                metadata={"accountId": "business", "peer": {"kind": "direct", "id": "+10001"}},
+            )
+
+            self.assertEqual(asyncio.run(gateway.process_message(personal_msg)).content, "ok")
+            self.assertEqual(asyncio.run(gateway.process_message(business_msg)).content, "ok")
+
+        self.assertEqual(captured[0]["agent_id"], "personal")
+        self.assertEqual(captured[0]["user_id"], "agent:personal:u1")
+        self.assertEqual(captured[0]["session_id"], "agent:personal:whatsapp:personal:direct:+10001")
+        self.assertEqual(captured[0]["allow_exec"], True)
+
+        self.assertEqual(captured[1]["agent_id"], "business")
+        self.assertEqual(captured[1]["user_id"], "agent:business:u1")
+        self.assertEqual(captured[1]["session_id"], "agent:business:whatsapp:business:direct:+10001")
+        self.assertEqual(captured[1]["allow_exec"], False)
 
 
 class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):

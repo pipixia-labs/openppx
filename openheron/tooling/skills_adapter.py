@@ -164,6 +164,19 @@ class SkillRegistry:
 
 def get_registry() -> SkillRegistry:
     """Build registry from configured workspace or current directory."""
+    try:
+        from ..runtime.agent_runtime import get_current_agent_runtime
+
+        runtime = get_current_agent_runtime()
+    except Exception:
+        runtime = None
+
+    if runtime is not None:
+        workspace = runtime.workspace_root
+        builtin_env = os.getenv("OPENHERON_BUILTIN_SKILLS_DIR")
+        builtin_skills_dir = Path(builtin_env).expanduser() if builtin_env else None
+        return SkillRegistry(workspace=workspace, builtin_skills_dir=builtin_skills_dir)
+
     workspace_env = os.getenv("OPENHERON_WORKSPACE")
     workspace = Path(workspace_env).expanduser() if workspace_env else None
     builtin_env = os.getenv("OPENHERON_BUILTIN_SKILLS_DIR")
@@ -174,6 +187,14 @@ def get_registry() -> SkillRegistry:
 def list_skills() -> str:
     """ADK tool: list available skills as JSON."""
     registry = get_registry()
+    try:
+        from ..runtime.agent_runtime import get_current_agent_runtime
+
+        runtime = get_current_agent_runtime()
+    except Exception:
+        runtime = None
+
+    allow = {item.lower() for item in runtime.skills_allow} if runtime and runtime.skills_allow else None
     payload = [
         {
             "name": info.name,
@@ -182,6 +203,7 @@ def list_skills() -> str:
             "location": str(info.path),
         }
         for info in registry.list_skills()
+        if allow is None or info.name.lower() in allow
     ]
     output = json.dumps(payload, ensure_ascii=False, indent=2)
     if _debug_enabled():
@@ -191,6 +213,16 @@ def list_skills() -> str:
 
 def read_skill(name: str) -> str:
     """ADK tool: read a specific SKILL.md by name."""
+    try:
+        from ..runtime.agent_runtime import get_current_agent_runtime
+
+        runtime = get_current_agent_runtime()
+    except Exception:
+        runtime = None
+    if runtime and runtime.skills_allow and name.strip().lower() not in {
+        item.lower() for item in runtime.skills_allow
+    }:
+        raise ValueError(f"Skill '{name}' is not allowed for current agent.")
     content = get_registry().read_skill(name)
     if _debug_enabled():
         logger.debug(
