@@ -9,6 +9,7 @@ from typing import Any
 
 from google.adk.memory import InMemoryMemoryService
 
+from ..core.config import get_data_dir
 from .markdown_memory_service import MarkdownMemoryService
 
 
@@ -48,7 +49,7 @@ def _default_markdown_dir() -> Path:
     workspace = os.getenv("OPENHERON_WORKSPACE", "").strip()
     if workspace:
         return Path(workspace).expanduser() / "memory"
-    return Path.home() / ".openheron" / "workspace" / "memory"
+    return get_data_dir() / "workspace" / "memory"
 
 
 def load_memory_config() -> MemoryConfig:

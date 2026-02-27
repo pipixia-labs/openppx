@@ -465,8 +465,32 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(os.environ["OPENHERON_COMPACTION_INTERVAL"], "8")
         self.assertEqual(os.environ["OPENHERON_MCP_DOCTOR_TIMEOUT_SECONDS"], "5")
         self.assertEqual(os.environ["OPENHERON_DEBUG_MAX_CHARS"], "2000")
+        self.assertNotIn("OPENHERON_MEMORY_MARKDOWN_DIR", os.environ)
         self.assertNotIn("OPENHERON_COMPACTION_TOKEN_THRESHOLD", os.environ)
         self.assertNotIn("OPENHERON_MCP_REQUIRED_SERVERS", os.environ)
+
+    def test_bootstrap_remaps_legacy_global_memory_markdown_dir_to_agent_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            agent_dir = Path(tmp) / "agent_1"
+            config_path = agent_dir / "config.json"
+            runtime_path = agent_dir / "runtime.json"
+            save_config(default_config(), config_path)
+            save_runtime_config(
+                {
+                    "env": {
+                        "OPENHERON_MEMORY_MARKDOWN_DIR": str(Path.home() / ".openheron" / "workspace" / "memory"),
+                    }
+                },
+                runtime_path,
+            )
+            os.environ.pop("OPENHERON_MEMORY_MARKDOWN_DIR", None)
+
+            bootstrap_env_from_config(config_path)
+
+        self.assertEqual(
+            os.environ["OPENHERON_MEMORY_MARKDOWN_DIR"],
+            str((agent_dir / "workspace" / "memory").resolve(strict=False)),
+        )
 
     def test_env_override_map_is_final_layer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

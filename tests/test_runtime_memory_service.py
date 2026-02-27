@@ -42,6 +42,15 @@ class MemoryServiceFactoryTests(unittest.TestCase):
 
         self.assertEqual(cfg.markdown_dir, "/tmp/openheron-workspace/memory")
 
+    def test_load_memory_config_falls_back_to_data_dir_workspace_when_workspace_is_missing(self) -> None:
+        os.environ.pop("OPENHERON_WORKSPACE", None)
+        os.environ["OPENHERON_DATA_DIR"] = "/tmp/openheron-agent-a"
+        os.environ.pop("OPENHERON_MEMORY_MARKDOWN_DIR", None)
+
+        cfg = load_memory_config()
+
+        self.assertEqual(cfg.markdown_dir, "/tmp/openheron-agent-a/workspace/memory")
+
     def test_create_memory_service_can_be_disabled(self) -> None:
         service = create_memory_service(MemoryConfig(False, "in_memory", ""))
         self.assertIsNone(service)

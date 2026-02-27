@@ -120,15 +120,38 @@ class SkillRegistryTests(unittest.TestCase):
             "docx",
             "github",
             "memory",
+            "planning-with-files",
             "pptx",
             "skill-creator",
             "summarize",
             "tmux",
-            "ui-ux-pro-max",
             "weather",
             "xlsx",
         }
         self.assertTrue(expected.issubset(names))
+
+    def test_default_user_global_skills_use_openheron_dir_not_codex_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            openheron_skill = home / ".openheron" / "skills" / "openheron-global-demo" / "SKILL.md"
+            openheron_skill.parent.mkdir(parents=True, exist_ok=True)
+            openheron_skill.write_text(
+                "---\nname: openheron-global-demo\ndescription: openheron global skill\n---\n\n# Openheron Global\n",
+                encoding="utf-8",
+            )
+            codex_skill = home / ".codex" / "skills" / "codex-global-demo" / "SKILL.md"
+            codex_skill.parent.mkdir(parents=True, exist_ok=True)
+            codex_skill.write_text(
+                "---\nname: codex-global-demo\ndescription: codex global skill\n---\n\n# Codex Global\n",
+                encoding="utf-8",
+            )
+
+            os.environ["HOME"] = str(home)
+            registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openheron-workspace"))
+            names = {item.name for item in registry.list_skills()}
+
+        self.assertIn("openheron-global-demo", names)
+        self.assertNotIn("codex-global-demo", names)
 
 
 if __name__ == "__main__":

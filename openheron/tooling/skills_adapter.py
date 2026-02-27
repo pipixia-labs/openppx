@@ -40,9 +40,9 @@ class SkillRegistry:
             self.builtin_skills_dirs = [builtin_skills_dir.resolve()]
         else:
             dirs: list[Path] = [package_builtin_dir.resolve()]
-            codex_builtin_dir = Path.home() / ".codex" / "skills"
-            if codex_builtin_dir.resolve() not in dirs:
-                dirs.append(codex_builtin_dir.resolve())
+            openheron_builtin_dir = Path.home() / ".openheron" / "skills"
+            if openheron_builtin_dir.resolve() not in dirs:
+                dirs.append(openheron_builtin_dir.resolve())
             self.builtin_skills_dirs = dirs
 
     def list_skills(self) -> list[SkillInfo]:

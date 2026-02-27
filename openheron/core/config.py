@@ -120,6 +120,7 @@ _EXTENSIBLE_MAP_KEYS: frozenset[str] = frozenset({"env"})
 _CONFIG_PATH_ENV = "OPENHERON_CONFIG_FILE"
 _RUNTIME_CONFIG_PATH_ENV = "OPENHERON_RUNTIME_CONFIG_FILE"
 _DATA_DIR_ENV = "OPENHERON_DATA_DIR"
+_MEMORY_MARKDOWN_DIR_ENV = "OPENHERON_MEMORY_MARKDOWN_DIR"
 
 
 def get_data_dir() -> Path:
@@ -164,7 +165,8 @@ def _default_runtime_env_overrides() -> dict[str, Any]:
     return {
         "OPENHERON_MEMORY_ENABLED": True,
         "OPENHERON_MEMORY_BACKEND": "markdown",
-        "OPENHERON_MEMORY_MARKDOWN_DIR": str(get_default_workspace_path() / "memory"),
+        # Keep empty by default so memory path follows OPENHERON_WORKSPACE.
+        _MEMORY_MARKDOWN_DIR_ENV: "",
         "OPENHERON_COMPACTION_ENABLED": True,
         "OPENHERON_COMPACTION_INTERVAL": 8,
         "OPENHERON_COMPACTION_OVERLAP": 1,
@@ -182,6 +184,39 @@ def _default_runtime_env_overrides() -> dict[str, Any]:
         "OPENHERON_WHATSAPP_BRIDGE_SOURCE": "",
         "OPENHERON_DEBUG_MAX_CHARS": 2000,
     }
+
+
+def _normalize_runtime_memory_dir_override(
+    runtime_overrides: dict[str, str],
+    *,
+    config_path: Path,
+) -> dict[str, str]:
+    """Rewrite legacy global memory dir override to per-agent workspace.
+
+    Historical runtime defaults wrote `OPENHERON_MEMORY_MARKDOWN_DIR` as the
+    global `~/.openheron/workspace/memory`, which breaks per-agent isolation.
+    During bootstrap we remap only this exact legacy value to the current
+    agent-scoped default (`<agent_data_dir>/workspace/memory`).
+    """
+    value = str(runtime_overrides.get(_MEMORY_MARKDOWN_DIR_ENV, "")).strip()
+    if not value:
+        return runtime_overrides
+
+    legacy_global_default = (Path.home() / ".openheron" / "workspace" / "memory").resolve(strict=False)
+    try:
+        current = Path(value).expanduser().resolve(strict=False)
+    except Exception:
+        return runtime_overrides
+    if current != legacy_global_default:
+        return runtime_overrides
+
+    scoped_default = (config_path.parent / "workspace" / "memory").resolve(strict=False)
+    if scoped_default == legacy_global_default:
+        return runtime_overrides
+
+    patched = dict(runtime_overrides)
+    patched[_MEMORY_MARKDOWN_DIR_ENV] = str(scoped_default)
+    return patched
 
 
 def default_config() -> dict[str, Any]:
@@ -872,6 +907,10 @@ def bootstrap_env_from_config(config_path: Path | None = None) -> dict[str, Any]
     legacy_overrides = _env_overrides_from_mapping(raw.get("env"))
     default_overrides = _env_overrides(default_runtime_config())
     merged_runtime_overrides = {**default_overrides, **legacy_overrides, **runtime_overrides}
+    merged_runtime_overrides = _normalize_runtime_memory_dir_override(
+        merged_runtime_overrides,
+        config_path=path,
+    )
     # Config file is the source of truth for runtime bootstrap.
     apply_config_to_env(
         cfg,
