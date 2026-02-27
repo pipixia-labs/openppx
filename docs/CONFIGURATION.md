@@ -20,7 +20,7 @@
 
 - 先读取 `~/.openheron/global_config.json`
 - 再按 `agents.list[*].id` 读取 `~/.openheron/agents/<agentId>/config.json`
-- agent 文件中的 agent 私有字段会覆盖全局里的同名 agent 字段（如 `workspace/skills/security/fs/tools/systemPermissions`）
+- agent 文件中的 agent 私有字段会覆盖全局里的同名 agent 字段（如 `workspace/skills/security/fs/tools/systemPermissions/heartbeat`）
 
 ## `global_config.json` 关键字段
 
@@ -58,6 +58,7 @@ v1 路由键：`channel + accountId + peer`，优先级为：
 - `tools`（`allow/deny`）
 - `skills`（skill allowlist）
 - `systemPermissions`（如 `browser/gui/screenshot`）
+- `heartbeat`（每 agent 的 heartbeat 周期、提示词、投递目标等）
 
 说明：
 

@@ -126,6 +126,7 @@ _AGENT_SCOPED_KEYS: frozenset[str] = frozenset(
         "fs",
         "tools",
         "systemPermissions",
+        "heartbeat",
     }
 )
 

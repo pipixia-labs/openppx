@@ -112,7 +112,7 @@ openheron install --init-only
 - `~/.openheron/global_config.json`
 - `~/.openheron/global_runtime.json`
 - `~/.openheron/agents/<agentId>/config.json` (per-agent runtime policy/config)
-- `~/.openheron/agents/main/` (including `workspace/`, `sessions/`, `memory/`)
+- `~/.openheron/agents/main/` (including `workspace/`, `bootstrap/`, `sessions/`, `memory/`, `runtime/`)
 
 Use `openheron install` for the full guided setup (checks + summary + suggestions),
 and use `openheron install --init-only` when you only want minimal file initialization.
@@ -168,6 +168,7 @@ openheron gateway-service install --channels local,feishu --enable
 openheron gateway-service status
 openheron doctor
 openheron heartbeat status
+openheron heartbeat status --agent-id main
 openheron token stats --provider google --limit 50
 openheron token stats --agent-id main --limit 50
 openheron token stats --provider google --agent-id biz --last-hours 24

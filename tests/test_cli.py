@@ -3379,13 +3379,15 @@ class CLITests(unittest.TestCase):
                 "last_delivery": {"kind": "alert"},
                 "recent_reason_counts": {"cron": 2, "exec": 1},
             }
-            store = Path(tmp) / ".openheron" / "heartbeat_status.json"
+            store = Path(tmp) / "runtime" / "heartbeat_status.json"
             store.parent.mkdir(parents=True, exist_ok=True)
             store.write_text(json.dumps(snapshot), encoding="utf-8")
-            policy = pytypes.SimpleNamespace(workspace_root=Path(tmp))
-            with patch.object(cli, "load_security_policy", return_value=policy):
-                with patch("builtins.print") as mocked_info:
-                    code = cli._cmd_heartbeat_status(output_json=False)
+            fake_runtime = pytypes.SimpleNamespace(agent_dir=Path(tmp), agent_id="main")
+            fake_router = pytypes.SimpleNamespace(runtime_for_agent=Mock(return_value=fake_runtime))
+            with patch.object(cli, "AgentRouter", return_value=fake_router):
+                with patch.object(cli, "load_config", return_value={}):
+                    with patch("builtins.print") as mocked_info:
+                        code = cli._cmd_heartbeat_status(output_json=False)
 
         self.assertEqual(code, 0)
         lines = [call.args[0] for call in mocked_info.call_args_list if call.args]

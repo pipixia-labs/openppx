@@ -25,9 +25,9 @@ class HeartbeatStatusStoreTests(unittest.TestCase):
 
     def test_path_is_under_openheron_runtime_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp)
-            path = heartbeat_status_path(workspace)
-        self.assertEqual(path, workspace / ".openheron" / "heartbeat_status.json")
+            agent_dir = Path(tmp)
+            path = heartbeat_status_path(agent_dir)
+        self.assertEqual(path, agent_dir / "runtime" / "heartbeat_status.json")
 
     def test_read_returns_none_when_payload_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

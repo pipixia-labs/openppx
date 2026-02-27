@@ -164,7 +164,7 @@ openheron install --init-only
 - `~/.openheron/global_config.json`
 - `~/.openheron/global_runtime.json`（高级运行时 env 调优配置）
 - `~/.openheron/agents/main/config.json`（main agent 私有配置）
-- `~/.openheron/agents/main/`（`workspace/`、`sessions/`、`memory/`）
+- `~/.openheron/agents/main/`（`workspace/`、`bootstrap/`、`sessions/`、`memory/`、`runtime/`）
 
 ### install 常见问题
 
@@ -386,6 +386,7 @@ openheron doctor --fix
 openheron doctor --fix-dry-run
 openheron heartbeat status
 openheron heartbeat status --json
+openheron heartbeat status --agent-id main
 openheron token stats
 openheron token stats --provider google --limit 50
 openheron token stats --agent-id main --limit 50

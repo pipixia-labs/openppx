@@ -86,6 +86,7 @@ from ..runtime.gateway_service import (
     render_systemd_unit,
 )
 from ..runtime.message_time import inject_request_time
+from ..runtime.agent_routing import AgentRouter
 from ..runtime.runner_factory import create_runner
 from ..runtime.session_service import load_session_config
 from ..core.security import load_security_policy
@@ -2684,8 +2685,10 @@ def _run_install_init_setup(*, force: bool) -> InstallInitResult:
     agent_dir.mkdir(parents=True, exist_ok=True)
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "skills").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "bootstrap").mkdir(parents=True, exist_ok=True)
     (agent_dir / "sessions").mkdir(parents=True, exist_ok=True)
     (agent_dir / "memory").mkdir(parents=True, exist_ok=True)
+    (agent_dir / "runtime").mkdir(parents=True, exist_ok=True)
     return InstallInitResult(
         config_path=saved_to,
         runtime_config_path=runtime_saved_to,
@@ -4347,19 +4350,21 @@ def _dispatch_cron_command(args: argparse.Namespace, parser: argparse.ArgumentPa
     return handler()
 
 
-def _cmd_heartbeat_status(*, output_json: bool) -> int:
-    workspace = load_security_policy().workspace_root
-    snapshot = read_heartbeat_status_snapshot(workspace)
+def _cmd_heartbeat_status(*, output_json: bool, agent_id: str | None = None) -> int:
+    router = AgentRouter(load_config())
+    runtime = router.runtime_for_agent(agent_id)
+    snapshot = read_heartbeat_status_snapshot(runtime.agent_dir)
     if output_json:
         _stdout_line(json.dumps(snapshot or {}, ensure_ascii=False))
         return 0
     if not snapshot:
-        _stdout_line("Heartbeat status: no runtime snapshot yet.")
+        _stdout_line(f"Heartbeat status: no runtime snapshot yet (agent={runtime.agent_id}).")
         return 0
     delivery = snapshot.get("last_delivery")
     delivery_kind = delivery.get("kind") if isinstance(delivery, dict) else "-"
     _stdout_line(
         "Heartbeat status: "
+        f"agent_id={snapshot.get('agent_id', runtime.agent_id)}, "
         f"running={snapshot.get('running', False)}, "
         f"enabled={snapshot.get('enabled', False)}, "
         f"last_status={snapshot.get('last_status', '-')}, "
@@ -4864,6 +4869,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Emit heartbeat status snapshot as one machine-readable JSON object.",
     )
+    heartbeat_status_parser.add_argument(
+        "--agent-id",
+        default=None,
+        help="Optional agent id; defaults to configured default agent.",
+    )
     token_parser = subparsers.add_parser("token", help="Token usage runtime helpers.")
     token_subparsers = token_parser.add_subparsers(dest="token_command", required=True)
     token_stats_parser = token_subparsers.add_parser("stats", help="Show token usage stats.")
@@ -4963,7 +4973,10 @@ def main(argv: list[str] | None = None) -> None:
         code = _dispatch_cron_command(args, parser)
     elif args.command == "heartbeat":
         if args.heartbeat_command == "status":
-            code = _cmd_heartbeat_status(output_json=args.output_json)
+            if args.agent_id is None:
+                code = _cmd_heartbeat_status(output_json=args.output_json)
+            else:
+                code = _cmd_heartbeat_status(output_json=args.output_json, agent_id=args.agent_id)
         else:
             parser.print_help()
             code = 2

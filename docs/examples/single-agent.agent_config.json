@@ -19,6 +19,21 @@
     "allow": [],
     "deny": []
   },
+  "heartbeat": {
+    "every": "30m",
+    "prompt": "",
+    "ackMaxChars": 300,
+    "showOk": false,
+    "showAlerts": true,
+    "target": "last",
+    "targetChannel": "",
+    "targetChatId": "",
+    "activeHours": {
+      "start": "",
+      "end": "",
+      "timezone": "user"
+    }
+  },
   "systemPermissions": {
     "browser": true,
     "gui": true,

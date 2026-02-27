@@ -20,6 +20,7 @@ from openheron.app.gateway import Gateway
 from openheron.runtime.cron_service import CronJob, CronJobState, CronPayload, CronSchedule
 from openheron.runtime.heartbeat_runner import HeartbeatRunRequest
 from openheron.runtime.heartbeat_status_store import read_heartbeat_status_snapshot
+from openheron.runtime.agent_runtime import AgentRuntimeContext
 from openheron.tooling.registry import SubagentSpawnRequest
 
 
@@ -345,6 +346,15 @@ class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _runtime(agent_dir: Path | None = None) -> AgentRuntimeContext:
+        root = agent_dir or Path("/tmp/openheron-test-main")
+        return AgentRuntimeContext(
+            agent_id="main",
+            workspace_root=root / "workspace",
+            agent_dir=root,
+        )
+
     async def test_start_and_stop_manage_cron_and_heartbeat_service(self) -> None:
         class _FakeRunner:
             async def run_async(self, **kwargs):
@@ -387,7 +397,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
-        await gateway._run_heartbeat(req)
+        await gateway._run_heartbeat(req, agent_runtime=self._runtime())
 
         self.assertEqual(captured["user_id"], "heartbeat")
         self.assertEqual(captured["session_id"], "heartbeat:main")
@@ -411,7 +421,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
 
         req = HeartbeatRunRequest(reason="interval", prompt="ops check")
         with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_SHOW_OK": "0"}, clear=False):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 
@@ -431,7 +441,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
 
         req = HeartbeatRunRequest(reason="interval", prompt="ops check")
         with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_SHOW_OK": "1"}, clear=False):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
         self.assertEqual(outbound.channel, "local")
         self.assertEqual(outbound.chat_id, "heartbeat")
@@ -461,7 +471,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             },
             clear=False,
         ):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 
@@ -474,7 +484,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             },
             clear=False,
         ):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
         self.assertEqual(outbound.content, "alert disk full")
 
@@ -495,7 +505,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
         with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_TARGET": "last"}, clear=False):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
 
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
         self.assertEqual(outbound.channel, "feishu")
@@ -518,7 +528,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
         with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_TARGET": "none"}, clear=False):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 
@@ -547,7 +557,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             },
             clear=False,
         ):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
         self.assertEqual(outbound.channel, "slack")
         self.assertEqual(outbound.chat_id, "C123")
@@ -578,7 +588,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             },
             clear=False,
         ):
-            await gateway._run_heartbeat(req)
+            await gateway._run_heartbeat(req, agent_runtime=self._runtime())
             status = gateway.heartbeat_status()
 
         self.assertEqual(status["target_mode"], "channel")
@@ -602,11 +612,10 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
         with tempfile.TemporaryDirectory() as tmp:
-            policy = pytypes.SimpleNamespace(workspace_root=Path(tmp))
-            with patch("openheron.app.gateway.load_security_policy", return_value=policy):
-                with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_SHOW_OK": "1"}, clear=False):
-                    await gateway._run_heartbeat(req)
-                snapshot = read_heartbeat_status_snapshot(Path(tmp))
+            runtime = self._runtime(Path(tmp))
+            with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_SHOW_OK": "1"}, clear=False):
+                await gateway._run_heartbeat(req, agent_runtime=runtime)
+            snapshot = read_heartbeat_status_snapshot(Path(tmp))
 
         self.assertIsNotNone(snapshot)
         self.assertTrue(bool(snapshot and snapshot.get("last_delivery", {}).get("delivered")))

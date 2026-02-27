@@ -49,6 +49,19 @@ def _workspace_root() -> Path:
     return Path.cwd()
 
 
+def _bootstrap_root_candidates(workspace_root: Path) -> tuple[Path, ...]:
+    """Resolve bootstrap search roots in precedence order for current agent."""
+    try:
+        from .agent_runtime import get_current_agent_runtime
+
+        runtime = get_current_agent_runtime()
+        if runtime is not None:
+            return (runtime.agent_dir / "bootstrap", workspace_root)
+    except Exception:
+        pass
+    return (workspace_root,)
+
+
 def _parse_positive_int(raw: str | None, *, default: int) -> int:
     """Parse positive integer environment values with deterministic fallback."""
     if raw is None:
@@ -98,6 +111,7 @@ def load_workspace_bootstrap_sections(workspace_root: Path | None = None) -> lis
         ``AGENTS.md``, ``SOUL.md``, ``TOOLS.md``, ``IDENTITY.md``, ``USER.md``.
     """
     root = (workspace_root or _workspace_root()).expanduser().resolve(strict=False)
+    bootstrap_roots = _bootstrap_root_candidates(root)
     per_file_limit = _max_chars_per_file()
     total_limit = _max_total_chars()
     used = 0
@@ -107,8 +121,13 @@ def load_workspace_bootstrap_sections(workspace_root: Path | None = None) -> lis
         if used >= total_limit:
             break
 
-        file_path = root / filename
-        if not file_path.is_file():
+        file_path: Path | None = None
+        for candidate_root in bootstrap_roots:
+            candidate = candidate_root / filename
+            if candidate.is_file():
+                file_path = candidate
+                break
+        if file_path is None:
             continue
 
         try:

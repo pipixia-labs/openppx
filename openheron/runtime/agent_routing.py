@@ -161,6 +161,13 @@ class AgentRouter:
         defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
         return defaults
 
+    @staticmethod
+    def _heartbeat_fallback(config: dict[str, Any]) -> dict[str, Any]:
+        """Return legacy top-level heartbeat config used as per-agent fallback."""
+        agent = config.get("agent") if isinstance(config.get("agent"), dict) else {}
+        heartbeat = agent.get("heartbeat") if isinstance(agent.get("heartbeat"), dict) else {}
+        return heartbeat
+
     def _resolve_agents(self, config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
         entries = agents.get("list") if isinstance(agents.get("list"), list) else []
@@ -329,6 +336,9 @@ class AgentRouter:
         raw_skills = merged_agent_cfg.get("skills")
         if isinstance(raw_skills, list):
             skills_allow = tuple({str(item).strip() for item in raw_skills if str(item).strip()})
+        heartbeat = merged_agent_cfg.get("heartbeat") if isinstance(merged_agent_cfg.get("heartbeat"), dict) else {}
+        fallback_heartbeat = self._heartbeat_fallback(self._config)
+        merged_heartbeat = {**fallback_heartbeat, **heartbeat}
 
         return AgentRuntimeContext(
             agent_id=agent_id,
@@ -358,7 +368,25 @@ class AgentRouter:
             fs_read_only_paths=self._resolve_path_list(fs.get("readOnlyPaths"), workspace=workspace),
             fs_workspace_only=bool(fs.get("workspaceOnly", False)),
             system_permissions=self._resolve_system_permissions(merged_agent_cfg),
+            heartbeat=merged_heartbeat,
         )
+
+    def default_agent_id(self) -> str:
+        """Return configured default agent id."""
+        return self._default_agent_id()
+
+    def runtime_for_agent(self, agent_id: str | None = None) -> AgentRuntimeContext:
+        """Return resolved runtime context for one configured agent id."""
+        resolved_agent_id = _normalize_agent_id(agent_id or self._default_agent_id())
+        merged_agent_cfg = self._agents.get(resolved_agent_id, self._agents.get(self._default_agent_id(), {}))
+        return self._build_runtime_context(resolved_agent_id, merged_agent_cfg)
+
+    def all_agent_runtimes(self) -> dict[str, AgentRuntimeContext]:
+        """Return resolved runtime contexts for all configured agents."""
+        out: dict[str, AgentRuntimeContext] = {}
+        for agent_id, merged_agent_cfg in self._agents.items():
+            out[agent_id] = self._build_runtime_context(agent_id, merged_agent_cfg)
+        return out
 
     def resolve(self, msg: InboundMessage) -> RoutedAgentRequest:
         """Resolve one inbound message into routed agent runtime/session context."""

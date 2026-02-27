@@ -33,6 +33,7 @@ class AgentRuntimeContext:
     fs_read_only_paths: tuple[Path, ...] = ()
     fs_workspace_only: bool = False
     system_permissions: dict[str, bool] = field(default_factory=dict)
+    heartbeat: dict[str, object] = field(default_factory=dict)
 
 
 _CURRENT_AGENT_RUNTIME: ContextVar[AgentRuntimeContext | None] = ContextVar(

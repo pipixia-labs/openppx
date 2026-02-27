@@ -24,7 +24,7 @@ from ..runtime.heartbeat_utils import HEARTBEAT_TOKEN, strip_heartbeat_token
 from ..runtime.heartbeat_runner import HeartbeatRunRequest, HeartbeatRunner
 from ..runtime.message_time import append_execution_time, inject_request_time
 from ..runtime.agent_routing import AgentRouter, RoutedAgentRequest
-from ..runtime.agent_runtime import AgentRuntimeContext, agent_runtime_context
+from ..runtime.agent_runtime import AgentRuntimeContext, agent_runtime_context, get_current_agent_runtime
 from ..runtime.runner_factory import create_runner
 from ..runtime.subagent_agent import build_restricted_subagent
 from ..runtime.tool_context import route_context
@@ -101,6 +101,8 @@ class Gateway:
         )
         self._inbound_task: asyncio.Task[None] | None = None
         self._cron_service: CronService | None = None
+        self._heartbeat_runners: dict[str, HeartbeatRunner] = {}
+        # Backward compatibility for tests/legacy callers that access single-runner field.
         self._heartbeat_runner: HeartbeatRunner | None = None
         self._subagent_tasks: dict[str, asyncio.Task[None]] = {}
         self._subagent_semaphore = asyncio.Semaphore(self._subagent_max_concurrency())
@@ -115,7 +117,7 @@ class Gateway:
         }
         self._inflight_user_requests = 0
         self._last_inbound_route: tuple[str, str] | None = None
-        self._last_heartbeat_delivery: dict[str, Any] | None = None
+        self._last_heartbeat_delivery_by_agent: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _subagent_max_concurrency() -> int:
@@ -136,13 +138,45 @@ class Gateway:
         return self._inflight_user_requests > 0
 
     def _request_heartbeat_wake(self, reason: str) -> None:
-        if self._heartbeat_runner is None:
+        runtime = get_current_agent_runtime()
+        if runtime is None:
+            default_agent_id = self._router.default_agent_id()
+            runner = self._heartbeat_runners.get(default_agent_id)
+            if runner is None:
+                runner = self._heartbeat_runner
+            if runner is not None:
+                runner.request_wake(reason=reason, coalesce_ms=0)
             return
-        self._heartbeat_runner.request_wake(reason=reason, coalesce_ms=0)
+        runner = self._heartbeat_runners.get(runtime.agent_id)
+        if runner is None:
+            return
+        runner.request_wake(reason=reason, coalesce_ms=0)
 
     @staticmethod
-    def _heartbeat_ack_max_chars() -> int:
-        raw = os.getenv("OPENHERON_HEARTBEAT_ACK_MAX_CHARS", "300").strip()
+    def _heartbeat_setting(
+        agent_runtime: AgentRuntimeContext,
+        *,
+        key: str,
+        env_key: str,
+        default: object,
+    ) -> object:
+        raw_env = os.getenv(env_key)
+        if raw_env is not None and str(raw_env).strip():
+            return raw_env
+        if key in agent_runtime.heartbeat:
+            return agent_runtime.heartbeat.get(key, default)
+        return default
+
+    @classmethod
+    def _heartbeat_ack_max_chars(cls, agent_runtime: AgentRuntimeContext) -> int:
+        raw = str(
+            cls._heartbeat_setting(
+                agent_runtime,
+                key="ackMaxChars",
+                env_key="OPENHERON_HEARTBEAT_ACK_MAX_CHARS",
+                default="300",
+            )
+        ).strip()
         try:
             value = int(raw)
         except ValueError:
@@ -150,36 +184,83 @@ class Gateway:
         return max(0, value)
 
     @staticmethod
-    def _heartbeat_show_ok() -> bool:
-        raw = os.getenv("OPENHERON_HEARTBEAT_SHOW_OK", "0").strip().lower()
-        return raw in {"1", "true", "yes", "on", "enabled"}
+    def _as_bool(value: object, *, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if not text:
+            return default
+        return text in {"1", "true", "yes", "on", "enabled"}
 
-    @staticmethod
-    def _heartbeat_show_alerts() -> bool:
-        raw = os.getenv("OPENHERON_HEARTBEAT_SHOW_ALERTS", "1").strip().lower()
-        return raw in {"1", "true", "yes", "on", "enabled"}
+    def _heartbeat_show_ok(self, agent_runtime: AgentRuntimeContext) -> bool:
+        value = self._heartbeat_setting(
+            agent_runtime,
+            key="showOk",
+            env_key="OPENHERON_HEARTBEAT_SHOW_OK",
+            default=False,
+        )
+        return self._as_bool(value, default=False)
 
-    @staticmethod
-    def _heartbeat_target_mode() -> str:
-        raw = os.getenv("OPENHERON_HEARTBEAT_TARGET", "last").strip().lower()
+    def _heartbeat_show_alerts(self, agent_runtime: AgentRuntimeContext) -> bool:
+        value = self._heartbeat_setting(
+            agent_runtime,
+            key="showAlerts",
+            env_key="OPENHERON_HEARTBEAT_SHOW_ALERTS",
+            default=True,
+        )
+        return self._as_bool(value, default=True)
+
+    @classmethod
+    def _heartbeat_target_mode(cls, agent_runtime: AgentRuntimeContext) -> str:
+        raw = str(
+            cls._heartbeat_setting(
+                agent_runtime,
+                key="target",
+                env_key="OPENHERON_HEARTBEAT_TARGET",
+                default="last",
+            )
+        ).strip().lower()
         if raw in {"none", "channel", "last"}:
             return raw
         return "last"
 
-    @staticmethod
-    def _heartbeat_target_channel() -> str:
-        return os.getenv("OPENHERON_HEARTBEAT_TARGET_CHANNEL", "").strip() or "local"
+    @classmethod
+    def _heartbeat_target_channel(cls, agent_runtime: AgentRuntimeContext) -> str:
+        return (
+            str(
+                cls._heartbeat_setting(
+                    agent_runtime,
+                    key="targetChannel",
+                    env_key="OPENHERON_HEARTBEAT_TARGET_CHANNEL",
+                    default="",
+                )
+            ).strip()
+            or "local"
+        )
 
-    @staticmethod
-    def _heartbeat_target_chat_id() -> str:
-        return os.getenv("OPENHERON_HEARTBEAT_TARGET_CHAT_ID", "").strip() or "heartbeat"
+    @classmethod
+    def _heartbeat_target_chat_id(cls, agent_runtime: AgentRuntimeContext) -> str:
+        return (
+            str(
+                cls._heartbeat_setting(
+                    agent_runtime,
+                    key="targetChatId",
+                    env_key="OPENHERON_HEARTBEAT_TARGET_CHAT_ID",
+                    default="",
+                )
+            ).strip()
+            or "heartbeat"
+        )
 
-    def _resolve_heartbeat_target(self) -> tuple[str, str] | None:
-        mode = self._heartbeat_target_mode()
+    def _resolve_heartbeat_target(self, *, agent_runtime: AgentRuntimeContext) -> tuple[str, str] | None:
+        mode = self._heartbeat_target_mode(agent_runtime)
         if mode == "none":
             return None
         if mode == "channel":
-            return (self._heartbeat_target_channel(), self._heartbeat_target_chat_id())
+            return (
+                self._heartbeat_target_channel(agent_runtime),
+                self._heartbeat_target_chat_id(agent_runtime),
+            )
         if self._last_inbound_route is not None:
             return self._last_inbound_route
         return ("local", "heartbeat")
@@ -194,40 +275,57 @@ class Gateway:
             return normalized[:max(0, max_chars)]
         return f"{normalized[: max_chars - 3]}..."
 
-    def heartbeat_status(self) -> dict[str, Any]:
+    @staticmethod
+    def _default_heartbeat_status() -> dict[str, Any]:
+        return {
+            "running": False,
+            "enabled": False,
+            "interval_ms": None,
+            "active_hours_enabled": False,
+            "wake_pending": False,
+            "wake_reason": None,
+            "last_run_at_ms": None,
+            "last_status": None,
+            "last_reason": None,
+            "last_duration_ms": None,
+            "last_error": None,
+            "recent_reason_sources": [],
+            "recent_reason_counts": {},
+        }
+
+    def heartbeat_status(self, agent_id: str | None = None) -> dict[str, Any]:
         """Return heartbeat runtime status for diagnostics and operator tooling."""
-        if self._heartbeat_runner is None:
-            runner_status: dict[str, Any] = {
-                "running": False,
-                "enabled": False,
-                "interval_ms": None,
-                "active_hours_enabled": False,
-                "wake_pending": False,
-                "wake_reason": None,
-                "last_run_at_ms": None,
-                "last_status": None,
-                "last_reason": None,
-                "last_duration_ms": None,
-                "last_error": None,
-                "recent_reason_sources": [],
-                "recent_reason_counts": {},
-            }
-        else:
-            runner_status = dict(self._heartbeat_runner.status())
-        runner_status["target_mode"] = self._heartbeat_target_mode()
-        runner_status["last_delivery"] = dict(self._last_heartbeat_delivery or {})
+        if agent_id is None:
+            default_agent = self._router.default_agent_id()
+            if len(self._heartbeat_runners) == 1:
+                only_agent = next(iter(self._heartbeat_runners))
+                default_agent = only_agent
+            return self.heartbeat_status(default_agent)
+
+        runner = self._heartbeat_runners.get(agent_id)
+        runner_status = dict(runner.status()) if runner is not None else self._default_heartbeat_status()
+        runtime = self._router.runtime_for_agent(agent_id)
+        runner_status["agent_id"] = runtime.agent_id
+        runner_status["target_mode"] = self._heartbeat_target_mode(runtime)
+        runner_status["last_delivery"] = dict(self._last_heartbeat_delivery_by_agent.get(runtime.agent_id, {}))
         return runner_status
 
-    def _persist_heartbeat_status_snapshot(self) -> None:
-        """Write the latest heartbeat status snapshot for CLI observability."""
-        workspace = load_security_policy().workspace_root
+    def _persist_heartbeat_status_snapshot(self, *, agent_runtime: AgentRuntimeContext) -> None:
+        """Write one agent heartbeat status snapshot for CLI observability."""
         try:
-            write_heartbeat_status_snapshot(workspace, self.heartbeat_status())
+            payload = self.heartbeat_status(agent_runtime.agent_id)
+            write_heartbeat_status_snapshot(agent_runtime.agent_dir, payload)
         except Exception:
             logger.exception("Failed persisting heartbeat status snapshot")
 
-    async def _run_heartbeat(self, req: HeartbeatRunRequest) -> None:
+    async def _run_heartbeat(
+        self,
+        req: HeartbeatRunRequest,
+        *,
+        agent_runtime: AgentRuntimeContext | None = None,
+    ) -> None:
         """Execute one heartbeat turn through the shared ADK runner."""
+        effective_runtime = agent_runtime or self._router.runtime_for_agent(None)
         try:
             prompt = append_execution_time(req.prompt)
             request = types.UserContent(parts=[types.Part.from_text(text=prompt)])
@@ -235,19 +333,20 @@ class Gateway:
                 runner=self.runner,
                 channel="local",
                 chat_id="heartbeat",
+                agent_runtime=effective_runtime,
                 default_when_empty=None,
                 user_id="heartbeat",
-                session_id="heartbeat:main",
+                session_id=f"heartbeat:{effective_runtime.agent_id}",
                 new_message=request,
             )
             normalized = strip_heartbeat_token(
                 final,
                 mode="heartbeat",
-                max_ack_chars=self._heartbeat_ack_max_chars(),
+                max_ack_chars=self._heartbeat_ack_max_chars(effective_runtime),
             )
-            target = self._resolve_heartbeat_target()
+            target = self._resolve_heartbeat_target(agent_runtime=effective_runtime)
             if target is None:
-                self._last_heartbeat_delivery = {
+                self._last_heartbeat_delivery_by_agent[effective_runtime.agent_id] = {
                     "reason": req.reason,
                     "kind": "target-none",
                     "delivered": False,
@@ -255,7 +354,7 @@ class Gateway:
                 return
             target_channel, target_chat_id = target
             if normalized.should_skip:
-                if self._heartbeat_show_ok():
+                if self._heartbeat_show_ok(effective_runtime):
                     await self.bus.publish_outbound(
                         OutboundMessage(
                             channel=target_channel,
@@ -264,7 +363,7 @@ class Gateway:
                             metadata={"system": "heartbeat", "reason": req.reason},
                         )
                     )
-                    self._last_heartbeat_delivery = {
+                    self._last_heartbeat_delivery_by_agent[effective_runtime.agent_id] = {
                         "reason": req.reason,
                         "kind": "ok",
                         "delivered": True,
@@ -273,7 +372,7 @@ class Gateway:
                         "content_preview": HEARTBEAT_TOKEN,
                     }
                 else:
-                    self._last_heartbeat_delivery = {
+                    self._last_heartbeat_delivery_by_agent[effective_runtime.agent_id] = {
                         "reason": req.reason,
                         "kind": "ok-muted",
                         "delivered": False,
@@ -281,8 +380,8 @@ class Gateway:
                         "target_chat_id": target_chat_id,
                     }
                 return
-            if not self._heartbeat_show_alerts():
-                self._last_heartbeat_delivery = {
+            if not self._heartbeat_show_alerts(effective_runtime):
+                self._last_heartbeat_delivery_by_agent[effective_runtime.agent_id] = {
                     "reason": req.reason,
                     "kind": "alert-muted",
                     "delivered": False,
@@ -292,7 +391,7 @@ class Gateway:
                 return
             content = normalized.text.strip() or (final or "").strip()
             if not content:
-                self._last_heartbeat_delivery = {
+                self._last_heartbeat_delivery_by_agent[effective_runtime.agent_id] = {
                     "reason": req.reason,
                     "kind": "empty",
                     "delivered": False,
@@ -308,7 +407,7 @@ class Gateway:
                     metadata={"system": "heartbeat", "reason": req.reason},
                 )
             )
-            self._last_heartbeat_delivery = {
+            self._last_heartbeat_delivery_by_agent[effective_runtime.agent_id] = {
                 "reason": req.reason,
                 "kind": "alert",
                 "delivered": True,
@@ -317,7 +416,7 @@ class Gateway:
                 "content_preview": self._heartbeat_preview(content),
             }
         finally:
-            self._persist_heartbeat_status_snapshot()
+            self._persist_heartbeat_status_snapshot(agent_runtime=effective_runtime)
 
     async def _persist_session_memory_snapshot(
         self,
@@ -418,8 +517,11 @@ class Gateway:
                     content=final,
                 )
             )
-        if self._heartbeat_runner is not None:
-            self._heartbeat_runner.request_wake(reason=f"cron:{job.id}", coalesce_ms=0)
+        default_runner = self._heartbeat_runners.get(self._router.default_agent_id())
+        if default_runner is None:
+            default_runner = self._heartbeat_runner
+        if default_runner is not None:
+            default_runner.request_wake(reason=f"cron:{job.id}", coalesce_ms=0)
         return final
 
     async def start(self) -> None:
@@ -432,21 +534,34 @@ class Gateway:
         configure_heartbeat_waker(self._request_heartbeat_wake)
         if self._cron_service is None:
             self._cron_service = CronService(self._cron_store_path(), on_job=self._run_cron_job)
-        if self._heartbeat_runner is None:
-            self._heartbeat_runner = HeartbeatRunner(
-                on_run=self._run_heartbeat,
-                is_busy=self._heartbeat_is_busy,
-            )
+        if not self._heartbeat_runners:
+            for runtime in self._router.all_agent_runtimes().values():
+                heartbeat_cfg = runtime.heartbeat if isinstance(runtime.heartbeat, dict) else {}
+                active_hours_cfg = heartbeat_cfg.get("activeHours")
+                active_hours = active_hours_cfg if isinstance(active_hours_cfg, dict) else {}
+                self._heartbeat_runners[runtime.agent_id] = HeartbeatRunner(
+                    on_run=lambda req, rt=runtime: self._run_heartbeat(req, agent_runtime=rt),
+                    every=str(heartbeat_cfg.get("every", "30m")).strip() or "30m",
+                    prompt=str(heartbeat_cfg.get("prompt", "")).strip(),
+                    active_hours={
+                        "start": str(active_hours.get("start", "")).strip(),
+                        "end": str(active_hours.get("end", "")).strip(),
+                        "timezone": str(active_hours.get("timezone", "user")).strip() or "user",
+                    },
+                    is_busy=self._heartbeat_is_busy,
+                )
+        self._heartbeat_runner = self._heartbeat_runners.get(self._router.default_agent_id())
         await self._cron_service.start()
-        await self._heartbeat_runner.start()
+        for runner in self._heartbeat_runners.values():
+            await runner.start()
         if self.channel_manager:
             await self.channel_manager.start_all()
             await self.channel_manager.start_dispatcher()
         self._inbound_task = asyncio.create_task(self._consume_inbound())
 
     async def stop(self) -> None:
-        if self._heartbeat_runner is not None:
-            await self._heartbeat_runner.stop()
+        for runner in self._heartbeat_runners.values():
+            await runner.stop()
         if self._cron_service is not None:
             self._cron_service.stop()
         configure_heartbeat_waker(None)
@@ -455,6 +570,8 @@ class Gateway:
         await self._stop_subagent_tasks()
         await _cancel_task(self._inbound_task)
         self._inbound_task = None
+        self._heartbeat_runners = {}
+        self._heartbeat_runner = None
         if self.channel_manager:
             await self.channel_manager.stop_dispatcher()
             await self.channel_manager.stop_all()
