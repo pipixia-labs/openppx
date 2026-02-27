@@ -1,7 +1,7 @@
 """ADK BaseLlm adapter for OpenAI Codex OAuth Responses API.
 
 This adapter maps ADK request/response primitives to Codex Responses API:
-- Reads OAuth token via `oauth_cli_kit.get_token()`
+- Reads OAuth token via `oauth_cli_kit` `FileTokenStorage` under current agentDir
 - Sends conversation and tool state as Codex `input` items
 - Parses SSE events into ADK `LlmResponse` with text and function calls
 """
@@ -140,10 +140,18 @@ def _get_codex_token() -> Any:
     """Load OAuth token for Codex usage from local oauth-cli-kit store."""
     try:
         from oauth_cli_kit import get_token
+        from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
+        from oauth_cli_kit.storage import FileTokenStorage
     except ImportError as exc:  # pragma: no cover - environment dependency
         raise RuntimeError("oauth-cli-kit is not installed. Run: pip install oauth-cli-kit") from exc
+    from .auth_paths import resolve_openai_codex_oauth_data_dir
 
-    token = get_token()
+    storage = FileTokenStorage(
+        token_filename=OPENAI_CODEX_PROVIDER.token_filename,
+        data_dir=resolve_openai_codex_oauth_data_dir(),
+        import_codex_cli=False,
+    )
+    token = get_token(storage=storage, provider=OPENAI_CODEX_PROVIDER)
     if not token or not getattr(token, "access", ""):
         raise RuntimeError(
             "OpenAI Codex OAuth token missing. Run: openheron provider login openai-codex"

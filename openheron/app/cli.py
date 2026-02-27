@@ -62,6 +62,10 @@ from ..core.provider import (
     validate_provider_runtime,
 )
 from ..core.provider_registry import find_provider_spec
+from ..core.auth_paths import (
+    resolve_github_copilot_token_dir,
+    resolve_openai_codex_oauth_data_dir,
+)
 from ..runtime.adk_utils import extract_text, merge_text_stream
 from ..runtime.cron_helpers import cron_store_path, format_schedule, format_timestamp_ms
 from ..runtime.cron_service import CronService
@@ -496,11 +500,18 @@ def _check_openai_codex_oauth() -> tuple[bool, str]:
     """Check whether OpenAI Codex OAuth token is locally available."""
     try:
         from oauth_cli_kit import get_token
+        from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
+        from oauth_cli_kit.storage import FileTokenStorage
     except ImportError:
         return False, "oauth-cli-kit is not installed. Run: pip install oauth-cli-kit"
 
     try:
-        token = get_token()
+        storage = FileTokenStorage(
+            token_filename=OPENAI_CODEX_PROVIDER.token_filename,
+            data_dir=resolve_openai_codex_oauth_data_dir(),
+            import_codex_cli=False,
+        )
+        token = get_token(storage=storage, provider=OPENAI_CODEX_PROVIDER)
     except Exception as exc:
         return False, f"failed to read oauth token store ({exc})"
 
@@ -519,10 +530,7 @@ def _check_github_copilot_oauth_non_invasive() -> tuple[bool, str]:
     - api key cache file: ~/.config/litellm/github_copilot/api-key.json
     """
     token_dir = Path(
-        os.getenv(
-            "GITHUB_COPILOT_TOKEN_DIR",
-            str(Path.home() / ".config/litellm/github_copilot"),
-        )
+        os.getenv("GITHUB_COPILOT_TOKEN_DIR", str(resolve_github_copilot_token_dir()))
     )
     access_path = token_dir / os.getenv("GITHUB_COPILOT_ACCESS_TOKEN_FILE", "access-token")
     api_key_path = token_dir / os.getenv("GITHUB_COPILOT_API_KEY_FILE", "api-key.json")
@@ -1444,12 +1452,19 @@ def _provider_login_openai_codex() -> None:
     """Authenticate OpenAI Codex with oauth-cli-kit interactive flow."""
     try:
         from oauth_cli_kit import get_token, login_oauth_interactive
+        from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
+        from oauth_cli_kit.storage import FileTokenStorage
     except ImportError as exc:
         raise RuntimeError("oauth-cli-kit is not installed. Run: pip install oauth-cli-kit") from exc
 
+    storage = FileTokenStorage(
+        token_filename=OPENAI_CODEX_PROVIDER.token_filename,
+        data_dir=resolve_openai_codex_oauth_data_dir(),
+        import_codex_cli=False,
+    )
     token = None
     try:
-        token = get_token()
+        token = get_token(storage=storage, provider=OPENAI_CODEX_PROVIDER)
     except Exception:
         token = None
 
@@ -1460,6 +1475,8 @@ def _provider_login_openai_codex() -> None:
         token = login_oauth_interactive(
             print_fn=lambda s: _stdout_line(str(s)),
             prompt_fn=lambda s: input(str(s)),
+            provider=OPENAI_CODEX_PROVIDER,
+            storage=storage,
         )
 
     ok, detail = _check_openai_codex_oauth()
@@ -1474,6 +1491,8 @@ def _provider_login_openai_codex() -> None:
 def _provider_login_github_copilot() -> None:
     """Authenticate GitHub Copilot via LiteLLM device flow."""
     _stdout_line("Starting GitHub Copilot OAuth device flow...")
+    token_dir = resolve_github_copilot_token_dir()
+    token_dir.mkdir(parents=True, exist_ok=True)
 
     async def _trigger() -> None:
         from litellm import acompletion
@@ -1484,7 +1503,15 @@ def _provider_login_github_copilot() -> None:
             max_tokens=1,
         )
 
-    asyncio.run(_trigger())
+    previous = os.environ.get("GITHUB_COPILOT_TOKEN_DIR")
+    os.environ["GITHUB_COPILOT_TOKEN_DIR"] = str(token_dir)
+    try:
+        asyncio.run(_trigger())
+    finally:
+        if previous is None:
+            os.environ.pop("GITHUB_COPILOT_TOKEN_DIR", None)
+        else:
+            os.environ["GITHUB_COPILOT_TOKEN_DIR"] = previous
     _stdout_line("GitHub Copilot OAuth authenticated.")
 
 
@@ -3388,6 +3415,7 @@ def _cmd_gateway(
 
     async def _run() -> int:
         bus = MessageBus()
+        cfg = load_config()
         names = parse_enabled_channels(channels)
         issues = validate_channel_setup(names)
         if issues:
@@ -3421,6 +3449,7 @@ def _cmd_gateway(
             app_name=root_agent.name,
             bus=bus,
             channel_manager=manager,
+            config=cfg,
         )
         await gateway.start()
         _stdout_line(f"gateway started with channels: {', '.join(names)}")

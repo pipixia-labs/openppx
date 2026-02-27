@@ -367,25 +367,48 @@ class CLITests(unittest.TestCase):
         from openheron import cli
 
         token = pytypes.SimpleNamespace(access="token", account_id="acct_1")
+        fake_provider = pytypes.SimpleNamespace(token_filename="openai_codex.json")
+        fake_storage = Mock(name="storage")
         fake_oauth_module = pytypes.SimpleNamespace(
             get_token=Mock(return_value=token),
             login_oauth_interactive=Mock(return_value=token),
         )
-        with patch.dict(sys.modules, {"oauth_cli_kit": fake_oauth_module}):
+        fake_oauth_providers = pytypes.SimpleNamespace(OPENAI_CODEX_PROVIDER=fake_provider)
+        fake_oauth_storage = pytypes.SimpleNamespace(FileTokenStorage=Mock(return_value=fake_storage))
+        with patch.dict(
+            sys.modules,
+            {
+                "oauth_cli_kit": fake_oauth_module,
+                "oauth_cli_kit.providers": fake_oauth_providers,
+                "oauth_cli_kit.storage": fake_oauth_storage,
+            },
+        ):
             with patch("builtins.print"):
                 code = cli._cmd_provider_login("openai-codex")
         self.assertEqual(code, 0)
+        self.assertGreaterEqual(fake_oauth_module.get_token.call_count, 1)
         fake_oauth_module.login_oauth_interactive.assert_not_called()
 
     def test_cmd_provider_login_openai_codex_rejects_missing_account_id(self) -> None:
         from openheron import cli
 
         token = pytypes.SimpleNamespace(access="token", account_id="")
+        fake_provider = pytypes.SimpleNamespace(token_filename="openai_codex.json")
+        fake_storage = Mock(name="storage")
         fake_oauth_module = pytypes.SimpleNamespace(
             get_token=Mock(return_value=token),
             login_oauth_interactive=Mock(return_value=token),
         )
-        with patch.dict(sys.modules, {"oauth_cli_kit": fake_oauth_module}):
+        fake_oauth_providers = pytypes.SimpleNamespace(OPENAI_CODEX_PROVIDER=fake_provider)
+        fake_oauth_storage = pytypes.SimpleNamespace(FileTokenStorage=Mock(return_value=fake_storage))
+        with patch.dict(
+            sys.modules,
+            {
+                "oauth_cli_kit": fake_oauth_module,
+                "oauth_cli_kit.providers": fake_oauth_providers,
+                "oauth_cli_kit.storage": fake_oauth_storage,
+            },
+        ):
             with patch("builtins.print") as mocked_info:
                 code = cli._cmd_provider_login("openai-codex")
 
