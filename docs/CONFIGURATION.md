@@ -18,6 +18,7 @@
 ## `config.json` 关键字段
 
 - `agent.workspace` / `agent.builtinSkillsDir`
+- `agents.defaults / agents.list / bindings`（多智能体路由与每 agent 策略）
 - `providers.<provider>.enabled / apiKey / model / apiBase / extraHeaders`
 - `multimodalProviders.<name>.enabled / apiKey / model / apiBase / extraHeaders`
 - `gui.groundingProvider / gui.plannerProvider / gui.builtinToolsEnabled`（绑定到 `multimodalProviders` 名称）
@@ -29,6 +30,32 @@
 - `debug`
 
 Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true”。
+
+## 多智能体配置（v1）
+
+v1 路由键：`channel + accountId + peer`，优先级为：
+
+1. `peer`（`channel + accountId + peer.kind + peer.id`）
+2. `account`（`channel + accountId`）
+3. `channel`（`channel`）
+4. `default agent`
+
+`agents.defaults` 用于公共默认值，`agents.list` 定义具体 agent，`bindings` 定义路由规则。
+
+每个 agent 可独立配置：
+
+- `workspace`
+- `agentDir`（包含该 agent 的 auth 缓存目录）
+- `security`（`restrictToWorkspace/allowExec/allowNetwork/execAllowlist`）
+- `fs`（`workspaceOnly/allowedPaths/denyPaths/readOnlyPaths`）
+- `tools`（`allow/deny`）
+- `skills`（skill allowlist）
+- `systemPermissions`（如 `browser/gui/screenshot`）
+
+说明：
+
+- DM 会话默认按 peer 隔离（并区分 accountId）。
+- 支持同一 channel 下多 accountId 路由到不同 agent。
 
 ## `runtime.json`（高级）关键字段
 
@@ -59,6 +86,7 @@ Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true
 - `OPENHERON_CHANNELS`
 - `OPENHERON_DEBUG`
 - `OPENHERON_DEBUG_MAX_CHARS`
+- `OPENHERON_AGENT_DIR`
 
 ### Session / Memory / Compaction
 
@@ -238,6 +266,74 @@ export OPENHERON_GUI_ALLOW_DANGEROUS_KEYS=false
     "workspace": "~/.openheron/workspace",
     "builtinSkillsDir": ""
   },
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openheron/workspace",
+      "agentDir": "~/.openheron/agents/main/agent",
+      "security": {
+        "restrictToWorkspace": false,
+        "allowExec": true,
+        "allowNetwork": true,
+        "execAllowlist": []
+      },
+      "fs": {
+        "workspaceOnly": false,
+        "allowedPaths": [],
+        "denyPaths": [],
+        "readOnlyPaths": []
+      },
+      "tools": {
+        "allow": [],
+        "deny": []
+      },
+      "systemPermissions": {
+        "browser": true,
+        "gui": true,
+        "screenshot": true
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "workspace": "~/.openheron/workspace/main",
+        "agentDir": "~/.openheron/agents/main/agent",
+        "skills": []
+      },
+      {
+        "id": "biz",
+        "workspace": "~/.openheron/workspace/biz",
+        "agentDir": "~/.openheron/agents/biz/agent",
+        "skills": [
+          "sales"
+        ],
+        "tools": {
+          "deny": [
+            "exec"
+          ]
+        },
+        "systemPermissions": {
+          "gui": false
+        }
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agentId": "biz",
+      "match": {
+        "channel": "whatsapp",
+        "accountId": "business"
+      }
+    },
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "whatsapp",
+        "accountId": "personal"
+      }
+    }
+  ],
   "providers": {
     "google": {
       "enabled": true,

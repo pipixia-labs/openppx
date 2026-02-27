@@ -1,0 +1,192 @@
+{
+  "agent": {
+    "workspace": "~/.openheron/workspace",
+    "builtinSkillsDir": ""
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openheron/workspace/main",
+      "agentDir": "~/.openheron/agents/main/agent",
+      "security": {
+        "restrictToWorkspace": false,
+        "allowExec": true,
+        "allowNetwork": true,
+        "execAllowlist": []
+      },
+      "fs": {
+        "workspaceOnly": false,
+        "allowedPaths": [],
+        "denyPaths": [],
+        "readOnlyPaths": []
+      },
+      "tools": {
+        "allow": [],
+        "deny": []
+      },
+      "systemPermissions": {
+        "browser": true,
+        "gui": true,
+        "screenshot": true
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "default": true,
+        "workspace": "~/.openheron/workspace/main",
+        "agentDir": "~/.openheron/agents/main/agent",
+        "skills": []
+      },
+      {
+        "id": "whatsapp_personal",
+        "workspace": "~/.openheron/workspace/whatsapp-personal",
+        "agentDir": "~/.openheron/agents/whatsapp-personal/agent",
+        "skills": [
+          "personal_assistant"
+        ],
+        "security": {
+          "allowExec": true,
+          "allowNetwork": true
+        },
+        "tools": {
+          "deny": []
+        }
+      },
+      {
+        "id": "whatsapp_business",
+        "workspace": "~/.openheron/workspace/whatsapp-business",
+        "agentDir": "~/.openheron/agents/whatsapp-business/agent",
+        "skills": [
+          "sales_ops"
+        ],
+        "security": {
+          "allowExec": false,
+          "allowNetwork": true,
+          "restrictToWorkspace": true
+        },
+        "fs": {
+          "workspaceOnly": true,
+          "allowedPaths": [
+            "./data",
+            "./reports"
+          ],
+          "denyPaths": [
+            "./secrets"
+          ],
+          "readOnlyPaths": [
+            "./reports"
+          ]
+        },
+        "tools": {
+          "deny": [
+            "exec",
+            "spawn_subagent"
+          ]
+        },
+        "systemPermissions": {
+          "browser": true,
+          "gui": false,
+          "screenshot": false
+        }
+      },
+      {
+        "id": "vip_customer_dm",
+        "workspace": "~/.openheron/workspace/vip",
+        "agentDir": "~/.openheron/agents/vip/agent",
+        "skills": [
+          "vip_support"
+        ],
+        "tools": {
+          "allow": [
+            "read_file",
+            "write_file",
+            "list_dir",
+            "web_search",
+            "web_fetch",
+            "message"
+          ],
+          "deny": []
+        },
+        "systemPermissions": {
+          "browser": false,
+          "gui": false,
+          "screenshot": false
+        }
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agentId": "whatsapp_personal",
+      "match": {
+        "channel": "whatsapp",
+        "accountId": "personal"
+      }
+    },
+    {
+      "agentId": "whatsapp_business",
+      "match": {
+        "channel": "whatsapp",
+        "accountId": "business"
+      }
+    },
+    {
+      "agentId": "vip_customer_dm",
+      "match": {
+        "channel": "whatsapp",
+        "accountId": "business",
+        "peer": {
+          "kind": "direct",
+          "id": "+15550008888"
+        }
+      }
+    }
+  ],
+  "providers": {
+    "google": {
+      "enabled": true,
+      "apiKey": "",
+      "model": "gemini-3-flash-preview",
+      "apiBase": "",
+      "extraHeaders": {}
+    },
+    "openai": {
+      "enabled": false,
+      "apiKey": "",
+      "model": "openai/gpt-4.1-mini",
+      "apiBase": "",
+      "extraHeaders": {}
+    },
+    "openai_codex": {
+      "enabled": false,
+      "apiKey": "",
+      "model": "openai-codex/gpt-5-codex",
+      "apiBase": "",
+      "extraHeaders": {}
+    }
+  },
+  "session": {
+    "dbUrl": ""
+  },
+  "channels": {
+    "local": {
+      "enabled": true
+    },
+    "whatsapp": {
+      "enabled": true,
+      "bridgeUrl": "ws://localhost:3001",
+      "bridgeToken": "",
+      "allowFrom": []
+    }
+  },
+  "web": {
+    "enabled": true,
+    "search": {
+      "enabled": true,
+      "provider": "brave",
+      "apiKey": "",
+      "maxResults": 5
+    }
+  },
+  "debug": false
+}

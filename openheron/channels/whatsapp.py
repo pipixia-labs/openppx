@@ -146,6 +146,16 @@ class WhatsAppChannel(BaseChannel):
             "timestamp": str(data.get("timestamp", "")),
             "is_group": bool(data.get("isGroup", False)),
         }
+        account_id = str(data.get("accountId") or data.get("account_id") or "").strip()
+        if account_id:
+            metadata["accountId"] = account_id
+            metadata["account_id"] = account_id
+        peer_kind = "group" if metadata["is_group"] else "direct"
+        peer_id = chat_id
+        metadata["chat_type"] = peer_kind
+        metadata["peer_kind"] = peer_kind
+        metadata["peer_id"] = peer_id
+        metadata["peer"] = {"kind": peer_kind, "id": peer_id}
         await self.publish_inbound(
             sender_id=sender_id,
             chat_id=chat_id,

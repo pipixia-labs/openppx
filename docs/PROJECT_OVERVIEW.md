@@ -45,7 +45,9 @@
 
 - 用户隔离：`user_id` 作为用户级作用域
 - 会话隔离：`session_id` 作为单轮/多轮上下文容器
-- 默认 session key：`{channel}:{chat_id}`（由 `InboundMessage.session_key` 生成）
+- 默认 session key（多智能体 v1）：`agent:{agentId}:{channel}:{accountId}:{peerKind}:{peerId}`
+  - DM：按 `peerId` 独立会话
+  - 同一 channel 的不同 `accountId` 会拆分会话
 - Session 持久化：SQLite，默认 `~/.openheron/database/sessions.db`
 
 ### 3.2 `/new` 与 `/help`
@@ -57,7 +59,7 @@
   - 不调用模型
 - `/new`
   - 先尝试将当前活动 session 写入 memory（若已启用 memory service）
-  - 再为当前 `channel:chat_id` 绑定一个新的 ADK `session_id`
+  - 再为当前路由键（`agent/channel/accountId/peer`）绑定一个新的 ADK `session_id`
   - 后续对话进入新会话上下文
   - 不调用模型
 
