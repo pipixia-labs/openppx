@@ -1675,6 +1675,24 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
     summary = _doctor_summarize_multi_agent_config(config_payload)
     preview = _doctor_preview_multi_agent_routes(config_payload, limit=max(1, min(limit, 50)))
     conflicts = summary.get("conflicts", [])
+    suggestions: list[str] = []
+    if conflicts:
+        suggestions.append(
+            "For each duplicate signature in conflicts, keep exactly one target agent for that channel/accountId/peer."
+        )
+        suggestions.append("If you need special routing for one user/chat, add a higher-priority peer rule instead.")
+    for item in issues:
+        text = str(item).lower()
+        if "default agent is required" in text:
+            suggestions.append("Set exactly one `agents.list[*].default=true`.")
+        elif "agentid" in text and "does not exist" in text:
+            suggestions.append("Fix `bindings[*].agentId` to an existing id in `agents.list[*].id`.")
+        elif "match.channel is required" in text:
+            suggestions.append("Set `bindings[*].match.channel` for every binding entry.")
+        elif "duplicate agent id" in text:
+            suggestions.append("Ensure each `agents.list[*].id` is unique.")
+    # Keep output compact and deterministic.
+    suggestions = list(dict.fromkeys(suggestions))
 
     report: dict[str, Any] = {
         "ok": not issues and not conflicts,
@@ -1682,6 +1700,7 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
         "issues": issues,
         "summary": summary,
         "routePreview": preview,
+        "suggestions": suggestions,
     }
 
     if output_json:
@@ -1713,6 +1732,10 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
                 f"agent={item.get('agentId')}, "
                 f"session={item.get('sessionIdExample')}"
             )
+    if suggestions:
+        _stdout_line("Suggested actions:")
+        for item in suggestions:
+            _stdout_line(f"- {item}")
     return 0 if report["ok"] else 1
 
 

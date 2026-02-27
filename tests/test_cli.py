@@ -2417,6 +2417,8 @@ class CLITests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertIn("summary", payload)
         self.assertIn("routePreview", payload)
+        self.assertIn("suggestions", payload)
+        self.assertEqual(payload["suggestions"], [])
         self.assertLessEqual(len(payload["routePreview"]), 3)
 
     def test_cmd_routes_lint_text_output_reports_conflicts(self) -> None:
@@ -2435,6 +2437,8 @@ class CLITests(unittest.TestCase):
         lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
         self.assertTrue(any(line.startswith("Routes lint:") for line in lines))
         self.assertTrue(any(line == "Routing conflicts:" for line in lines))
+        self.assertTrue(any(line == "Suggested actions:" for line in lines))
+        self.assertTrue(any("keep exactly one target agent" in line for line in lines))
 
     def test_cmd_provider_status_json_output_includes_oauth_issue(self) -> None:
         from openheron import cli
