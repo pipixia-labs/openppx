@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import logging
 import os
 import uuid
@@ -18,6 +19,7 @@ from ..runtime.adk_utils import extract_text, merge_text_stream
 from ..runtime.cron_helpers import cron_store_path
 from ..runtime.cron_service import CronJob, CronService
 from ..runtime.heartbeat_status_store import write_heartbeat_status_snapshot
+from ..runtime.route_stats_store import write_route_stats_snapshot
 from ..runtime.heartbeat_utils import HEARTBEAT_TOKEN, strip_heartbeat_token
 from ..runtime.heartbeat_runner import HeartbeatRunRequest, HeartbeatRunner
 from ..runtime.message_time import append_execution_time, inject_request_time
@@ -104,6 +106,13 @@ class Gateway:
         self._subagent_semaphore = asyncio.Semaphore(self._subagent_max_concurrency())
         # Map logical inbound session keys (channel:chat_id) to active ADK session ids.
         self._session_overrides: dict[str, str] = {}
+        self._route_stats: dict[str, Any] = {
+            "totalMessages": 0,
+            "byAgent": {},
+            "byChannel": {},
+            "byMatchedBy": {},
+            "recent": [],
+        }
         self._inflight_user_requests = 0
         self._last_inbound_route: tuple[str, str] | None = None
         self._last_heartbeat_delivery: dict[str, Any] | None = None
@@ -442,6 +451,7 @@ class Gateway:
 
     async def process_message(self, msg: InboundMessage) -> OutboundMessage:
         routed: RoutedAgentRequest = self._router.resolve(msg)
+        self._record_route_hit(channel=msg.channel, routed=routed)
         command = msg.content.strip().lower()
         if command == "/help":
             return OutboundMessage(
@@ -485,6 +495,51 @@ class Gateway:
             content=final,
             metadata=self._attach_route_metadata(msg.metadata, routed),
         )
+
+    def _record_route_hit(self, *, channel: str, routed: RoutedAgentRequest) -> None:
+        """Record one route hit for lightweight runtime observability."""
+        stats = self._route_stats
+        stats["totalMessages"] = int(stats.get("totalMessages", 0)) + 1
+        by_agent = stats.setdefault("byAgent", {})
+        by_channel = stats.setdefault("byChannel", {})
+        by_matched = stats.setdefault("byMatchedBy", {})
+        by_agent[routed.agent_id] = int(by_agent.get(routed.agent_id, 0)) + 1
+        normalized_channel = str(channel).strip().lower() or "unknown"
+        by_channel[normalized_channel] = int(by_channel.get(normalized_channel, 0)) + 1
+        by_matched[routed.matched_by] = int(by_matched.get(routed.matched_by, 0)) + 1
+
+        recent = stats.setdefault("recent", [])
+        if not isinstance(recent, list):
+            recent = []
+            stats["recent"] = recent
+        recent.append(
+            {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "agentId": routed.agent_id,
+                "matchedBy": routed.matched_by,
+                "channel": normalized_channel,
+                "accountId": routed.account_id,
+                "peerKind": routed.peer_kind,
+                "peerId": routed.peer_id,
+                "sessionId": routed.session_id,
+            }
+        )
+        max_recent = 200
+        if len(recent) > max_recent:
+            del recent[:-max_recent]
+        self._persist_route_stats_snapshot()
+
+    def _persist_route_stats_snapshot(self) -> None:
+        """Write the latest route stats snapshot for CLI observability."""
+        workspace = load_security_policy().workspace_root
+        payload = {
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            **self._route_stats,
+        }
+        try:
+            write_route_stats_snapshot(workspace, payload)
+        except Exception:
+            logger.exception("Failed persisting route stats snapshot")
 
     @staticmethod
     def _attach_route_metadata(

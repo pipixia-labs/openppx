@@ -71,6 +71,7 @@ from ..runtime.cron_helpers import cron_store_path, format_schedule, format_time
 from ..runtime.cron_service import CronService
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.heartbeat_status_store import read_heartbeat_status_snapshot
+from ..runtime.route_stats_store import read_route_stats_snapshot
 from ..runtime.token_usage_store import parse_time_filter_to_epoch_ms, read_token_usage_stats, token_usage_db_path
 from ..runtime.gateway_service import (
     detect_service_manager,
@@ -1739,6 +1740,54 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
     return 0 if report["ok"] else 1
 
 
+def _cmd_routes_stats(*, output_json: bool = False, limit: int = 20) -> int:
+    """Show persisted route hit stats from latest gateway runtime snapshot."""
+    registry = get_registry()
+    snapshot = read_route_stats_snapshot(registry.workspace)
+    max_items = max(1, min(int(limit), 200))
+    if snapshot is None:
+        report = {
+            "ok": False,
+            "message": "route stats snapshot not found",
+            "workspace": str(registry.workspace),
+            "stats": {},
+        }
+        if output_json:
+            _stdout_line(json.dumps(report, ensure_ascii=False))
+        else:
+            _stdout_line(f"Routes stats: snapshot not found (workspace={registry.workspace})")
+            _stdout_line("Start gateway traffic first, then retry `openheron routes stats`.")
+        return 1
+
+    recent = snapshot.get("recent", [])
+    if not isinstance(recent, list):
+        recent = []
+    trimmed_recent = recent[-max_items:]
+    stats = dict(snapshot)
+    stats["recent"] = trimmed_recent
+    report = {
+        "ok": True,
+        "workspace": str(registry.workspace),
+        "stats": stats,
+    }
+    if output_json:
+        _stdout_line(json.dumps(report, ensure_ascii=False))
+        return 0
+
+    _stdout_line(
+        "Routes stats: "
+        f"total={stats.get('totalMessages', 0)}, "
+        f"agents={len(stats.get('byAgent', {}))}, "
+        f"channels={len(stats.get('byChannel', {}))}, "
+        f"recent={len(trimmed_recent)}"
+    )
+    _stdout_line(f"Generated at: {stats.get('generatedAt', '-')}")
+    _stdout_line(f"By agent: {json.dumps(stats.get('byAgent', {}), ensure_ascii=False)}")
+    _stdout_line(f"By channel: {json.dumps(stats.get('byChannel', {}), ensure_ascii=False)}")
+    _stdout_line(f"By matchedBy: {json.dumps(stats.get('byMatchedBy', {}), ensure_ascii=False)}")
+    return 0
+
+
 def _doctor_install_prereq_line(line: str) -> str:
     """Render one install prereq line with a lightweight health status tag."""
 
@@ -1953,6 +2002,7 @@ def _dispatch_routes_command(args: argparse.Namespace, parser: argparse.Argument
     """Dispatch routes subcommands from parsed argparse namespace."""
     handlers: dict[str, Callable[[], int]] = {
         "lint": lambda: _cmd_routes_lint(output_json=args.output_json, limit=args.limit),
+        "stats": lambda: _cmd_routes_stats(output_json=args.output_json, limit=args.limit),
     }
     handler = handlers.get(args.routes_command)
     if handler is None:
@@ -4453,6 +4503,19 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         default=8,
         help="Max route preview items in output (default: 8).",
+    )
+    routes_stats_parser = routes_subparsers.add_parser("stats", help="Show persisted route hit stats.")
+    routes_stats_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Emit route stats as one machine-readable JSON object.",
+    )
+    routes_stats_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Max recent route-hit records in output (default: 20).",
     )
 
     channels_parser = subparsers.add_parser("channels", help="Manage channel helper commands.")

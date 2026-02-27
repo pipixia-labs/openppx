@@ -324,6 +324,17 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
                 mocked_lint.assert_called_once_with(output_json=True, limit=12)
 
+    def test_routes_stats_mode_dispatch_with_json_and_limit(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_routes_stats", return_value=0) as mocked_stats:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["routes", "stats", "--json", "--limit", "9"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_bootstrap.assert_called_once()
+                mocked_stats.assert_called_once_with(output_json=True, limit=9)
+
     def test_channels_login_mode_dispatch(self) -> None:
         from openheron import cli
 
@@ -2439,6 +2450,28 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any(line == "Routing conflicts:" for line in lines))
         self.assertTrue(any(line == "Suggested actions:" for line in lines))
         self.assertTrue(any("keep exactly one target agent" in line for line in lines))
+
+    def test_cmd_routes_stats_json_output_contains_counts(self) -> None:
+        from openheron import cli
+
+        snapshot = {
+            "generatedAt": "2026-02-27T00:00:00+00:00",
+            "totalMessages": 3,
+            "byAgent": {"main": 2, "biz": 1},
+            "byChannel": {"whatsapp": 3},
+            "byMatchedBy": {"binding.account": 3},
+            "recent": [{"agentId": "main"}, {"agentId": "biz"}, {"agentId": "main"}],
+        }
+        fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
+        with patch.object(cli, "get_registry", return_value=fake_registry):
+            with patch.object(cli, "read_route_stats_snapshot", return_value=snapshot):
+                with patch("builtins.print") as mocked_print:
+                    code = cli._cmd_routes_stats(output_json=True, limit=2)
+        self.assertEqual(code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["stats"]["totalMessages"], 3)
+        self.assertEqual(len(payload["stats"]["recent"]), 2)
 
     def test_cmd_provider_status_json_output_includes_oauth_issue(self) -> None:
         from openheron import cli

@@ -283,6 +283,29 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(captured[1]["session_id"], "agent:business:whatsapp:business:direct:+10001")
         self.assertEqual(captured[1]["allow_exec"], False)
 
+    def test_process_message_persists_route_stats_snapshot(self) -> None:
+        fake_event = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="ok")])
+        )
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                yield fake_event
+
+        fake_agent = pytypes.SimpleNamespace(name="openheron")
+        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            with patch("openheron.app.gateway.write_route_stats_snapshot") as mocked_write:
+                gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+                inbound = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="hello")
+                outbound = asyncio.run(gateway.process_message(inbound))
+
+        self.assertEqual(outbound.content, "ok")
+        self.assertTrue(mocked_write.called)
+        payload = mocked_write.call_args.args[1]
+        self.assertEqual(payload.get("totalMessages"), 1)
+        self.assertEqual(payload.get("byAgent", {}).get("main"), 1)
+        self.assertEqual(payload.get("byChannel", {}).get("local"), 1)
+
 
 class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):
     async def test_consume_inbound_continues_after_processing_error(self) -> None:
