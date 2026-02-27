@@ -235,6 +235,7 @@ openheron doctor --verbose
 说明：
 
 - `routes lint` 是独立的静态路由检查命令（只读，不改配置）。
+- `routes lint --json` 新增 `warnings` 字段，用于提示 scope（guild/team/roles）在部分 channel 的可达性风险。
 - `doctor` 适合看全局健康状态（provider/channel/mcp/security + multiAgent）。
 
 `doctor --json` 中新增 `multiAgent` 关键字段：

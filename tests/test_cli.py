@@ -2476,7 +2476,9 @@ class CLITests(unittest.TestCase):
         self.assertIn("summary", payload)
         self.assertIn("routePreview", payload)
         self.assertIn("suggestions", payload)
+        self.assertIn("warnings", payload)
         self.assertEqual(payload["suggestions"], [])
+        self.assertEqual(payload["warnings"], [])
         self.assertLessEqual(len(payload["routePreview"]), 3)
 
     def test_cmd_routes_lint_json_output_suggests_scope_fix_for_invalid_roles(self) -> None:
@@ -2494,6 +2496,24 @@ class CLITests(unittest.TestCase):
         payload = json.loads(mocked_print.call_args.args[0])
         self.assertTrue(any("match.roles" in item for item in payload["issues"]))
         self.assertTrue(any("match.guild.id" in item for item in payload["suggestions"]))
+
+    def test_cmd_routes_lint_json_output_warns_scope_reachability_by_channel(self) -> None:
+        from openheron import cli
+
+        cfg = cli.default_config()
+        cfg["agents"]["list"] = [{"id": "main", "default": True}]
+        cfg["bindings"] = [
+            {"agentId": "main", "match": {"channel": "telegram", "guild": {"id": "g1"}}},
+            {"agentId": "main", "match": {"channel": "discord", "guild": {"id": "g1"}}},
+        ]
+        with patch.object(cli, "load_config", return_value=cfg):
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_routes_lint(output_json=True, limit=3)
+        self.assertEqual(code, 0)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertEqual(len(payload["warnings"]), 1)
+        self.assertIn("channel 'telegram'", payload["warnings"][0])
+        self.assertTrue(any("scope matching is required" in item for item in payload["suggestions"]))
 
     def test_cmd_routes_lint_text_output_reports_conflicts(self) -> None:
         from openheron import cli

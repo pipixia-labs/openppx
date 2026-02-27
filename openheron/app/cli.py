@@ -1411,6 +1411,42 @@ def _doctor_preview_multi_agent_routes(config: dict[str, Any], *, limit: int = 8
     return preview[:limit]
 
 
+_SCOPE_METADATA_SUPPORTED_CHANNELS = {"discord"}
+
+
+def _routes_lint_scope_warnings(config: dict[str, Any]) -> list[str]:
+    """Return non-blocking warnings for scope fields on channels with limited metadata."""
+    bindings = config.get("bindings", [])
+    if not isinstance(bindings, list):
+        return []
+    warnings: list[str] = []
+    for idx, item in enumerate(bindings):
+        if not isinstance(item, dict):
+            continue
+        match = item.get("match", {})
+        if not isinstance(match, dict):
+            continue
+        channel = str(match.get("channel", "")).strip().lower()
+        if not channel:
+            continue
+        guild = match.get("guild")
+        team = match.get("team")
+        roles = match.get("roles")
+        has_scope = (
+            (isinstance(guild, dict) and str(guild.get("id", "")).strip())
+            or (isinstance(team, dict) and str(team.get("id", "")).strip())
+            or (isinstance(roles, list) and any(str(role).strip() for role in roles))
+        )
+        if not has_scope:
+            continue
+        if channel not in _SCOPE_METADATA_SUPPORTED_CHANNELS:
+            warnings.append(
+                f"bindings[{idx}] uses scope fields on channel '{channel}', "
+                "but this channel may not emit stable guild/team/roles metadata yet."
+            )
+    return warnings
+
+
 def _cmd_doctor(
     *,
     output_json: bool = False,
@@ -1737,6 +1773,7 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
     summary = _doctor_summarize_multi_agent_config(config_payload)
     preview = _doctor_preview_multi_agent_routes(config_payload, limit=max(1, min(limit, 50)))
     conflicts = summary.get("conflicts", [])
+    warnings = _routes_lint_scope_warnings(config_payload)
     suggestions: list[str] = []
     if conflicts:
         suggestions.append(
@@ -1757,6 +1794,10 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
             suggestions.append("When using guild/team scope, set `match.guild.id` / `match.team.id` as non-empty strings.")
         elif "match.roles" in text:
             suggestions.append("Set `match.roles` as a non-empty array and pair it with `match.guild.id` or `match.team.id`.")
+    if warnings:
+        suggestions.append(
+            "If scope matching is required, prefer channels that emit guild/team/roles metadata (currently best-effort on discord)."
+        )
     # Keep output compact and deterministic.
     suggestions = list(dict.fromkeys(suggestions))
 
@@ -1764,6 +1805,7 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
         "ok": not issues and not conflicts,
         "config": {"path": str(config_path), "exists": config_path.exists()},
         "issues": issues,
+        "warnings": warnings,
         "summary": summary,
         "routePreview": preview,
         "suggestions": suggestions,
@@ -1787,6 +1829,10 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
     if conflicts:
         _stdout_line("Routing conflicts:")
         for item in conflicts[:20]:
+            _stdout_line(f"- {item}")
+    if warnings:
+        _stdout_line("Routing warnings:")
+        for item in warnings[:20]:
             _stdout_line(f"- {item}")
     if preview:
         _stdout_line("Route preview:")

@@ -12,6 +12,7 @@
 - [MULTI_AGENT_RELEASE_CHECKLIST.md](./MULTI_AGENT_RELEASE_CHECKLIST.md): 多智能体发布前检查清单（routes lint/stats、doctor、权限、通道、auth）
 - [MULTI_AGENT_STATUS.md](./MULTI_AGENT_STATUS.md): 多智能体阶段状态（已完成/待推进/回归命令，含 routes lint）
 - [CHANNEL_ACCOUNTID_CONTRACT.md](./CHANNEL_ACCOUNTID_CONTRACT.md): channel 侧 `accountId` 输入契约（多账号路由场景）
+- [CHANNEL_SCOPE_CONTRACT.md](./CHANNEL_SCOPE_CONTRACT.md): channel 侧 `guild/team/roles` scope 能力矩阵与使用约定
 
 ## 维护建议
 

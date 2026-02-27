@@ -46,6 +46,7 @@
 - 多智能体配置模板：`docs/examples/multi-agent.v1.config.json`
 - 迁移文档：`docs/MULTI_AGENT_MIGRATION.md`
 - channel accountId 输入契约：`docs/CHANNEL_ACCOUNTID_CONTRACT.md`
+- channel scope 输入契约：`docs/CHANNEL_SCOPE_CONTRACT.md`
 - 运维诊断说明：`docs/OPERATIONS.md`（multiAgent 章节）
 - 发布前检查清单：`docs/MULTI_AGENT_RELEASE_CHECKLIST.md`
 
@@ -56,7 +57,7 @@
 
 ## 2. 待推进（建议优先级）
 
-1. 通道侧 `guild/team/roles` 元数据标准化（当前 Discord 已接入，其他 channel 按协议能力逐步完善）。
+1. 通道侧 `guild/team/roles` 元数据标准化（当前 Discord 已接入；其他 channel 按协议能力逐步完善）。
 
 ## 3. 已验证命令（最近回归）
 
