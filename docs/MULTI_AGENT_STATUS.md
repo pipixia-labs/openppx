@@ -46,10 +46,14 @@
 - 运维诊断说明：`docs/OPERATIONS.md`（multiAgent 章节）
 - 发布前检查清单：`docs/MULTI_AGENT_RELEASE_CHECKLIST.md`
 
+### 1.7 上线演练脚本
+
+- `scripts/multi_agent_e2e.sh`：聚合 `doctor/routes lint/routes stats` 的一键演练脚本
+- 支持 `--with-gateway-probe`（尝试产生本地流量）与 `--strict-routes-stats`（无快照即失败）
+
 ## 2. 待推进（建议优先级）
 
 1. 更细粒度主体模型扩展：guild/team/roles（当前 v1 未覆盖）。
-2. 端到端实机验证脚本（非单元测试），用于上线前快速演练。
 
 ## 3. 已验证命令（最近回归）
 

@@ -31,6 +31,14 @@ openheron doctor --verbose
 6. `doctor --json` 的 `multiAgent.summary.conflicts` 为空。
 7. `doctor --json` 的 `multiAgent.routePreview` 中 `sessionIdExample` 与预期一致。
 
+可选一键脚本（本节命令聚合）：
+
+```bash
+scripts/multi_agent_e2e.sh
+scripts/multi_agent_e2e.sh --with-gateway-probe
+scripts/multi_agent_e2e.sh --strict-routes-stats
+```
+
 ## 3. 路由行为检查（本地）
 
 建议至少验证以下场景：

@@ -75,6 +75,14 @@ scripts/install_smoke.sh --force
 scripts/install_smoke.sh --with-gateway
 ```
 
+多智能体一键演练（doctor/routes lint/routes stats，可选严格 stats）：
+
+```bash
+scripts/multi_agent_e2e.sh
+scripts/multi_agent_e2e.sh --with-gateway-probe
+scripts/multi_agent_e2e.sh --strict-routes-stats
+```
+
 Gateway service manifest（对齐 OpenClaw install-daemon 的最小实现）：
 
 ```bash
