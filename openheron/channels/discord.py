@@ -202,9 +202,28 @@ class DiscordChannel(BaseChannel):
         if not content:
             return None
 
-        metadata = {
+        metadata: dict[str, Any] = {
             "username": str(author.get("username", "")).strip(),
         }
+        guild_id = str(item.get("guild_id") or item.get("guildId") or "").strip()
+        if guild_id:
+            metadata["guild_id"] = guild_id
+            metadata["guildId"] = guild_id
+            metadata["guild"] = {"id": guild_id}
+
+        team_id = str(item.get("team_id") or item.get("teamId") or "").strip()
+        if team_id:
+            metadata["team_id"] = team_id
+            metadata["teamId"] = team_id
+            metadata["team"] = {"id": team_id}
+
+        member = item.get("member") if isinstance(item.get("member"), dict) else {}
+        raw_roles = member.get("roles")
+        if isinstance(raw_roles, list):
+            roles = [str(role).strip() for role in raw_roles if str(role).strip()]
+            if roles:
+                metadata["roles"] = roles
+                metadata["role_ids"] = roles
         return sender_id, content, metadata
 
     @staticmethod

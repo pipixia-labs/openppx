@@ -29,6 +29,7 @@
 
 - WhatsApp：补齐 `accountId + peer` 相关 metadata
 - Telegram/Discord/Feishu：补齐 `peer_kind/peer_id/peer/chat_type`
+- Discord：补齐可选 `guildId/teamId/roles` 透传（若上游事件提供）
 
 ### 1.5 可观测与诊断
 
@@ -55,7 +56,7 @@
 
 ## 2. 待推进（建议优先级）
 
-1. 通道侧 `guild/team/roles` 元数据标准化（目前已支持匹配能力，但不同 channel 注入一致性仍可继续增强）。
+1. 通道侧 `guild/team/roles` 元数据标准化（当前 Discord 已接入，其他 channel 按协议能力逐步完善）。
 
 ## 3. 已验证命令（最近回归）
 

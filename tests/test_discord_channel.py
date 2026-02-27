@@ -50,6 +50,9 @@ class DiscordChannelTests(unittest.IsolatedAsyncioTestCase):
                         "id": "102",
                         "content": "allowed",
                         "author": {"id": "u2", "username": "bob"},
+                        "guild_id": "g1",
+                        "team_id": "t1",
+                        "member": {"roles": ["admin", "ops"]},
                     },
                     {
                         "id": "101",
@@ -70,6 +73,9 @@ class DiscordChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inbound.metadata.get("chat_type"), "channel")
         self.assertEqual(inbound.metadata.get("peer_kind"), "channel")
         self.assertEqual(inbound.metadata.get("peer_id"), "123")
+        self.assertEqual(inbound.metadata.get("guildId"), "g1")
+        self.assertEqual(inbound.metadata.get("teamId"), "t1")
+        self.assertEqual(inbound.metadata.get("roles"), ["admin", "ops"])
 
 
 if __name__ == "__main__":

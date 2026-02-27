@@ -21,6 +21,7 @@
 - `telegram` / `discord` / `feishu`
   - 当前主要保证 `peer` 语义（`peer_kind/peer_id`），默认不注入 `accountId`。
   - 建议：如果有多 bot token 或多租户入口，需在接入层补充 `metadata.accountId`。
+  - 其中 Discord 额外支持透传可选 `guildId/teamId/roles`（上游事件提供时）。
 - 其他 channel（`slack/dingtalk/qq/mochat/email/local`）
   - 统一建议：单账号场景可不填 `accountId`；多账号场景必须补齐 `metadata.accountId`。
 
