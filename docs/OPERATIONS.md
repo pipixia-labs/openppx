@@ -331,12 +331,13 @@ openheron doctor --verbose
 - 文本模式会额外输出 Top 排名视图（按命中次数降序，受 `--limit` 控制）。
 - 文本模式会输出 `Recent samples`（最近明细预览，默认最多 5 条，仍受 `--limit` 约束，含 `guild/team/roles` scope）。
 - JSON 输出包含 `scopeSupportedChannels`，可用于脚本侧联动判断能力边界。
-- 数据文件：`<workspace>/.openheron/route_stats.json`。
+- 数据文件：`~/.openheron/agents/<agentId>/runtime/route_stats.json`。
 - 常用命令：
 
 ```bash
 openheron routes stats
 openheron routes stats --json
+openheron routes stats --agent-id main
 openheron routes stats --limit 10
 openheron routes stats --json --limit 50
 openheron routes stats --json --window-hours 24
@@ -345,7 +346,17 @@ openheron routes stats --json --window-hours 24
 - 无快照时（首次运行常见）：
   1. 先启动并产生网关流量（本地或真实 channel）。
   2. 再执行 `openheron routes stats`。
-  3. 若仍无数据，检查 workspace 是否正确，以及进程是否有写权限。
+  3. 若仍无数据，确认 `--agent-id` 对应 agent 是否收到过消息，并检查该 agent 目录写权限。
+
+多 agent 联调清单（建议按顺序）：
+
+1. 准备两个 agent（例如 `main` / `biz`），并在 `bindings` 配置不同 `accountId` 或 `peer` 命中。  
+2. 启动网关后，对两个路由目标各发送至少 1 条消息。  
+3. 验证会话隔离：`/new` 后确认不同 agent 的 session id 前缀不同（`agent:<agentId>:`）。  
+4. 验证 heartbeat：分别执行 `openheron heartbeat status --agent-id main` 与 `--agent-id biz`。  
+5. 验证 route stats：分别执行 `openheron routes stats --agent-id main` 与 `--agent-id biz`。  
+6. 验证目录隔离：检查 `~/.openheron/agents/<agentId>/` 下的 `workspace/`、`auth/`、`sessions/`、`memory/`、`runtime/`。  
+7. 验证 bootstrap 隔离：在 `~/.openheron/agents/<agentId>/bootstrap/AGENTS.md` 写不同标记，确认各 agent 回复风格可区分。  
 
 ## 运行方式
 

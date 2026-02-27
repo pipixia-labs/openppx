@@ -8,24 +8,28 @@ from typing import Any
 
 
 def route_stats_path(workspace: Path) -> Path:
-    """Return the route stats snapshot path for a workspace."""
+    """Return the route stats snapshot path for one agent dir."""
 
+    return workspace / "runtime" / "route_stats.json"
+
+
+def _legacy_route_stats_path(workspace: Path) -> Path:
     return workspace / ".openheron" / "route_stats.json"
 
 
 def read_route_stats_snapshot(workspace: Path) -> dict[str, Any] | None:
-    """Read route stats snapshot from workspace; return None when unavailable."""
+    """Read route stats snapshot from one agent dir; fallback to legacy path."""
 
-    path = route_stats_path(workspace)
-    if not path.exists():
-        return None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    if not isinstance(raw, dict):
-        return None
-    return raw
+    for candidate in (route_stats_path(workspace), _legacy_route_stats_path(workspace)):
+        if not candidate.exists():
+            continue
+        try:
+            raw = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(raw, dict):
+            return raw
+    return None
 
 
 def write_route_stats_snapshot(workspace: Path, payload: dict[str, Any]) -> None:
@@ -35,3 +39,6 @@ def write_route_stats_snapshot(workspace: Path, payload: dict[str, Any]) -> None
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     path.write_text(text + "\n", encoding="utf-8")
+    legacy_path = _legacy_route_stats_path(workspace)
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text(text + "\n", encoding="utf-8")

@@ -1895,23 +1895,34 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
     return 0 if report["ok"] else 1
 
 
-def _cmd_routes_stats(*, output_json: bool = False, limit: int = 20, window_hours: int | None = None) -> int:
+def _cmd_routes_stats(
+    *,
+    output_json: bool = False,
+    limit: int = 20,
+    window_hours: int | None = None,
+    agent_id: str | None = None,
+) -> int:
     """Show persisted route hit stats from latest gateway runtime snapshot."""
-    registry = get_registry()
-    snapshot = read_route_stats_snapshot(registry.workspace)
+    router = AgentRouter(load_config())
+    runtime = router.runtime_for_agent(agent_id)
+    snapshot = read_route_stats_snapshot(runtime.agent_dir)
     max_items = max(1, min(int(limit), 200))
     resolved_window_hours = None if window_hours is None else max(1, min(int(window_hours), 24 * 30))
     if snapshot is None:
         report = {
             "ok": False,
             "message": "route stats snapshot not found",
-            "workspace": str(registry.workspace),
+            "agentId": runtime.agent_id,
+            "agentDir": str(runtime.agent_dir),
             "stats": {},
         }
         if output_json:
             _stdout_line(json.dumps(report, ensure_ascii=False))
         else:
-            _stdout_line(f"Routes stats: snapshot not found (workspace={registry.workspace})")
+            _stdout_line(
+                "Routes stats: snapshot not found "
+                f"(agent_id={runtime.agent_id}, agent_dir={runtime.agent_dir})"
+            )
             _stdout_line("Start gateway traffic first, then retry `openheron routes stats`.")
         return 1
 
@@ -1963,7 +1974,8 @@ def _cmd_routes_stats(*, output_json: bool = False, limit: int = 20, window_hour
     stats["byMatchedBy"] = by_matched_by
     report = {
         "ok": True,
-        "workspace": str(registry.workspace),
+        "agentId": runtime.agent_id,
+        "agentDir": str(runtime.agent_dir),
         "scopeSupportedChannels": list_scope_metadata_supported_channels(),
         "stats": stats,
     }
@@ -2240,10 +2252,19 @@ def _dispatch_routes_command(args: argparse.Namespace, parser: argparse.Argument
     """Dispatch routes subcommands from parsed argparse namespace."""
     handlers: dict[str, Callable[[], int]] = {
         "lint": lambda: _cmd_routes_lint(output_json=args.output_json, limit=args.limit),
-        "stats": lambda: _cmd_routes_stats(
-            output_json=args.output_json,
-            limit=args.limit,
-            window_hours=args.window_hours,
+        "stats": lambda: (
+            _cmd_routes_stats(
+                output_json=args.output_json,
+                limit=args.limit,
+                window_hours=args.window_hours,
+            )
+            if args.agent_id is None
+            else _cmd_routes_stats(
+                output_json=args.output_json,
+                limit=args.limit,
+                window_hours=args.window_hours,
+                agent_id=args.agent_id,
+            )
         ),
     }
     handler = handlers.get(args.routes_command)
@@ -4792,6 +4813,11 @@ def main(argv: list[str] | None = None) -> None:
         type=int,
         default=None,
         help="Optional sliding window (hours) for stats aggregation.",
+    )
+    routes_stats_parser.add_argument(
+        "--agent-id",
+        default=None,
+        help="Optional agent id; defaults to configured default agent.",
     )
 
     channels_parser = subparsers.add_parser("channels", help="Manage channel helper commands.")

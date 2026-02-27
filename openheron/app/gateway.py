@@ -115,6 +115,7 @@ class Gateway:
             "byMatchedBy": {},
             "recent": [],
         }
+        self._route_stats_by_agent: dict[str, dict[str, Any]] = {}
         self._inflight_user_requests = 0
         self._last_inbound_route: tuple[str, str] | None = None
         self._last_heartbeat_delivery_by_agent: dict[str, dict[str, Any]] = {}
@@ -658,17 +659,42 @@ class Gateway:
         max_recent = 200
         if len(recent) > max_recent:
             del recent[:-max_recent]
-        self._persist_route_stats_snapshot()
+        agent_stats = self._route_stats_by_agent.setdefault(
+            routed.agent_id,
+            {
+                "totalMessages": 0,
+                "byAgent": {},
+                "byChannel": {},
+                "byMatchedBy": {},
+                "recent": [],
+            },
+        )
+        agent_stats["totalMessages"] = int(agent_stats.get("totalMessages", 0)) + 1
+        agent_by_agent = agent_stats.setdefault("byAgent", {})
+        agent_by_channel = agent_stats.setdefault("byChannel", {})
+        agent_by_matched = agent_stats.setdefault("byMatchedBy", {})
+        agent_by_agent[routed.agent_id] = int(agent_by_agent.get(routed.agent_id, 0)) + 1
+        agent_by_channel[normalized_channel] = int(agent_by_channel.get(normalized_channel, 0)) + 1
+        agent_by_matched[routed.matched_by] = int(agent_by_matched.get(routed.matched_by, 0)) + 1
+        agent_recent = agent_stats.setdefault("recent", [])
+        if not isinstance(agent_recent, list):
+            agent_recent = []
+            agent_stats["recent"] = agent_recent
+        agent_recent.append(recent[-1])
+        if len(agent_recent) > max_recent:
+            del agent_recent[:-max_recent]
+        self._persist_route_stats_snapshot(agent_runtime=routed.runtime)
 
-    def _persist_route_stats_snapshot(self) -> None:
-        """Write the latest route stats snapshot for CLI observability."""
-        workspace = load_security_policy().workspace_root
+    def _persist_route_stats_snapshot(self, *, agent_runtime: AgentRuntimeContext) -> None:
+        """Write one agent route stats snapshot for CLI observability."""
+        agent_payload = self._route_stats_by_agent.get(agent_runtime.agent_id, {})
         payload = {
             "generatedAt": datetime.now(timezone.utc).isoformat(),
-            **self._route_stats,
+            "agentId": agent_runtime.agent_id,
+            **agent_payload,
         }
         try:
-            write_route_stats_snapshot(workspace, payload)
+            write_route_stats_snapshot(agent_runtime.agent_dir, payload)
         except Exception:
             logger.exception("Failed persisting route stats snapshot")
 
