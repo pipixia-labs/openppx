@@ -1159,6 +1159,19 @@ def _normalize_agent_id_for_doctor(value: Any) -> str:
     return "".join(out).strip("-")
 
 
+def _normalize_scope_id_for_doctor(value: Any) -> str:
+    """Normalize scope ids like guild/team into lowercase text."""
+    return str(value or "").strip().lower()
+
+
+def _normalize_roles_for_doctor(value: Any) -> tuple[str, ...]:
+    """Normalize roles list for validation/summary; keep deterministic order."""
+    if not isinstance(value, list):
+        return ()
+    normalized = {_normalize_scope_id_for_doctor(item) for item in value}
+    return tuple(sorted(item for item in normalized if item))
+
+
 def _doctor_validate_multi_agent_config(config: dict[str, Any]) -> list[str]:
     """Validate multi-agent config structure and return doctor issue strings."""
     issues: list[str] = []
@@ -1212,6 +1225,35 @@ def _doctor_validate_multi_agent_config(config: dict[str, Any]) -> list[str]:
         match = binding.get("match", {})
         if not isinstance(match, dict) or not str(match.get("channel", "")).strip():
             issues.append(f"Invalid multi-agent config: bindings[{idx}].match.channel is required.")
+            continue
+        guild = match.get("guild")
+        if guild is not None and not isinstance(guild, dict):
+            issues.append(f"Invalid multi-agent config: bindings[{idx}].match.guild must be an object.")
+        guild_id = ""
+        if isinstance(guild, dict):
+            guild_id = _normalize_scope_id_for_doctor(guild.get("id"))
+            if not guild_id:
+                issues.append(f"Invalid multi-agent config: bindings[{idx}].match.guild.id is required when guild exists.")
+
+        team = match.get("team")
+        if team is not None and not isinstance(team, dict):
+            issues.append(f"Invalid multi-agent config: bindings[{idx}].match.team must be an object.")
+        team_id = ""
+        if isinstance(team, dict):
+            team_id = _normalize_scope_id_for_doctor(team.get("id"))
+            if not team_id:
+                issues.append(f"Invalid multi-agent config: bindings[{idx}].match.team.id is required when team exists.")
+
+        roles_raw = match.get("roles")
+        if roles_raw is not None and not isinstance(roles_raw, list):
+            issues.append(f"Invalid multi-agent config: bindings[{idx}].match.roles must be an array.")
+        roles = _normalize_roles_for_doctor(roles_raw)
+        if roles_raw is not None and not roles:
+            issues.append(f"Invalid multi-agent config: bindings[{idx}].match.roles must contain at least one non-empty value.")
+        if roles and not (guild_id or team_id):
+            issues.append(
+                f"Invalid multi-agent config: bindings[{idx}].match.roles requires match.guild.id or match.team.id."
+            )
     return issues
 
 
@@ -1224,7 +1266,8 @@ def _doctor_summarize_multi_agent_config(config: dict[str, Any]) -> dict[str, An
 
     by_channel: dict[str, int] = {}
     tier_counts: dict[str, int] = {"peer": 0, "account": 0, "channel": 0}
-    seen_signatures: dict[tuple[str, str, str, str], str] = {}
+    scope_counts: dict[str, int] = {"guild": 0, "team": 0, "roles": 0}
+    seen_signatures: dict[tuple[str, str, str, str, str, str, tuple[str, ...]], str] = {}
     conflicts: list[str] = []
 
     for idx, item in enumerate(normalized_bindings):
@@ -1244,6 +1287,17 @@ def _doctor_summarize_multi_agent_config(config: dict[str, Any]) -> dict[str, An
         if isinstance(peer, dict):
             peer_kind = str(peer.get("kind", "")).strip().lower()
             peer_id = str(peer.get("id", "")).strip()
+        guild = match.get("guild", {})
+        team = match.get("team", {})
+        guild_id = _normalize_scope_id_for_doctor(guild.get("id")) if isinstance(guild, dict) else ""
+        team_id = _normalize_scope_id_for_doctor(team.get("id")) if isinstance(team, dict) else ""
+        roles = _normalize_roles_for_doctor(match.get("roles"))
+        if guild_id:
+            scope_counts["guild"] = scope_counts.get("guild", 0) + 1
+        if team_id:
+            scope_counts["team"] = scope_counts.get("team", 0) + 1
+        if roles:
+            scope_counts["roles"] = scope_counts.get("roles", 0) + 1
 
         tier = "channel"
         if peer_kind and peer_id:
@@ -1252,7 +1306,7 @@ def _doctor_summarize_multi_agent_config(config: dict[str, Any]) -> dict[str, An
             tier = "account"
         tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
-        signature = (channel, account, peer_kind, peer_id)
+        signature = (channel, account, peer_kind, peer_id, guild_id, team_id, roles)
         previous_agent = seen_signatures.get(signature)
         if previous_agent and previous_agent != agent_id:
             conflicts.append(
@@ -1266,6 +1320,7 @@ def _doctor_summarize_multi_agent_config(config: dict[str, Any]) -> dict[str, An
         "bindingCount": len(normalized_bindings),
         "byChannel": by_channel,
         "routeTierCount": tier_counts,
+        "routeScopeCount": scope_counts,
         "conflicts": conflicts,
     }
 
@@ -1304,6 +1359,9 @@ def _doctor_preview_multi_agent_routes(config: dict[str, Any], *, limit: int = 8
         agent_id = _normalize_agent_id_for_doctor(item.get("agentId")) or "main"
         account_id = str(match.get("accountId", "")).strip().lower() or "default"
         peer = match.get("peer", {})
+        guild = match.get("guild", {})
+        team = match.get("team", {})
+        roles = _normalize_roles_for_doctor(match.get("roles"))
         peer_kind = "direct"
         peer_id = "sample-peer"
         tier = "channel"
@@ -1330,6 +1388,9 @@ def _doctor_preview_multi_agent_routes(config: dict[str, Any], *, limit: int = 8
                 "accountId": account_id,
                 "peerKind": peer_kind,
                 "peerId": peer_id,
+                "guildId": _normalize_scope_id_for_doctor(guild.get("id")) if isinstance(guild, dict) else "",
+                "teamId": _normalize_scope_id_for_doctor(team.get("id")) if isinstance(team, dict) else "",
+                "roles": list(roles),
                 "sessionIdExample": session_id,
             }
         )
@@ -1692,6 +1753,10 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
             suggestions.append("Set `bindings[*].match.channel` for every binding entry.")
         elif "duplicate agent id" in text:
             suggestions.append("Ensure each `agents.list[*].id` is unique.")
+        elif "match.guild" in text or "match.team" in text:
+            suggestions.append("When using guild/team scope, set `match.guild.id` / `match.team.id` as non-empty strings.")
+        elif "match.roles" in text:
+            suggestions.append("Set `match.roles` as a non-empty array and pair it with `match.guild.id` or `match.team.id`.")
     # Keep output compact and deterministic.
     suggestions = list(dict.fromkeys(suggestions))
 

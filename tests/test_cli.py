@@ -495,6 +495,28 @@ class CLITests(unittest.TestCase):
         self.assertIn("agentId 'missing' does not exist", joined)
         self.assertIn("match.channel is required", joined)
 
+    def test_doctor_validate_multi_agent_config_reports_invalid_scope_shapes(self) -> None:
+        from openheron import cli
+
+        cfg = cli.default_config()
+        cfg["agents"]["list"] = [{"id": "main", "default": True}]
+        cfg["bindings"] = [
+            {
+                "agentId": "main",
+                "match": {
+                    "channel": "discord",
+                    "guild": {"id": ""},
+                    "team": "dev",
+                    "roles": [],
+                },
+            }
+        ]
+        issues = cli._doctor_validate_multi_agent_config(cfg)
+        joined = "\n".join(issues)
+        self.assertIn("match.guild.id is required", joined)
+        self.assertIn("match.team must be an object", joined)
+        self.assertIn("match.roles must contain at least one non-empty value", joined)
+
     def test_doctor_summarize_multi_agent_config_counts_by_channel_and_tier(self) -> None:
         from openheron import cli
 
@@ -518,6 +540,9 @@ class CLITests(unittest.TestCase):
         self.assertEqual(summary["routeTierCount"]["channel"], 1)
         self.assertEqual(summary["routeTierCount"]["account"], 1)
         self.assertEqual(summary["routeTierCount"]["peer"], 1)
+        self.assertEqual(summary["routeScopeCount"]["guild"], 0)
+        self.assertEqual(summary["routeScopeCount"]["team"], 0)
+        self.assertEqual(summary["routeScopeCount"]["roles"], 0)
         self.assertEqual(summary["conflicts"], [])
 
     def test_doctor_summarize_multi_agent_config_detects_duplicate_binding_signature(self) -> None:
@@ -535,6 +560,26 @@ class CLITests(unittest.TestCase):
         summary = cli._doctor_summarize_multi_agent_config(cfg)
         self.assertEqual(len(summary["conflicts"]), 1)
         self.assertIn("duplicates route match", summary["conflicts"][0])
+
+    def test_doctor_summarize_multi_agent_config_distinguishes_roles_scope(self) -> None:
+        from openheron import cli
+
+        cfg = cli.default_config()
+        cfg["agents"]["list"] = [{"id": "main", "default": True}, {"id": "ops"}, {"id": "sales"}]
+        cfg["bindings"] = [
+            {
+                "agentId": "ops",
+                "match": {"channel": "discord", "guild": {"id": "g1"}, "roles": ["admin"]},
+            },
+            {
+                "agentId": "sales",
+                "match": {"channel": "discord", "guild": {"id": "g1"}, "roles": ["member"]},
+            },
+        ]
+        summary = cli._doctor_summarize_multi_agent_config(cfg)
+        self.assertEqual(summary["routeScopeCount"]["guild"], 2)
+        self.assertEqual(summary["routeScopeCount"]["roles"], 2)
+        self.assertEqual(summary["conflicts"], [])
 
     def test_doctor_preview_multi_agent_routes_builds_binding_and_default_examples(self) -> None:
         from openheron import cli
@@ -555,6 +600,8 @@ class CLITests(unittest.TestCase):
         self.assertGreaterEqual(len(preview), 3)
         self.assertEqual(preview[0]["type"], "binding")
         self.assertIn("agent:biz:whatsapp:business:direct:sample-peer", preview[0]["sessionIdExample"])
+        self.assertEqual(preview[0]["guildId"], "")
+        self.assertEqual(preview[0]["roles"], [])
         self.assertEqual(preview[1]["tier"], "peer")
         self.assertEqual(preview[-1]["type"], "default")
         self.assertIn("agent:main:local:default:direct:sample-peer", preview[-1]["sessionIdExample"])
@@ -2431,6 +2478,22 @@ class CLITests(unittest.TestCase):
         self.assertIn("suggestions", payload)
         self.assertEqual(payload["suggestions"], [])
         self.assertLessEqual(len(payload["routePreview"]), 3)
+
+    def test_cmd_routes_lint_json_output_suggests_scope_fix_for_invalid_roles(self) -> None:
+        from openheron import cli
+
+        cfg = cli.default_config()
+        cfg["agents"]["list"] = [{"id": "main", "default": True}]
+        cfg["bindings"] = [
+            {"agentId": "main", "match": {"channel": "discord", "roles": ["admin"]}},
+        ]
+        with patch.object(cli, "load_config", return_value=cfg):
+            with patch("builtins.print") as mocked_print:
+                code = cli._cmd_routes_lint(output_json=True, limit=3)
+        self.assertEqual(code, 1)
+        payload = json.loads(mocked_print.call_args.args[0])
+        self.assertTrue(any("match.roles" in item for item in payload["issues"]))
+        self.assertTrue(any("match.guild.id" in item for item in payload["suggestions"]))
 
     def test_cmd_routes_lint_text_output_reports_conflicts(self) -> None:
         from openheron import cli
