@@ -20,6 +20,7 @@
    - channel 级别：`{"match": {"channel": "whatsapp"}}`
    - account 级别：`{"match": {"channel": "whatsapp", "accountId": "business"}}`
    - peer 级别：`{"match": {"channel": "whatsapp", "accountId": "business", "peer": {"kind": "direct", "id": "+1555..."}}}`
+   - scope 过滤（可选）：`{"match": {"channel": "discord", "guild": {"id": "guild-ops-main"}, "roles": ["admin"]}}`
 6. 将权限策略下沉到对应 agent：
    - `security`（exec/network/workspace）
    - `fs`（allowed/deny/readOnly/workspaceOnly）
@@ -27,6 +28,7 @@
    - `skills`（allowlist）
    - `systemPermissions`（browser/gui/screenshot）
 7. 按需登录 OAuth（OpenAI Codex/GitHub Copilot）。认证文件会写到对应 `agentDir/auth/...`。
+8. 若使用 `guild/team/roles`，先运行 `openheron routes lint --json` 检查 `warnings`，确认 channel 具备对应 metadata。
 
 ## 最小示例
 

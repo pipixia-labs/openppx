@@ -112,6 +112,29 @@
           "gui": false,
           "screenshot": false
         }
+      },
+      {
+        "id": "discord_ops",
+        "workspace": "~/.openheron/workspace/discord-ops",
+        "agentDir": "~/.openheron/agents/discord-ops/agent",
+        "skills": [
+          "ops_support"
+        ],
+        "security": {
+          "allowExec": false,
+          "allowNetwork": true,
+          "restrictToWorkspace": true
+        },
+        "tools": {
+          "deny": [
+            "exec"
+          ]
+        },
+        "systemPermissions": {
+          "browser": false,
+          "gui": false,
+          "screenshot": false
+        }
       }
     ]
   },
@@ -139,6 +162,19 @@
           "kind": "direct",
           "id": "+15550008888"
         }
+      }
+    },
+    {
+      "agentId": "discord_ops",
+      "match": {
+        "channel": "discord",
+        "guild": {
+          "id": "guild-ops-main"
+        },
+        "roles": [
+          "admin",
+          "ops"
+        ]
       }
     }
   ],
@@ -177,6 +213,11 @@
       "bridgeUrl": "ws://localhost:3001",
       "bridgeToken": "",
       "allowFrom": []
+    },
+    "discord": {
+      "enabled": false,
+      "token": "",
+      "pollChannels": []
     }
   },
   "web": {
