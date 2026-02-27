@@ -84,6 +84,8 @@ scripts/multi_agent_e2e.sh --strict-routes-stats
 scripts/multi_agent_e2e.sh --strict-warnings
 ```
 
+脚本会在输出中打印当前 `scopeSupportedChannels`，方便判断 scope warnings 是否来自 channel 能力限制。
+
 Gateway service manifest（对齐 OpenClaw install-daemon 的最小实现）：
 
 ```bash

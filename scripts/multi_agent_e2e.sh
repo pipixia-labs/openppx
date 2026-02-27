@@ -67,6 +67,9 @@ if warnings:
     print(f"[warn] doctor reports {len(warnings)} multi-agent warning(s)")
     for item in warnings[:10]:
         print("  -", item)
+supported = payload.get("multiAgent", {}).get("scopeSupportedChannels", [])
+if isinstance(supported, list) and supported:
+    print("[info] doctor scopeSupportedChannels:", ",".join(str(item) for item in supported))
 PY
 
 if [[ "${STRICT_WARNINGS}" == "1" ]]; then
@@ -101,6 +104,9 @@ if warnings:
     print(f"[warn] routes lint reports {len(warnings)} warning(s)")
     for item in warnings[:10]:
         print("  -", item)
+supported = payload.get("scopeSupportedChannels", [])
+if isinstance(supported, list) and supported:
+    print("[info] routes lint scopeSupportedChannels:", ",".join(str(item) for item in supported))
 PY
 
 if [[ "${STRICT_WARNINGS}" == "1" ]]; then
