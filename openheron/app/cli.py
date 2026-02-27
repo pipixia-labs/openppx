@@ -1810,6 +1810,22 @@ def _cmd_routes_lint(*, output_json: bool = False, limit: int = 8) -> int:
         elif "match.roles" in text:
             suggestions.append("Set `match.roles` as a non-empty array and pair it with `match.guild.id` or `match.team.id`.")
     if warnings:
+        warning_channels: set[str] = set()
+        marker = "channel '"
+        for item in warnings:
+            text = str(item)
+            if marker not in text:
+                continue
+            tail = text.split(marker, 1)[1]
+            channel = tail.split("'", 1)[0].strip().lower()
+            if channel:
+                warning_channels.add(channel)
+        if warning_channels:
+            suggestions.append(
+                "Scope mismatch channels: "
+                + ", ".join(sorted(warning_channels))
+                + ". Remove scope fields there, or extend adapter metadata mapping first."
+            )
         suggestions.append(
             "If scope matching is required, prefer channels that emit guild/team/roles metadata (currently best-effort on discord)."
         )
