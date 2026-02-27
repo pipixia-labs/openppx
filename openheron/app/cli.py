@@ -72,6 +72,7 @@ from ..runtime.cron_service import CronService
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.heartbeat_status_store import read_heartbeat_status_snapshot
 from ..runtime.route_stats_store import read_route_stats_snapshot
+from ..runtime.route_capabilities import channel_supports_scope_metadata
 from ..runtime.token_usage_store import parse_time_filter_to_epoch_ms, read_token_usage_stats, token_usage_db_path
 from ..runtime.gateway_service import (
     detect_service_manager,
@@ -1411,9 +1412,6 @@ def _doctor_preview_multi_agent_routes(config: dict[str, Any], *, limit: int = 8
     return preview[:limit]
 
 
-_SCOPE_METADATA_SUPPORTED_CHANNELS = {"discord"}
-
-
 def _routes_lint_scope_warnings(config: dict[str, Any]) -> list[str]:
     """Return non-blocking warnings for scope fields on channels with limited metadata."""
     bindings = config.get("bindings", [])
@@ -1439,7 +1437,7 @@ def _routes_lint_scope_warnings(config: dict[str, Any]) -> list[str]:
         )
         if not has_scope:
             continue
-        if channel not in _SCOPE_METADATA_SUPPORTED_CHANNELS:
+        if not channel_supports_scope_metadata(channel):
             warnings.append(
                 f"bindings[{idx}] uses scope fields on channel '{channel}', "
                 "but this channel may not emit stable guild/team/roles metadata yet."

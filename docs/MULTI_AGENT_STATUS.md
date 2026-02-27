@@ -65,7 +65,7 @@
 ./.venv/bin/python -m pytest -q tests/test_agent_routing.py tests/test_bus_gateway.py tests/test_whatsapp_channel.py tests/test_telegram_channel.py tests/test_discord_channel.py tests/test_feishu_channel.py tests/test_cli.py
 ```
 
-最近结果：`212 passed`。
+最近结果：`216 passed`。
 
 ## 4. 当前结论
 
