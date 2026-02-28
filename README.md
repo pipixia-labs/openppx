@@ -29,7 +29,7 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 pip install .
 openheron init
-openheron doctor
+# Follow the `openheron init` output and edit the generated config files.
 python -m openheron.cli -m "Describe what you can do"
 ```
 
@@ -55,7 +55,7 @@ Each agent workspace includes bootstrap/task files and local scaffolding, includ
 
 1. Review and edit your configuration files.
 - `global_config.json`
-- Each agent's config/runtime/workspace files
+- Each agent's config/runtime/workspace files: fill in required keys and assign per-agent security permissions.
 
 2. Validate readiness:
 
@@ -91,7 +91,7 @@ openheron token --help
 ## Gateway Usage
 
 - `openheron gateway run`: run the gateway in foreground
-- `openheron gateway start|stop|restart|status`: manage the background gateway process
+- `openheron gateway start|stop|restart|status`: start, stop, restart, and inspect the background gateway process
 - `openheron gateway-service`: manage OS user-service manifests (launchd/systemd)
 
 Examples:
@@ -105,7 +105,7 @@ openheron gateway-service status
 
 ## GUI Automation
 
-`openheron` includes desktop GUI tools. And you need to edit the `config.json` or set the following environment variables:
+`openheron` includes desktop GUI tools. Configure `config.json` or set the following environment variables:
 
 ```bash
 export OPENHERON_GUI_MODEL=$NAME_OF_YOUR_MLLM
