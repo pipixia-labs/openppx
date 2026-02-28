@@ -11,7 +11,7 @@ from ..runtime.cron_helpers import cron_store_path, format_schedule, format_time
 from ..runtime.cron_service import CronService
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.heartbeat_status_store import read_heartbeat_status_snapshot
-from ..runtime.token_usage_store import parse_time_filter_to_epoch_ms, read_token_usage_stats, token_usage_db_path
+from ..runtime.token_usage_store import parse_time_filter_to_epoch_ms, read_token_usage_stats
 
 
 def cron_service_for_agent(
@@ -400,9 +400,12 @@ def cmd_token_stats(
     since: str | None,
     until: str | None,
     last_hours: int | None,
+    agent: str | None,
     stdout_line: Callable[[str], None],
+    resolve_target_agent_names: Callable[[str | None], tuple[list[str], str | None]],
+    print_agent_output_sections: Callable[[list[tuple[str, int, str, str]]], int],
+    agent_config_path: Callable[[str], Path],
     read_token_usage_stats_fn: Callable[..., dict[str, Any]],
-    token_usage_db_path_fn: Callable[[], Path],
 ) -> int:
     since_ms: int | None = None
     until_ms: int | None = None
@@ -421,67 +424,109 @@ def cmd_token_stats(
         stdout_line("Error: --since must be earlier than or equal to --until")
         return 1
 
-    stats = read_token_usage_stats_fn(
-        limit=limit,
-        provider=provider or None,
-        since_ms=since_ms,
-        until_ms=until_ms,
-    )
-    payload: dict[str, Any] = {
-        "dbPath": str(token_usage_db_path_fn()),
-        "provider": provider or "",
-        "since": since or "",
-        "until": until or "",
-        "lastHours": int(last_hours) if last_hours is not None else None,
-        **stats,
-    }
+    target_agents, error = resolve_target_agent_names(agent)
+    if error:
+        stdout_line(error)
+        return 1
+    if not target_agents:
+        stdout_line("Error: no target agents found. Configure global_config.json or pass --agent.")
+        return 1
+
     if output_json:
-        stdout_line(json.dumps(payload, ensure_ascii=False))
+        merged: dict[str, Any] = {}
+        failures: list[str] = []
+        for agent_name in target_agents:
+            db_path = agent_config_path(agent_name).parent / "token_usage.db"
+            try:
+                stats = read_token_usage_stats_fn(
+                    limit=limit,
+                    provider=provider or None,
+                    since_ms=since_ms,
+                    until_ms=until_ms,
+                    db_path=db_path,
+                )
+            except Exception as exc:
+                failures.append(f"{agent_name}: {exc}")
+                continue
+            merged[agent_name] = {
+                "dbPath": str(db_path),
+                "provider": provider or "",
+                "since": since or "",
+                "until": until or "",
+                "lastHours": int(last_hours) if last_hours is not None else None,
+                **stats,
+            }
+        stdout_line(json.dumps(merged, ensure_ascii=False))
+        if failures:
+            stdout_line(f"[warn] token stats failed for agents: {'; '.join(failures)}")
+            return 1
         return 0
 
-    stdout_line(
-        "Token stats: "
-        f"requests={stats['requests']}, "
-        f"request_tokens={stats['request_tokens']}, "
-        f"response_tokens={stats['response_tokens']}, "
-        f"total_tokens={stats['total_tokens']}"
-    )
-    if last_hours is not None:
-        stdout_line(f"Time range: last_hours={int(last_hours)}")
-    elif since or until:
-        stdout_line(f"Time range: since={since or '-'}, until={until or '-'}")
-    stdout_line(
-        "Token by modality: "
-        f"request(text={stats['request_text_tokens']}, image={stats['request_image_tokens']}), "
-        f"response(text={stats['response_text_tokens']}, image={stats['response_image_tokens']})"
-    )
-    stdout_line(f"Token DB: {payload['dbPath']}")
-    if not stats["recent"]:
-        stdout_line("Recent: no records")
-        return 0
-    stdout_line("Recent records:")
-    for row in stats["recent"]:
-        stdout_line(
-            "- "
-            f"{row.get('response_at', '-')}"
-            f" provider={row.get('provider', '-')}"
-            f" model={row.get('model', '-')}"
-            f" session={row.get('session_id', '-')}"
-            f" req={row.get('request_tokens', 0)}"
-            f" resp={row.get('response_tokens', 0)}"
-            f" total={row.get('total_tokens', 0)}"
-            f" req_img={row.get('request_image_tokens', 0)}"
-            f" resp_img={row.get('response_image_tokens', 0)}"
+    results: list[tuple[str, int, str, str]] = []
+    for agent_name in target_agents:
+        db_path = agent_config_path(agent_name).parent / "token_usage.db"
+        try:
+            stats = read_token_usage_stats_fn(
+                limit=limit,
+                provider=provider or None,
+                since_ms=since_ms,
+                until_ms=until_ms,
+                db_path=db_path,
+            )
+        except Exception as exc:
+            results.append((agent_name, 1, "", f"token stats read failed: {exc}"))
+            continue
+
+        lines: list[str] = [
+            (
+                "Token stats: "
+                f"requests={stats['requests']}, "
+                f"request_tokens={stats['request_tokens']}, "
+                f"response_tokens={stats['response_tokens']}, "
+                f"total_tokens={stats['total_tokens']}"
+            )
+        ]
+        if last_hours is not None:
+            lines.append(f"Time range: last_hours={int(last_hours)}")
+        elif since or until:
+            lines.append(f"Time range: since={since or '-'}, until={until or '-'}")
+        lines.append(
+            "Token by modality: "
+            f"request(text={stats['request_text_tokens']}, image={stats['request_image_tokens']}), "
+            f"response(text={stats['response_text_tokens']}, image={stats['response_image_tokens']})"
         )
-    return 0
+        lines.append(f"Token DB: {db_path}")
+        if not stats["recent"]:
+            lines.append("Recent: no records")
+            results.append((agent_name, 0, "\n".join(lines), ""))
+            continue
+        lines.append("Recent records:")
+        for row in stats["recent"]:
+            lines.append(
+                "- "
+                f"{row.get('response_at', '-')}"
+                f" provider={row.get('provider', '-')}"
+                f" model={row.get('model', '-')}"
+                f" session={row.get('session_id', '-')}"
+                f" req={row.get('request_tokens', 0)}"
+                f" resp={row.get('response_tokens', 0)}"
+                f" total={row.get('total_tokens', 0)}"
+                f" req_img={row.get('request_image_tokens', 0)}"
+                f" resp_img={row.get('response_image_tokens', 0)}"
+            )
+        results.append((agent_name, 0, "\n".join(lines), ""))
+    return print_agent_output_sections(results)
 
 
 def dispatch_token_command(
     *,
     args: Any,
     parser: Any,
-    cmd_token_stats_fn: Callable[[bool, int, str | None, str | None, str | None, int | None], int],
+    cmd_token_stats_fn: Callable[[bool, int, str | None, str | None, str | None, int | None, str | None], int],
 ) -> int:
+    raw_agent = getattr(args, "agent", None)
+    selected_agent = str(raw_agent).strip() if raw_agent is not None else ""
+    selected_agent = selected_agent or None
     handlers: dict[str, Callable[[], int]] = {
         "stats": lambda: cmd_token_stats_fn(
             args.output_json,
@@ -490,6 +535,7 @@ def dispatch_token_command(
             args.since,
             args.until,
             args.last_hours,
+            selected_agent,
         ),
     }
     handler = handlers.get(args.token_command)

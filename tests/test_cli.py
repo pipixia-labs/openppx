@@ -2884,6 +2884,26 @@ class CLITests(unittest.TestCase):
                     since="2026-02-26T00:00:00+08:00",
                     until="2026-02-26T23:59:59+08:00",
                     last_hours=None,
+                    agent=None,
+                )
+                mocked_bootstrap.assert_called_once()
+
+    def test_token_stats_mode_dispatch_with_agent(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_token_stats", return_value=0) as mocked_stats:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["token", "stats", "--agent", "agent_a"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_stats.assert_called_once_with(
+                    output_json=False,
+                    limit=20,
+                    provider=None,
+                    since=None,
+                    until=None,
+                    last_hours=None,
+                    agent="agent_a",
                 )
                 mocked_bootstrap.assert_called_once()
 
@@ -3107,17 +3127,18 @@ class CLITests(unittest.TestCase):
             ],
         }
 
-        with patch.object(cli, "read_token_usage_stats", return_value=fake_stats) as mocked_read:
-            with patch.object(cli, "token_usage_db_path", return_value=Path("/tmp/token_usage.db")):
-                with patch("builtins.print") as mocked_info:
-                    code = cli._cmd_token_stats(
-                        output_json=False,
-                        limit=10,
-                        provider=None,
-                        since=None,
-                        until=None,
-                        last_hours=24,
-                    )
+        with patch.object(cli, "_resolve_target_agent_names", return_value=(["agent_a"], None)):
+            with patch.object(cli, "_agent_config_path", return_value=Path("/tmp/agent_a/config.json")):
+                with patch.object(cli, "read_token_usage_stats", return_value=fake_stats) as mocked_read:
+                    with patch.object(cli, "_print_agent_output_sections", return_value=0) as mocked_sections:
+                        code = cli._cmd_token_stats(
+                            output_json=False,
+                            limit=10,
+                            provider=None,
+                            since=None,
+                            until=None,
+                            last_hours=24,
+                        )
 
         self.assertEqual(code, 0)
         mocked_read.assert_called_once()
@@ -3127,11 +3148,14 @@ class CLITests(unittest.TestCase):
         self.assertIsInstance(kwargs["since_ms"], int)
         self.assertIsInstance(kwargs["until_ms"], int)
         self.assertLess(kwargs["since_ms"], kwargs["until_ms"])
-        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
-        self.assertTrue(any("requests=2" in line for line in lines))
-        self.assertTrue(any("Token DB: /tmp/token_usage.db" in line for line in lines))
-        self.assertTrue(any("provider=google" in line for line in lines))
-        self.assertTrue(any("last_hours=24" in line for line in lines))
+        self.assertEqual(kwargs["db_path"], Path("/tmp/agent_a/token_usage.db"))
+        section_rows = mocked_sections.call_args.args[0]
+        self.assertEqual(len(section_rows), 1)
+        self.assertEqual(section_rows[0][0], "agent_a")
+        self.assertIn("requests=2", section_rows[0][2])
+        self.assertIn("Token DB: /tmp/agent_a/token_usage.db", section_rows[0][2])
+        self.assertIn("provider=google", section_rows[0][2])
+        self.assertIn("last_hours=24", section_rows[0][2])
 
     def test_cmd_token_stats_outputs_json(self) -> None:
         from openheron import cli
@@ -3147,25 +3171,49 @@ class CLITests(unittest.TestCase):
             "total_tokens": 0,
             "recent": [],
         }
-        with patch.object(cli, "read_token_usage_stats", return_value=fake_stats):
-            with patch.object(cli, "token_usage_db_path", return_value=Path("/tmp/token_usage.db")):
-                with patch("builtins.print") as mocked_info:
-                    code = cli._cmd_token_stats(
-                        output_json=True,
-                        limit=20,
-                        provider="google",
-                        since="2026-02-26T00:00:00+08:00",
-                        until="2026-02-26T23:59:59+08:00",
-                        last_hours=None,
-                    )
+        with patch.object(cli, "_resolve_target_agent_names", return_value=(["agent_a", "agent_b"], None)):
+            with patch.object(
+                cli,
+                "_agent_config_path",
+                side_effect=[Path("/tmp/agent_a/config.json"), Path("/tmp/agent_b/config.json")],
+            ):
+                with patch.object(cli, "read_token_usage_stats", return_value=fake_stats):
+                    with patch("builtins.print") as mocked_info:
+                        code = cli._cmd_token_stats(
+                            output_json=True,
+                            limit=20,
+                            provider="google",
+                            since="2026-02-26T00:00:00+08:00",
+                            until="2026-02-26T23:59:59+08:00",
+                            last_hours=None,
+                        )
 
         self.assertEqual(code, 0)
         payload = json.loads(mocked_info.call_args[0][0])
-        self.assertEqual(payload["provider"], "google")
-        self.assertEqual(payload["requests"], 0)
-        self.assertEqual(payload["dbPath"], "/tmp/token_usage.db")
-        self.assertEqual(payload["since"], "2026-02-26T00:00:00+08:00")
-        self.assertEqual(payload["until"], "2026-02-26T23:59:59+08:00")
+        self.assertIn("agent_a", payload)
+        self.assertIn("agent_b", payload)
+        self.assertEqual(payload["agent_a"]["provider"], "google")
+        self.assertEqual(payload["agent_a"]["requests"], 0)
+        self.assertEqual(payload["agent_a"]["dbPath"], "/tmp/agent_a/token_usage.db")
+        self.assertEqual(payload["agent_a"]["since"], "2026-02-26T00:00:00+08:00")
+        self.assertEqual(payload["agent_a"]["until"], "2026-02-26T23:59:59+08:00")
+
+    def test_cmd_token_stats_returns_error_when_no_target_agents(self) -> None:
+        from openheron import cli
+
+        with patch.object(cli, "_resolve_target_agent_names", return_value=([], None)):
+            with patch("builtins.print") as mocked_info:
+                code = cli._cmd_token_stats(
+                    output_json=False,
+                    limit=20,
+                    provider=None,
+                    since=None,
+                    until=None,
+                    last_hours=None,
+                )
+
+        self.assertEqual(code, 1)
+        self.assertIn("no target agents found", mocked_info.call_args[0][0])
 
     def test_cmd_token_stats_invalid_time_range_returns_error(self) -> None:
         from openheron import cli

@@ -58,7 +58,7 @@ from ..runtime.cron_helpers import cron_store_path, format_schedule, format_time
 from ..runtime.cron_service import CronService
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.heartbeat_status_store import read_heartbeat_status_snapshot
-from ..runtime.token_usage_store import parse_time_filter_to_epoch_ms, read_token_usage_stats, token_usage_db_path
+from ..runtime.token_usage_store import read_token_usage_stats
 from ..runtime.gateway_service import (
     detect_service_manager,
     gateway_service_name,
@@ -3929,6 +3929,7 @@ def _cmd_token_stats(
     since: str | None,
     until: str | None,
     last_hours: int | None,
+    agent: str | None = None,
 ) -> int:
     return cli_runtime_ops.cmd_token_stats(
         output_json=output_json,
@@ -3937,9 +3938,12 @@ def _cmd_token_stats(
         since=since,
         until=until,
         last_hours=last_hours,
+        agent=agent,
         stdout_line=_stdout_line,
+        resolve_target_agent_names=lambda value: _resolve_target_agent_names(agent=value),
+        print_agent_output_sections=_print_agent_output_sections,
+        agent_config_path=_agent_config_path,
         read_token_usage_stats_fn=read_token_usage_stats,
-        token_usage_db_path_fn=token_usage_db_path,
     )
 
 
@@ -3947,13 +3951,14 @@ def _dispatch_token_command(args: argparse.Namespace, parser: argparse.ArgumentP
     return cli_runtime_ops.dispatch_token_command(
         args=args,
         parser=parser,
-        cmd_token_stats_fn=lambda output_json, limit, provider, since, until, last_hours: _cmd_token_stats(
+        cmd_token_stats_fn=lambda output_json, limit, provider, since, until, last_hours, agent: _cmd_token_stats(
             output_json=output_json,
             limit=limit,
             provider=provider,
             since=since,
             until=until,
             last_hours=last_hours,
+            agent=agent,
         ),
     )
 
@@ -4328,6 +4333,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Emit token stats as one machine-readable JSON object.",
     )
+    token_stats_parser.add_argument("--agent", default=None, help="Optional agent id.")
     token_stats_parser.add_argument(
         "--limit",
         type=int,
