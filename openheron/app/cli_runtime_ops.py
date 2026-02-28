@@ -519,7 +519,7 @@ def cmd_token_stats(
             lines.append("Recent: no records")
             results.append((agent_name, 0, "\n".join(lines), ""))
             continue
-        lines.append("Recent records:")
+        lines.append(f"Recent records (limit={int(limit)}):")
         for row in stats["recent"]:
             response_at = _format_response_at(row.get("response_at", "-"), display_utc=display_utc)
             lines.append(

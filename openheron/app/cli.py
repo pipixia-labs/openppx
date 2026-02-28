@@ -4351,12 +4351,20 @@ def main(argv: list[str] | None = None) -> None:
     token_stats_parser.add_argument(
         "--since",
         default=None,
-        help="Optional inclusive start time in ISO8601, e.g. 2026-02-26T00:00:00+08:00.",
+        help=(
+            "Optional inclusive start time in ISO8601. "
+            "When timezone offset is omitted, local timezone is used "
+            "(e.g. 2026-02-26T00:00:00)."
+        ),
     )
     token_stats_parser.add_argument(
         "--until",
         default=None,
-        help="Optional inclusive end time in ISO8601, e.g. 2026-02-26T23:59:59+08:00.",
+        help=(
+            "Optional inclusive end time in ISO8601. "
+            "When timezone offset is omitted, local timezone is used "
+            "(e.g. 2026-02-26T23:59:59)."
+        ),
     )
     token_stats_parser.add_argument(
         "--last-hours",
