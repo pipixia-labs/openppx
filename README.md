@@ -1,4 +1,5 @@
 <div align="center">
+ <img src="assets/openheron_logo_2.png" alt="openheron" width="500">
   <h1>OpenHeron: A Lightweight Personal AI Assistant</h1>
 </div>
 
