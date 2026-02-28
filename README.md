@@ -130,19 +130,6 @@ Minimal `config.json` example:
 }
 ```
 
-Optional: use environment variables for temporary overrides or local debugging:
-
-```bash
-export OPENHERON_GUI_MODEL=$NAME_OF_YOUR_MLLM
-export OPENHERON_GUI_PLANNER_MODEL=$NAME_OF_YOUR_MLLM
-export OPENHERON_GUI_GROUNDING_PROVIDER=openai
-export OPENAI_API_KEY=your_api_key   # for OpenAI provider
-```
-
-- `OPENHERON_GUI_MODEL`: multi-modal model used for low-level GUI grounding/actions
-- `OPENHERON_GUI_PLANNER_MODEL`: multi-modal model used for multi-step planning
-- `OPENHERON_GUI_GROUNDING_PROVIDER`: provider used by GUI grounding/planner key lookup
-- Provider API key env var: depends on provider (for example `OPENAI_API_KEY` / `GOOGLE_API_KEY`)
 
 GUI smoke examples:
 
@@ -221,10 +208,28 @@ openheron token stats --last-hours 24
 ```text
 openheron_root/
 ├── README.md
+├── assets/
 ├── docs/
+│   ├── CONFIGURATION.md
+│   ├── MCP_SECURITY.md
+│   ├── OPERATIONS.md
+│   ├── PROJECT_OVERVIEW.md
+│   └── README.md
 ├── openheron/
+│   ├── app/
+│   ├── bridge/
+│   ├── browser/
+│   ├── bus/
+│   ├── channels/
+│   ├── core/
+│   ├── gui/
+│   ├── mcps/
+│   ├── runtime/
+│   ├── skills/
+│   └── tooling/
+├── scripts/
 ├── tests/
-└── scripts/
+└── workspace/
 ```
 
 ## 📚 Documentation
