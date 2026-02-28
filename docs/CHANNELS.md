@@ -31,7 +31,7 @@ Connect OpenHeron to your preferred chat platforms.
 ### Discord
 
 **1. Create a bot**
-- Go to https://discord.com/developers/applications
+- Go to [Discord Developer Portal](https://discord.com/developers/applications)
 - Create an application → Bot → Add Bot
 - Copy the bot token
 
