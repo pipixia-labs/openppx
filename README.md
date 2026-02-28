@@ -105,18 +105,16 @@ openheron gateway-service status
 
 ## GUI Automation
 
-`openheron` includes desktop GUI tools.
-
-Recommended environment variables:
+`openheron` includes desktop GUI tools. And you need to edit the `config.json` or set the following environment variables:
 
 ```bash
-export OPENHERON_GUI_MODEL=gpt-4.1-mini
-export OPENHERON_GUI_PLANNER_MODEL=gpt-4.1-mini
+export OPENHERON_GUI_MODEL=$NAME_OF_YOUR_MLLM
+export OPENHERON_GUI_PLANNER_MODEL=$NAME_OF_YOUR_MLLM
 export OPENAI_API_KEY=your_api_key
 ```
 
-- `OPENHERON_GUI_MODEL`: model used for low-level GUI grounding/actions
-- `OPENHERON_GUI_PLANNER_MODEL`: model used for multi-step planning
+- `OPENHERON_GUI_MODEL`: multi-modal model used for low-level GUI grounding/actions
+- `OPENHERON_GUI_PLANNER_MODEL`: multi-modal model used for multi-step planning
 - `OPENAI_API_KEY`: API key for the selected OpenAI-compatible provider
 
 GUI smoke examples:
