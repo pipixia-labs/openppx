@@ -12,8 +12,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from openheron.browser.runtime import configure_browser_runtime
-from openheron.tooling.registry import browser
+from openpipixia.browser.runtime import configure_browser_runtime
+from openpipixia.tooling.registry import browser
 
 
 class BrowserE2EHttpTests(unittest.TestCase):
@@ -26,8 +26,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
         class _Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
                 captured["path"] = self.path
-                captured["proxy_token"] = self.headers.get("X-OpenHeron-Browser-Proxy-Token", "")
-                captured["relay_token"] = self.headers.get("X-OpenHeron-Browser-Relay-Token", "")
+                captured["proxy_token"] = self.headers.get("X-OpenPipixia-Browser-Proxy-Token", "")
+                captured["relay_token"] = self.headers.get("X-OpenPipixia-Browser-Relay-Token", "")
                 parsed = urlparse(self.path)
                 relay_mode = str(captured.get("relay_mode") or "").strip().lower()
                 query = parse_qs(parsed.query)
@@ -140,7 +140,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
                     payload = {
                         "ok": True,
                         "capabilityWarnings": [
-                            "OPENHERON_BROWSER_NODE_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+                            "OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
                         ],
                     }
                     body = json.dumps(payload).encode("utf-8")
@@ -154,7 +154,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
                     payload = {
                         "ok": True,
                         "capabilityWarnings": [
-                            "OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+                            "OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
                         ],
                     }
                     body = json.dumps(payload).encode("utf-8")
@@ -258,7 +258,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
                 post_paths = captured.get("post_paths")
                 if isinstance(post_paths, list):
                     post_paths.append(self.path)
-                captured["relay_token"] = self.headers.get("X-OpenHeron-Browser-Relay-Token", "")
+                captured["relay_token"] = self.headers.get("X-OpenPipixia-Browser-Relay-Token", "")
                 body_len = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(body_len).decode("utf-8", errors="replace") if body_len > 0 else ""
                 captured["body"] = raw
@@ -417,19 +417,19 @@ class BrowserE2EHttpTests(unittest.TestCase):
         return f"http://{host}:{port}"
 
     def _configure_relay_runtime(self, *, token: str | None = None) -> None:
-        os.environ["OPENHERON_BROWSER_RUNTIME"] = "playwright"
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_URL"] = self._server_base()
+        os.environ["OPENPIPIXIA_BROWSER_RUNTIME"] = "playwright"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_URL"] = self._server_base()
         if token is None:
-            os.environ.pop("OPENHERON_BROWSER_CHROME_RELAY_TOKEN", None)
+            os.environ.pop("OPENPIPIXIA_BROWSER_CHROME_RELAY_TOKEN", None)
         else:
-            os.environ["OPENHERON_BROWSER_CHROME_RELAY_TOKEN"] = token
+            os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_TOKEN"] = token
         configure_browser_runtime(None)
 
     def test_browser_node_proxy_minimal_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_TOKEN"] = "node-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_TOKEN"] = "node-token-e2e"
 
         payload = json.loads(
             browser(
@@ -481,8 +481,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_uses_global_proxy_token_fallback_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -492,9 +492,9 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_token_takes_precedence_over_global_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_TOKEN"] = "node-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_TOKEN"] = "node-token-e2e"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -504,14 +504,14 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_status_includes_recommendations_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["snapshot", "status", "profiles", "act"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             ["act", "profiles", "status", "snapshot"]
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -524,8 +524,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_accepts_top_level_capability_shape_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"backend": "custom-node-proxy", "supportedActions": ["tabs", "status"]}
         )
 
@@ -539,11 +539,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_invalid_recommendation_order_json_uses_default_order_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = "{not-json"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = "{not-json"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -555,11 +555,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_non_list_recommendation_order_uses_default_order_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps({"bad": "shape"})
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps({"bad": "shape"})
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -571,11 +571,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_recommendation_order_is_normalized_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["tabs", "status", "act"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             [" Status ", "status", "tabs", "", "ACT"]
         )
 
@@ -589,8 +589,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_capability_error_codes_are_deduplicated_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"errorCodes": ["proxy_timeout", " proxy_timeout ", "custom_error", ""]}}
         )
 
@@ -602,8 +602,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_capability_error_codes_are_deduplicated_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"errorCodes": ["proxy_timeout", " proxy_timeout ", "custom_error", ""]}}
         )
 
@@ -615,8 +615,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_supported_actions_are_trimmed_and_deduplicated_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": [" status ", "tabs", "status", ""]}}
         )
 
@@ -629,14 +629,14 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_profiles_normalizes_shape_and_recommendations_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["profiles", "status", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             ["profiles", "status", "tabs"]
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
 
         payload = json.loads(browser(action="profiles", target="node"))
 
@@ -650,8 +650,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_blocks_unsupported_action_by_capability_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles"]}}
         )
 
@@ -666,8 +666,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_blocked_action_normalizes_supported_actions_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": [" status ", "profiles", "status", ""]}}
         )
 
@@ -680,8 +680,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_minimal_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "sandbox-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "sandbox-token-e2e"
 
         payload = json.loads(browser(action="status", target="sandbox", timeout_ms=900))
 
@@ -695,8 +695,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_uses_global_proxy_token_fallback_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -706,9 +706,9 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_token_takes_precedence_over_global_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "sandbox-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_PROXY_TOKEN"] = "global-token-e2e"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "sandbox-token-e2e"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -718,8 +718,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_blocks_unsupported_action_by_capability_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles"]}}
         )
 
@@ -734,8 +734,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_blocked_action_normalizes_supported_actions_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": [" status ", "profiles", "status", ""]}}
         )
 
@@ -748,8 +748,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_invalid_capability_json_warns_and_falls_back_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -763,8 +763,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_non_object_capability_json_warns_and_falls_back_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(["not-an-object"])
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(["not-an-object"])
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -778,8 +778,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_merges_upstream_and_local_capability_warnings_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
 
         payload = json.loads(browser(action="status", target="node", node="warning-payload"))
 
@@ -791,8 +791,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_capability_warnings_are_deduplicated_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = "{not-json"
 
         payload = json.loads(browser(action="status", target="node", node="warning-payload-dup-node"))
 
@@ -800,7 +800,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
         warnings = payload.get("capabilityWarnings", [])
         self.assertEqual(
             warnings.count(
-                "OPENHERON_BROWSER_NODE_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+                "OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
             ),
             1,
         )
@@ -808,8 +808,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_invalid_capability_error_codes_shape_warns_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status"], "errorCodes": "bad-shape"}}
         )
 
@@ -825,8 +825,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_invalid_capability_json_warns_and_falls_back_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -840,8 +840,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_non_object_capability_json_warns_and_falls_back_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(["not-an-object"])
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(["not-an-object"])
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -855,8 +855,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_merges_upstream_and_local_capability_warnings_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
         self._captured["proxy_mode"] = "warning-payload"
 
         payload = json.loads(browser(action="status", target="sandbox"))
@@ -869,8 +869,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_capability_warnings_are_deduplicated_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = "{bad-json"
         self._captured["proxy_mode"] = "warning-payload-dup-sandbox"
 
         payload = json.loads(browser(action="status", target="sandbox"))
@@ -879,7 +879,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
         warnings = payload.get("capabilityWarnings", [])
         self.assertEqual(
             warnings.count(
-                "OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
+                "OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON is invalid JSON; fallback to default proxy capability"
             ),
             1,
         )
@@ -887,8 +887,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_invalid_capability_error_codes_shape_warns_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status"], "errorCodes": "bad-shape"}}
         )
 
@@ -904,14 +904,14 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_status_includes_recommendations_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["snapshot", "status", "profiles", "act"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             ["profiles", "status", "act", "snapshot"]
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "3"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "3"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -924,8 +924,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_accepts_top_level_capability_shape_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"backend": "custom-sandbox-proxy", "supportedActions": ["tabs", "status"]}
         )
 
@@ -939,11 +939,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_non_list_recommendation_order_uses_default_order_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps({"bad": "shape"})
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps({"bad": "shape"})
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -955,11 +955,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_invalid_recommendation_order_json_uses_default_order_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["dialog", "status", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = "{not-json"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = "{not-json"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -971,11 +971,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_recommendation_order_is_normalized_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["tabs", "status", "act"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             [" Status ", "status", "tabs", "", "ACT"]
         )
 
@@ -989,8 +989,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_supported_actions_are_trimmed_and_deduplicated_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": [" status ", "tabs", "status", ""]}}
         )
 
@@ -1003,14 +1003,14 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_recommendation_limit_is_clamped_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             ["status", "profiles", "tabs"]
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "0"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "0"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1021,11 +1021,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_recommendation_limit_is_clamped_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "0"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "0"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -1036,11 +1036,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_recommendation_limit_is_capped_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "999"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "999"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1050,11 +1050,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_recommendation_limit_is_capped_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "999"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "999"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -1064,11 +1064,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_node_proxy_invalid_recommendation_limit_uses_default_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs", "snapshot", "act", "dialog"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "not-an-int"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "not-an-int"
 
         payload = json.loads(browser(action="status", target="node"))
 
@@ -1078,11 +1078,11 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_invalid_recommendation_limit_uses_default_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs", "snapshot", "act", "dialog"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "not-an-int"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "not-an-int"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1092,14 +1092,14 @@ class BrowserE2EHttpTests(unittest.TestCase):
     def test_browser_sandbox_proxy_profiles_normalizes_shape_and_recommendations_e2e(self) -> None:
         configure_browser_runtime(None)
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["profiles", "status", "tabs"]}}
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             ["profiles", "status", "tabs"]
         )
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
 
         payload = json.loads(browser(action="profiles", target="sandbox"))
 
@@ -1112,8 +1112,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_invalid_json_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-invalid-json"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-invalid-json"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1124,8 +1124,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_non_object_json_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-non-object-json"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-non-object-json"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1136,8 +1136,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_timeout_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-slow"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-slow"
 
         payload = json.loads(browser(action="status", target="sandbox", timeout_ms=50))
 
@@ -1152,7 +1152,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
         _, free_port = probe.getsockname()
         probe.close()
 
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://127.0.0.1:{free_port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://127.0.0.1:{free_port}"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1163,8 +1163,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_http_error_uses_structured_status_and_error_code_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-structured-error"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-structured-error"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1175,7 +1175,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_http_error_non_int_status_falls_back_to_http_status_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
         self._captured["proxy_mode"] = "structured-error-bad-status"
 
         payload = json.loads(browser(action="status", target="sandbox"))
@@ -1187,7 +1187,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_http_error_prefers_message_field_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
         self._captured["proxy_mode"] = "message-error"
 
         payload = json.loads(browser(action="status", target="sandbox"))
@@ -1199,7 +1199,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_auth_error_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
         self._captured["proxy_mode"] = "auth-required"
 
         payload = json.loads(browser(action="status", target="sandbox"))
@@ -1211,8 +1211,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_auth_success_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "node-token-ok"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "node-token-ok"
         self._captured["proxy_mode"] = "auth-required"
 
         payload = json.loads(browser(action="status", target="sandbox"))
@@ -1222,8 +1222,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_empty_body_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-empty-body"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_TOKEN"] = "mode-empty-body"
 
         payload = json.loads(browser(action="status", target="sandbox"))
 
@@ -1234,7 +1234,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_sandbox_proxy_plain_http_error_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = f"http://{host}:{port}"
         self._captured["proxy_mode"] = "plain-http-error"
 
         payload = json.loads(browser(action="status", target="sandbox"))
@@ -1487,7 +1487,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_chrome_relay_act_evaluate_minimal_e2e(self) -> None:
         self._configure_relay_runtime()
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_EVALUATE_ENABLED"] = "1"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_EVALUATE_ENABLED"] = "1"
 
         payload = json.loads(
             browser(
@@ -1524,8 +1524,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_chrome_relay_act_evaluate_too_long_e2e(self) -> None:
         self._configure_relay_runtime()
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_EVALUATE_ENABLED"] = "1"
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_EVALUATE_MAX_CHARS"] = "8"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_EVALUATE_ENABLED"] = "1"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_EVALUATE_MAX_CHARS"] = "8"
 
         payload = json.loads(
             browser(
@@ -1544,8 +1544,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_chrome_relay_act_body_too_large_e2e(self) -> None:
         self._configure_relay_runtime()
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_MAX_BODY_BYTES"] = "256"
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_TYPE_MAX_CHARS"] = "200000"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_MAX_BODY_BYTES"] = "256"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_TYPE_MAX_CHARS"] = "200000"
 
         payload = json.loads(
             browser(
@@ -1677,7 +1677,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_chrome_relay_act_timeout_mapping_e2e(self) -> None:
         self._configure_relay_runtime()
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_TIMEOUT_MS"] = "50"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_TIMEOUT_MS"] = "50"
 
         payload = json.loads(
             browser(
@@ -1699,8 +1699,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
         _, free_port = probe.getsockname()
         probe.close()
 
-        os.environ["OPENHERON_BROWSER_RUNTIME"] = "playwright"
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_URL"] = f"http://127.0.0.1:{free_port}"
+        os.environ["OPENPIPIXIA_BROWSER_RUNTIME"] = "playwright"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_URL"] = f"http://127.0.0.1:{free_port}"
         configure_browser_runtime(None)
 
         payload = json.loads(browser(action="status", profile="chrome"))
@@ -1711,8 +1711,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self.assertIn("connection refused", payload["error"].lower())
 
     def test_browser_chrome_relay_dns_failed_mapping_e2e(self) -> None:
-        os.environ["OPENHERON_BROWSER_RUNTIME"] = "playwright"
-        os.environ["OPENHERON_BROWSER_CHROME_RELAY_URL"] = "http://does-not-exist-relay-host.invalid:9800"
+        os.environ["OPENPIPIXIA_BROWSER_RUNTIME"] = "playwright"
+        os.environ["OPENPIPIXIA_BROWSER_CHROME_RELAY_URL"] = "http://does-not-exist-relay-host.invalid:9800"
         configure_browser_runtime(None)
 
         payload = json.loads(browser(action="status", profile="chrome"))
@@ -1733,7 +1733,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_http_error_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="rate-limit"))
 
@@ -1744,7 +1744,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_timeout_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="slow", timeout_ms=50))
 
@@ -1755,7 +1755,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_invalid_json_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="invalid-json"))
 
@@ -1766,7 +1766,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_non_object_json_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="non-object-json"))
 
@@ -1777,7 +1777,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_empty_body_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="empty-body"))
 
@@ -1787,7 +1787,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_http_error_uses_structured_status_and_error_code_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="structured-error"))
 
@@ -1798,7 +1798,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_http_error_non_int_status_falls_back_to_http_status_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="structured-error-bad-status"))
 
@@ -1809,7 +1809,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_http_error_prefers_message_field_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="message-error"))
 
@@ -1820,7 +1820,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_plain_http_error_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="plain-http-error"))
 
@@ -1831,7 +1831,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_auth_error_mapping_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
 
         payload = json.loads(browser(action="status", target="node", node="auth-required"))
 
@@ -1842,8 +1842,8 @@ class BrowserE2EHttpTests(unittest.TestCase):
 
     def test_browser_node_proxy_auth_success_e2e(self) -> None:
         host, port = self._server.server_address
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_TOKEN"] = "node-token-ok"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = f"http://{host}:{port}"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_TOKEN"] = "node-token-ok"
 
         payload = json.loads(browser(action="status", target="node", node="auth-required"))
 
@@ -1889,7 +1889,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
             path = os.path.join(tmpdir, "upload.txt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("demo")
-            os.environ["OPENHERON_BROWSER_UPLOAD_ROOT"] = tmpdir
+            os.environ["OPENPIPIXIA_BROWSER_UPLOAD_ROOT"] = tmpdir
             payload = json.loads(browser(action="upload", profile="chrome", target_id="tab-2", paths=[path]))
 
         self.assertTrue(payload["ok"])
@@ -1922,7 +1922,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self._configure_relay_runtime()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = tmpdir
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = tmpdir
             out_path = os.path.join(tmpdir, "shot.png")
             payload = json.loads(
                 browser(
@@ -1942,7 +1942,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self._configure_relay_runtime()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = tmpdir
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = tmpdir
             out_path = os.path.join(tmpdir, "tab-2.pdf")
             payload = json.loads(
                 browser(
@@ -1963,7 +1963,7 @@ class BrowserE2EHttpTests(unittest.TestCase):
         self._configure_relay_runtime()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = tmpdir
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = tmpdir
             out_path = os.path.join(tmpdir, "tab-2.console.json")
             payload = json.loads(
                 browser(

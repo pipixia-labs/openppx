@@ -1,4 +1,4 @@
-"""Tests for openheron skills behavior."""
+"""Tests for openpipixia skills behavior."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openheron.tooling.skills_adapter import SkillRegistry, list_skills, read_skill
+from openpipixia.tooling.skills_adapter import SkillRegistry, list_skills, read_skill
 
 
 class SkillRegistryTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class SkillRegistryTests(unittest.TestCase):
         os.environ.update(self._env_backup)
 
     def test_discovers_builtin_skill(self) -> None:
-        registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openheron-workspace"))
+        registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openpipixia-workspace"))
         names = [s.name for s in registry.list_skills()]
         self.assertIn("general", names)
 
@@ -34,7 +34,7 @@ class SkillRegistryTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            os.environ["OPENHERON_WORKSPACE"] = str(workspace)
+            os.environ["OPENPIPIXIA_WORKSPACE"] = str(workspace)
             skills = json.loads(list_skills())
             names = {item["name"] for item in skills}
             self.assertIn("workspace-demo", names)
@@ -60,7 +60,7 @@ class SkillRegistryTests(unittest.TestCase):
             self.assertNotIn("# Custom General", registry.read_skill("general"))
 
     def test_read_skill_raises_for_missing(self) -> None:
-        registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openheron-workspace"))
+        registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openpipixia-workspace"))
         with self.assertRaises(ValueError):
             registry.read_skill("does-not-exist")
 
@@ -92,7 +92,7 @@ class SkillRegistryTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            os.environ["OPENHERON_WORKSPACE"] = str(workspace)
+            os.environ["OPENPIPIXIA_WORKSPACE"] = str(workspace)
             content = read_skill("demo")
             self.assertIn("# Demo Skill", content)
 
@@ -105,15 +105,15 @@ class SkillRegistryTests(unittest.TestCase):
                 "---\nname: custom-skill\ndescription: custom builtin\n---\n\n# Custom Builtin\n",
                 encoding="utf-8",
             )
-            os.environ["OPENHERON_WORKSPACE"] = "/tmp/nonexistent-openheron-workspace"
-            os.environ["OPENHERON_BUILTIN_SKILLS_DIR"] = str(builtin_dir)
+            os.environ["OPENPIPIXIA_WORKSPACE"] = "/tmp/nonexistent-openpipixia-workspace"
+            os.environ["OPENPIPIXIA_BUILTIN_SKILLS_DIR"] = str(builtin_dir)
 
             skills = json.loads(list_skills())
             names = {item["name"] for item in skills}
             self.assertIn("custom-skill", names)
 
     def test_builtin_contains_all_expected_skills(self) -> None:
-        registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openheron-workspace"))
+        registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openpipixia-workspace"))
         names = {item.name for item in registry.list_skills()}
         expected = {
             "cron",
@@ -130,13 +130,13 @@ class SkillRegistryTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset(names))
 
-    def test_default_user_global_skills_use_openheron_dir_not_codex_dir(self) -> None:
+    def test_default_user_global_skills_use_openpipixia_dir_not_codex_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            openheron_skill = home / ".openheron" / "skills" / "openheron-global-demo" / "SKILL.md"
-            openheron_skill.parent.mkdir(parents=True, exist_ok=True)
-            openheron_skill.write_text(
-                "---\nname: openheron-global-demo\ndescription: openheron global skill\n---\n\n# Openheron Global\n",
+            openpipixia_skill = home / ".openpipixia" / "skills" / "openpipixia-global-demo" / "SKILL.md"
+            openpipixia_skill.parent.mkdir(parents=True, exist_ok=True)
+            openpipixia_skill.write_text(
+                "---\nname: openpipixia-global-demo\ndescription: openpipixia global skill\n---\n\n# Openpipixia Global\n",
                 encoding="utf-8",
             )
             codex_skill = home / ".codex" / "skills" / "codex-global-demo" / "SKILL.md"
@@ -147,10 +147,10 @@ class SkillRegistryTests(unittest.TestCase):
             )
 
             os.environ["HOME"] = str(home)
-            registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openheron-workspace"))
+            registry = SkillRegistry(workspace=Path("/tmp/nonexistent-openpipixia-workspace"))
             names = {item.name for item in registry.list_skills()}
 
-        self.assertIn("openheron-global-demo", names)
+        self.assertIn("openpipixia-global-demo", names)
         self.assertNotIn("codex-global-demo", names)
 
 

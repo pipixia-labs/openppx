@@ -6,9 +6,9 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from openheron.bus.events import OutboundMessage
-from openheron.bus.queue import MessageBus
-from openheron.channels.email import EmailChannel
+from openpipixia.bus.events import OutboundMessage
+from openpipixia.bus.queue import MessageBus
+from openpipixia.channels.email import EmailChannel
 
 
 class EmailChannelTests(unittest.IsolatedAsyncioTestCase):

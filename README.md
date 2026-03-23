@@ -1,5 +1,5 @@
 <div align="center">
- <img src="assets/openheron_logo_2.png" alt="openpipixia" width="500">
+ <img src="assets/openpipixia_logo_2.png" alt="openpipixia" width="500">
   <h1>OpenPipixia: A Lightweight Personal AI Assistant 🚀</h1>
 </div>
 
@@ -25,16 +25,16 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt 
 pip install .
-openheron init
-# Follow the `openheron init` output and edit the generated config files.
+openpipixia init
+# Follow the `openpipixia init` output and edit the generated config files.
 ```
 
-`openheron init` scaffolds a default multi-agent setup:
+`openpipixia init` scaffolds a default multi-agent setup:
 
-- `~/.openheron/agent_name_1`
-- `~/.openheron/agent_name_2`
-- `~/.openheron/agent_name_3`
-- `~/.openheron/global_config.json`
+- `~/.openpipixia/agent_name_1`
+- `~/.openpipixia/agent_name_2`
+- `~/.openpipixia/agent_name_3`
+- `~/.openpipixia/global_config.json`
 
 By default, only `agent_name_1` is enabled in `global_config.json`.
 
@@ -51,7 +51,7 @@ Review and edit your configuration files:
 
 - `global_config.json`
 - Each agent's config/runtime/workspace files, for example:
-  `~/.openheron/agent_name_1/config.json`
+  `~/.openpipixia/agent_name_1/config.json`
 
 Fill in required provider keys and assign per-agent security settings.
 You can leave channel-specific keys (for example Telegram or Feishu) empty at this stage.
@@ -59,7 +59,7 @@ You can leave channel-specific keys (for example Telegram or Feishu) empty at th
 ### 💬 3. Try Local Interactive Mode
 
 ```bash
-openheron --config-path ~/.openheron/agent_name_1/config.json gateway run --channels local --interactive-local
+openpipixia --config-path ~/.openpipixia/agent_name_1/config.json gateway run --channels local --interactive-local
 ```
 
 ### 🛰️ 4. Enable Channel Chat and Start Background Service
@@ -67,7 +67,7 @@ openheron --config-path ~/.openheron/agent_name_1/config.json gateway run --chan
 For channel keys and secrets, see [`docs/CHANNELS.md`](./docs/CHANNELS.md). After filling in channel keys, start the background gateway for regular usage:
 
 ```bash
-openheron gateway start
+openpipixia gateway start
 ```
 
 
@@ -75,34 +75,34 @@ openheron gateway start
 ## 🧪 Command Discovery
 
 ```bash
-openheron --help
-openheron gateway --help
-openheron gateway-service --help
-openheron provider --help
-openheron channels --help
-openheron cron --help
-openheron heartbeat --help
-openheron token --help
+openpipixia --help
+openpipixia gateway --help
+openpipixia gateway-service --help
+openpipixia provider --help
+openpipixia channels --help
+openpipixia cron --help
+openpipixia heartbeat --help
+openpipixia token --help
 ```
 
 ## 🌉 Gateway Usage
 
-- `openheron gateway run`: run the gateway in the foreground
-- `openheron gateway start|stop|restart|status`: start, stop, restart, and inspect the background gateway process
-- `openheron gateway-service`: manage OS user-service manifests (launchd/systemd)
+- `openpipixia gateway run`: run the gateway in the foreground
+- `openpipixia gateway start|stop|restart|status`: start, stop, restart, and inspect the background gateway process
+- `openpipixia gateway-service`: manage OS user-service manifests (launchd/systemd)
 
 Examples:
 
 ```bash
-openheron gateway run --channels local,feishu --interactive-local
-openheron gateway status
-openheron gateway-service install --channels local,feishu --enable
-openheron gateway-service status
+openpipixia gateway run --channels local,feishu --interactive-local
+openpipixia gateway status
+openpipixia gateway-service install --channels local,feishu --enable
+openpipixia gateway-service status
 ```
 
 ## 🖥️ Computer Use
 
-`openheron` includes desktop GUI tools.
+`openpipixia` includes desktop GUI tools.
 Recommended: configure GUI models/providers in `config.json` (`multimodalProviders`, `gui.groundingProvider`, `gui.plannerProvider`).
 
 Minimal `config.json` example:
@@ -138,7 +138,7 @@ GUI smoke examples:
 ./.venv/bin/python scripts/gui_smoke.py --mode single --action "Wait 1 second"
 
 # Multi-step (dry run)
-./.venv/bin/python scripts/gui_smoke.py --mode task --task "Open a browser and search for openheron" --max-steps 8 --dry-run
+./.venv/bin/python scripts/gui_smoke.py --mode task --task "Open a browser and search for openpipixia" --max-steps 8 --dry-run
 ```
 
 macOS permission reminder (required for GUI automation):
@@ -150,14 +150,14 @@ macOS permission reminder (required for GUI automation):
 
 Background runtime/log files:
 
-- `~/.openheron/log/gateway.pid`
-- `~/.openheron/log/gateway.meta.json`
-- `~/.openheron/log/gateway.out.log`
-- `~/.openheron/log/gateway.err.log`
-- `~/.openheron/log/gateway.debug.log`
-- `~/.openheron/token_usage.db` (LLM token usage events)
+- `~/.openpipixia/log/gateway.pid`
+- `~/.openpipixia/log/gateway.meta.json`
+- `~/.openpipixia/log/gateway.out.log`
+- `~/.openpipixia/log/gateway.err.log`
+- `~/.openpipixia/log/gateway.debug.log`
+- `~/.openpipixia/token_usage.db` (LLM token usage events)
 
-Workspace-level runtime state lives under `<workspace>/.openheron/`
+Workspace-level runtime state lives under `<workspace>/.openpipixia/`
 (for example cron and heartbeat runtime snapshots).
 
 ## 🧰 Development
@@ -165,7 +165,7 @@ Workspace-level runtime state lives under `<workspace>/.openheron/`
 Install in editable mode:
 
 ```bash
-cd openheron_root
+cd openppx_root
 source .venv/bin/activate
 pip install -e .
 ```
@@ -187,26 +187,26 @@ scripts/install_smoke.sh --with-gateway
 
 ```bash
 # Single-turn call
-python -m openheron.cli -m "Describe what you can do"
-python -m openheron.cli -m "Describe what you can do" --user-id local --session-id demo001
+python -m openpipixia.cli -m "Describe what you can do"
+python -m openpipixia.cli -m "Describe what you can do" --user-id local --session-id demo001
 
 # Local interactive gateway
-python -m openheron.cli gateway run --channels local --interactive-local
+python -m openpipixia.cli gateway run --channels local --interactive-local
 
 # Multi-channel runtime
-openheron gateway run --channels local,feishu --interactive-local
-openheron gateway-service install --channels local,feishu --enable
-openheron gateway-service status
-openheron doctor
-openheron heartbeat status
-openheron token stats --provider google --limit 50
-openheron token stats --last-hours 24
+openpipixia gateway run --channels local,feishu --interactive-local
+openpipixia gateway-service install --channels local,feishu --enable
+openpipixia gateway-service status
+openpipixia doctor
+openpipixia heartbeat status
+openpipixia token stats --provider google --limit 50
+openpipixia token stats --last-hours 24
 ```
 
 ## 🗂️ Project Layout
 
 ```text
-openheron_root/
+openppx_root/
 ├── README.md
 ├── assets/
 ├── docs/
@@ -215,7 +215,7 @@ openheron_root/
 │   ├── OPERATIONS.md
 │   ├── PROJECT_OVERVIEW.md
 │   └── README.md
-├── openheron/
+├── openpipixia/
 │   ├── app/
 │   ├── bridge/
 │   ├── browser/
@@ -251,7 +251,7 @@ Recommended reading order:
 For programmatic doctor output:
 
 ```bash
-openheron doctor --fix --json
+openpipixia doctor --fix --json
 ```
 
 Then inspect `fix.reasonCodes` and `fix.byRule`
@@ -259,19 +259,19 @@ Then inspect `fix.reasonCodes` and `fix.byRule`
 
 ## 🧹 Uninstall
 
-Run this in the same Python environment where `openheron` was installed:
+Run this in the same Python environment where `openpipixia` was installed:
 
 ```bash
-pip uninstall openheron
+pip uninstall openpipixia
 ```
 
 This removes only the Python package and CLI entrypoint.
-It does **not** remove user data under `~/.openheron/`.
+It does **not** remove user data under `~/.openpipixia/`.
 
 To remove local runtime data as well:
 
 ```bash
-rm -rf ~/.openheron
+rm -rf ~/.openpipixia
 ```
 
 Only run this cleanup if you no longer need existing config, workspace files, logs, or local runtime records.

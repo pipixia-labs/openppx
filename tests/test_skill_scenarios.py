@@ -10,8 +10,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from openheron.tooling.skills_adapter import read_skill
-from openheron.tooling.registry import read_file, web_fetch, write_file
+from openpipixia.tooling.skills_adapter import read_skill
+from openpipixia.tooling.registry import read_file, web_fetch, write_file
 
 
 def _create_simple_docx(path: Path, text: str) -> None:
@@ -52,7 +52,7 @@ class ScenarioTests(unittest.TestCase):
 
     def test_saas_ui_page_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             skill_text = read_skill("ui-ux-pro-max")
             self.assertIn("UI/UX", skill_text)
 
@@ -103,7 +103,7 @@ class ScenarioTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb):
                 return False
 
-        with patch("openheron.tooling.registry.urlopen", return_value=_FakeResponse()):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_FakeResponse()):
             data = json.loads(
                 web_fetch(
                     "https://api.open-meteo.com/v1/forecast?latitude=37.513&longitude=122.12&current=temperature_2m,weather_code"
@@ -115,7 +115,7 @@ class ScenarioTests(unittest.TestCase):
 
     def test_birthday_wish_written_to_word_doc(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             skill_text = read_skill("docx")
             self.assertIn("docx", skill_text.lower())
 

@@ -1,4 +1,4 @@
-"""Tests for openheron CLI behavior."""
+"""Tests for openpipixia CLI behavior."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def tearDownModule() -> None:
 
 class CLITests(unittest.TestCase):
     def test_message_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_message", return_value=0) as mocked:
@@ -80,7 +80,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_onboard_command_removed(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with self.assertRaises(SystemExit) as ctx:
@@ -89,7 +89,7 @@ class CLITests(unittest.TestCase):
             mocked_bootstrap.assert_not_called()
 
     def test_install_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_install", return_value=0) as mocked_install:
@@ -100,7 +100,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_not_called()
 
     def test_init_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_init", return_value=0) as mocked_init:
@@ -111,10 +111,10 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_not_called()
 
     def test_cmd_init_creates_three_agent_configs_and_global_config(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp) / ".openheron"
+            data_dir = Path(tmp) / ".openpipixia"
             with patch.object(cli, "get_data_dir", return_value=data_dir):
                 with patch("builtins.print") as mocked_info:
                     code = cli._cmd_init(force=True)
@@ -150,7 +150,7 @@ class CLITests(unittest.TestCase):
             self.assertTrue(any("skills/" in line for line in lines))
 
     def test_gateway_service_install_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_gateway_service_install", return_value=0) as mocked_install:
@@ -161,7 +161,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_gateway_service_status_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_gateway_service_status", return_value=0) as mocked_status:
@@ -172,7 +172,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_gateway_start_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_gateway_start", return_value=0) as mocked_start:
@@ -187,7 +187,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_gateway_without_action_prints_help(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli.argparse.ArgumentParser, "print_help") as mocked_help:
@@ -200,7 +200,7 @@ class CLITests(unittest.TestCase):
                 mocked_gateway.assert_not_called()
 
     def test_gateway_status_mode_dispatch_json(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_gateway_status", return_value=0) as mocked_status:
@@ -211,11 +211,11 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_gateway_run_requires_explicit_config_when_default_missing_in_multi_agent(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
-        with patch.object(cli, "get_config_path", return_value=Path("/tmp/openheron/config.json")):
+        with patch.object(cli, "get_config_path", return_value=Path("/tmp/openpipixia/config.json")):
             with patch.object(cli, "_global_enabled_agent_names", return_value=["agent_a", "agent_b"]):
-                with patch.object(cli, "_agent_config_path", return_value=Path("/tmp/openheron/agent_a/config.json")):
+                with patch.object(cli, "_agent_config_path", return_value=Path("/tmp/openpipixia/agent_a/config.json")):
                     with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
                         with patch("builtins.print") as mocked_info:
                             with self.assertRaises(SystemExit) as ctx:
@@ -227,9 +227,9 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("Please pass --config-path explicitly" in line for line in lines))
 
     def test_main_bootstrap_uses_explicit_config_path_when_provided(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
-        explicit = Path("/tmp/openheron/agent_a/config.json")
+        explicit = Path("/tmp/openpipixia/agent_a/config.json")
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_doctor", return_value=0):
                 with self.assertRaises(SystemExit) as ctx:
@@ -238,7 +238,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once_with(explicit)
 
     def test_doctor_mode_bootstraps_config(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_doctor", return_value=0):
@@ -248,7 +248,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_doctor_mode_passes_json_and_verbose_flags(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config"):
             with patch.object(cli, "_cmd_doctor", return_value=0) as mocked_doctor:
@@ -260,7 +260,7 @@ class CLITests(unittest.TestCase):
                 )
 
     def test_doctor_mode_passes_fix_flag(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config"):
             with patch.object(cli, "_cmd_doctor", return_value=0) as mocked_doctor:
@@ -272,7 +272,7 @@ class CLITests(unittest.TestCase):
                 )
 
     def test_doctor_mode_passes_fix_dry_run_flag(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config"):
             with patch.object(cli, "_cmd_doctor", return_value=0) as mocked_doctor:
@@ -284,7 +284,7 @@ class CLITests(unittest.TestCase):
                 )
 
     def test_doctor_mode_passes_no_color_flag(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config"):
             with patch.object(cli, "_cmd_doctor", return_value=0) as mocked_doctor:
@@ -296,7 +296,7 @@ class CLITests(unittest.TestCase):
                 )
 
     def test_mcps_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_mcps", return_value=0) as mocked_mcps:
@@ -307,7 +307,7 @@ class CLITests(unittest.TestCase):
                 mocked_mcps.assert_called_once_with(agent=None)
 
     def test_spawn_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_spawn", return_value=0) as mocked_spawn:
@@ -318,7 +318,7 @@ class CLITests(unittest.TestCase):
                 mocked_spawn.assert_called_once_with(agent=None)
 
     def test_provider_login_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_provider_login", return_value=0) as mocked_login:
@@ -329,7 +329,7 @@ class CLITests(unittest.TestCase):
                 mocked_login.assert_called_once_with("openai-codex")
 
     def test_provider_list_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_provider_list", return_value=0) as mocked_list:
@@ -340,7 +340,7 @@ class CLITests(unittest.TestCase):
                 mocked_list.assert_called_once_with(verbose=False)
 
     def test_provider_list_mode_dispatch_verbose(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_provider_list", return_value=0) as mocked_list:
@@ -351,7 +351,7 @@ class CLITests(unittest.TestCase):
                 mocked_list.assert_called_once_with(verbose=True)
 
     def test_cmd_provider_list_default_hides_runtime(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch("builtins.print") as mocked_info:
             code = cli._cmd_provider_list(verbose=False)
@@ -361,7 +361,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("default_model=" in line for line in lines))
 
     def test_cmd_provider_list_verbose_includes_runtime(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch("builtins.print") as mocked_info:
             code = cli._cmd_provider_list(verbose=True)
@@ -370,7 +370,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("openai_codex: default_model=" in line and "runtime=codex" in line for line in lines))
 
     def test_provider_status_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_provider_status", return_value=0) as mocked_status:
@@ -381,7 +381,7 @@ class CLITests(unittest.TestCase):
                 mocked_status.assert_called_once_with(output_json=True)
 
     def test_channels_login_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_channels_login", return_value=0) as mocked_login:
@@ -392,7 +392,7 @@ class CLITests(unittest.TestCase):
                 mocked_login.assert_called_once_with(channel_name="whatsapp")
 
     def test_channels_bridge_start_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_channels_bridge_start", return_value=0) as mocked_start:
@@ -403,7 +403,7 @@ class CLITests(unittest.TestCase):
                 mocked_start.assert_called_once_with(channel_name="whatsapp")
 
     def test_cmd_provider_login_rejects_non_oauth_provider(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch("builtins.print") as mocked_info:
             code = cli._cmd_provider_login("openai")
@@ -411,7 +411,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("Unknown OAuth provider", mocked_info.call_args[0][0])
 
     def test_cmd_provider_login_invokes_registered_handler(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         handler = Mock()
         with patch.dict(cli._PROVIDER_LOGIN_HANDLERS, {"openai_codex": handler}, clear=False):
@@ -421,7 +421,7 @@ class CLITests(unittest.TestCase):
         handler.assert_called_once_with()
 
     def test_cmd_provider_login_accepts_alias(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         handler = Mock()
         with patch.dict(cli._PROVIDER_LOGIN_HANDLERS, {"openai_codex": handler}, clear=False):
@@ -431,7 +431,7 @@ class CLITests(unittest.TestCase):
         handler.assert_called_once_with()
 
     def test_cmd_provider_login_openai_codex_uses_cached_valid_token(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         token = pytypes.SimpleNamespace(access="token", account_id="acct_1")
         fake_oauth_module = pytypes.SimpleNamespace(
@@ -445,7 +445,7 @@ class CLITests(unittest.TestCase):
         fake_oauth_module.login_oauth_interactive.assert_not_called()
 
     def test_cmd_provider_login_openai_codex_rejects_missing_account_id(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         token = pytypes.SimpleNamespace(access="token", account_id="")
         fake_oauth_module = pytypes.SimpleNamespace(
@@ -462,7 +462,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("account_id missing in token" in line for line in lines))
 
     def test_provider_oauth_health_non_oauth_provider(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         issue, status = cli._provider_oauth_health("google")
         self.assertIsNone(issue)
@@ -471,7 +471,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(status["message"], "not_required")
 
     def test_provider_oauth_health_openai_codex_missing_token(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_check_openai_codex_oauth", return_value=(False, "token missing")):
             issue, status = cli._provider_oauth_health("openai_codex")
@@ -482,7 +482,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(status["message"], "token missing")
 
     def test_provider_oauth_health_openai_codex_authenticated(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_check_openai_codex_oauth", return_value=(True, "account_id=user_1")):
             issue, status = cli._provider_oauth_health("openai_codex")
@@ -492,7 +492,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(status["message"], "account_id=user_1")
 
     def test_check_github_copilot_oauth_non_invasive_missing_cache(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"GITHUB_COPILOT_TOKEN_DIR": tmp}, clear=False):
@@ -501,7 +501,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(detail, "access_token_missing")
 
     def test_check_github_copilot_oauth_non_invasive_valid_api_key_cache(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             cache = {
@@ -516,7 +516,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("api_key_cached_until=", detail)
 
     def test_provider_oauth_health_github_copilot_missing_cache_returns_issue(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_check_github_copilot_oauth_non_invasive", return_value=(False, "access_token_missing")):
             issue, status = cli._provider_oauth_health("github_copilot")
@@ -527,7 +527,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(status["message"], "access_token_missing")
 
     def test_cmd_doctor_includes_mcp_health_failures(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
         fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
@@ -549,13 +549,13 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "google",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "google",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                 "GOOGLE_API_KEY": "k",
             },
             clear=False,
         ):
-            with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+            with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                 with patch.object(cli, "validate_provider_runtime", return_value=None):
                     with patch.object(cli, "get_registry", return_value=fake_registry):
                         with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -583,7 +583,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("MCP server 'filesystem' health check failed", info_text)
 
     def test_cmd_install_runs_init_setup_and_doctor(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_cmd_install_init_setup", return_value=0) as mocked_init:
             with patch.object(cli, "_cmd_doctor", return_value=0) as mocked_doctor:
@@ -599,7 +599,7 @@ class CLITests(unittest.TestCase):
         mocked_bootstrap.assert_called_once()
 
     def test_cmd_install_skips_interactive_onboarding(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_cmd_install_init_setup", return_value=0):
             with patch.object(cli, "_cmd_doctor", return_value=0):
@@ -611,7 +611,7 @@ class CLITests(unittest.TestCase):
         mocked_input.assert_not_called()
 
     def test_cmd_install_prints_gateway_next_step(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_cmd_install_init_setup", return_value=0):
             with patch.object(cli, "_cmd_doctor", return_value=0):
@@ -621,11 +621,11 @@ class CLITests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
-        self.assertTrue(any("Install complete. Next: run `openheron gateway`." in line for line in lines))
+        self.assertTrue(any("Install complete. Next: run `openpipixia gateway`." in line for line in lines))
 
 
     def test_doctor_channel_backfill_schema_matches_channel_env_mappings(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         self.assertEqual(
             len(cli.DOCTOR_CHANNEL_ENV_BACKFILL_RULES),
@@ -645,7 +645,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(telegram_rule.rule, "channel_env_backfill")
 
     def test_doctor_channel_bool_backfill_schema_contains_email_consent_rule(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         consent_rule = next(
             (
@@ -661,7 +661,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(consent_rule.rule, "email_consent_backfill")
 
     def test_install_prereq_lines_report_missing_tools(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.object(cli.Path, "cwd", return_value=Path(tmp)):
@@ -676,7 +676,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("rich missing", merged)
 
     def test_install_prereq_lines_report_detected_tools(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             venv_python = Path(tmp) / ".venv" / "bin"
@@ -694,7 +694,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("rich detected", merged)
 
     def test_doctor_install_prereq_line_normalizes_prefix_and_status(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         ok_line = cli._doctor_install_prereq_line("Install prereq: virtualenv detected at /tmp/.venv")
         warn_line = cli._doctor_install_prereq_line("Install prereq: adk CLI not found")
@@ -703,7 +703,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(warn_line, "Install prereq [warn]: adk CLI not found")
 
     def test_gui_execution_path_hint_variants(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         self.assertEqual(
             cli._gui_execution_path_hint(
@@ -739,7 +739,7 @@ class CLITests(unittest.TestCase):
         )
 
     def test_cmd_gateway_service_install_writes_launchd_manifest(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -751,7 +751,7 @@ class CLITests(unittest.TestCase):
                     with patch.object(cli, "get_data_dir", return_value=data):
                         with patch.object(cli, "get_config_path", return_value=data / "config.json"):
                             with patch.object(cli, "load_config", return_value=cli.default_config()):
-                                with patch.object(cli.shutil, "which", return_value="/usr/local/bin/openheron"):
+                                with patch.object(cli.shutil, "which", return_value="/usr/local/bin/openpipixia"):
                                     with patch("builtins.print") as mocked_print:
                                         code = cli._cmd_gateway_service_install(
                                             force=False,
@@ -759,22 +759,22 @@ class CLITests(unittest.TestCase):
                                             enable=False,
                                         )
             self.assertEqual(code, 0)
-            manifest_path = home / "Library" / "LaunchAgents" / "openheron-gateway.plist"
+            manifest_path = home / "Library" / "LaunchAgents" / "openpipixia-gateway.plist"
             self.assertTrue(manifest_path.exists())
             content = manifest_path.read_text(encoding="utf-8")
-            self.assertIn("/usr/local/bin/openheron", content)
+            self.assertIn("/usr/local/bin/openpipixia", content)
             self.assertIn("<string>gateway</string>", content)
             self.assertIn("<string>run</string>", content)
             lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
             self.assertTrue(any("Gateway service manifest written:" in line for line in lines))
 
     def test_cmd_gateway_service_install_refuses_existing_manifest_without_force(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
             data = Path(tmp) / "data"
-            manifest = home / "Library" / "LaunchAgents" / "openheron-gateway.plist"
+            manifest = home / "Library" / "LaunchAgents" / "openpipixia-gateway.plist"
             manifest.parent.mkdir(parents=True, exist_ok=True)
             manifest.write_text("existing", encoding="utf-8")
             with patch.object(cli, "detect_service_manager", return_value="launchd"):
@@ -792,7 +792,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("already exists" in line for line in lines))
 
     def test_cmd_gateway_service_install_enable_runs_launchctl(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -804,7 +804,7 @@ class CLITests(unittest.TestCase):
                     with patch.object(cli, "get_data_dir", return_value=data):
                         with patch.object(cli, "get_config_path", return_value=data / "config.json"):
                             with patch.object(cli, "load_config", return_value=cli.default_config()):
-                                with patch.object(cli.shutil, "which", return_value="/usr/local/bin/openheron"):
+                                with patch.object(cli.shutil, "which", return_value="/usr/local/bin/openpipixia"):
                                     with patch.object(cli.subprocess, "run") as mocked_run:
                                         code = cli._cmd_gateway_service_install(
                                             force=False,
@@ -820,7 +820,7 @@ class CLITests(unittest.TestCase):
         )
 
     def test_cmd_gateway_service_install_enable_failure_returns_error(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
@@ -832,7 +832,7 @@ class CLITests(unittest.TestCase):
                     with patch.object(cli, "get_data_dir", return_value=data):
                         with patch.object(cli, "get_config_path", return_value=data / "config.json"):
                             with patch.object(cli, "load_config", return_value=cli.default_config()):
-                                with patch.object(cli.shutil, "which", return_value="/usr/local/bin/openheron"):
+                                with patch.object(cli.shutil, "which", return_value="/usr/local/bin/openpipixia"):
                                     with patch.object(
                                         cli.subprocess,
                                         "run",
@@ -847,11 +847,11 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_cmd_gateway_service_status_json_output(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
-            manifest = home / ".config" / "systemd" / "user" / "openheron-gateway.service"
+            manifest = home / ".config" / "systemd" / "user" / "openpipixia-gateway.service"
             manifest.parent.mkdir(parents=True, exist_ok=True)
             manifest.write_text("[Unit]\n", encoding="utf-8")
             with patch.object(cli, "detect_service_manager", return_value="systemd"):
@@ -866,7 +866,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(payload["manifestExists"])
 
     def test_cmd_install_returns_failure_when_doctor_fails(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_cmd_install_init_setup", return_value=0):
             with patch.object(cli, "_cmd_doctor", return_value=1):
@@ -876,7 +876,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_cmd_doctor_json_output_for_automation(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
         fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
@@ -889,13 +889,13 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "google",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "google",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                 "GOOGLE_API_KEY": "k",
             },
             clear=False,
         ):
-            with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+            with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                 with patch.object(cli, "validate_provider_runtime", return_value=None):
                     with patch.object(cli, "get_registry", return_value=fake_registry):
                         with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -916,7 +916,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("heartbeat", payload)
 
     def test_cmd_doctor_json_output_includes_provider_oauth_issue(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
         fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
@@ -934,12 +934,12 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "openai_codex",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "openai_codex",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
             },
             clear=False,
         ):
-            with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+            with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                 with patch.object(cli, "validate_provider_runtime", return_value=None):
                     with patch.object(
                         cli,
@@ -964,11 +964,11 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload["provider"]["oauth"], fake_oauth_status)
 
     def test_cmd_doctor_json_output_includes_heartbeat_snapshot(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            snapshot_path = workspace / ".openheron" / "heartbeat_status.json"
+            snapshot_path = workspace / ".openpipixia" / "heartbeat_status.json"
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot = {"running": True, "recent_reason_counts": {"exec": 1}}
             snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -984,13 +984,13 @@ class CLITests(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "OPENHERON_PROVIDER": "google",
-                    "OPENHERON_PROVIDER_ENABLED": "1",
+                    "OPENPIPIXIA_PROVIDER": "google",
+                    "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                     "GOOGLE_API_KEY": "k",
                 },
                 clear=False,
             ):
-                with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+                with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                     with patch.object(cli, "validate_provider_runtime", return_value=None):
                         with patch.object(cli, "get_registry", return_value=fake_registry):
                             with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -1008,7 +1008,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload["heartbeat"]["status"], snapshot)
 
     def test_cmd_doctor_json_output_includes_install_prereqs(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
         fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
@@ -1021,13 +1021,13 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "google",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "google",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                 "GOOGLE_API_KEY": "k",
             },
             clear=False,
         ):
-            with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+            with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                 with patch.object(cli, "validate_provider_runtime", return_value=None):
                     with patch.object(cli, "get_registry", return_value=fake_registry):
                         with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -1046,7 +1046,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("summary", payload["fix"])
 
     def test_doctor_apply_minimal_fixes_updates_config_from_env(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1077,7 +1077,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(updated["channels"]["telegram"]["token"], "env-telegram-token")
 
     def test_doctor_apply_minimal_fixes_can_emit_structured_events(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1107,7 +1107,7 @@ class CLITests(unittest.TestCase):
         )
 
     def test_doctor_apply_minimal_fixes_e2e_apply_with_mixed_outcomes(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1146,7 +1146,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any(event["code"] == "channel.env.source_missing" for event in events))
 
     def test_doctor_apply_minimal_fixes_e2e_save_failure_emits_failed_event(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1173,7 +1173,7 @@ class CLITests(unittest.TestCase):
         )
 
     def test_doctor_apply_minimal_fixes_enables_default_provider_and_local_channel(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1195,7 +1195,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(updated["channels"]["local"]["enabled"])
 
     def test_doctor_apply_minimal_fixes_migrates_legacy_provider_alias_key(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1221,7 +1221,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(updated["providers"]["openai_codex"]["apiKey"], "legacy-key")
 
     def test_doctor_apply_minimal_fixes_reports_provider_enabled_skip_for_alias_source(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1243,7 +1243,7 @@ class CLITests(unittest.TestCase):
         )
 
     def test_doctor_apply_minimal_fixes_migrates_legacy_provider_api_key_fields(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1269,7 +1269,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(updated["providers"]["google"]["apiBase"], "https://example.invalid")
 
     def test_doctor_apply_minimal_fixes_migrates_legacy_channel_fields(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1293,7 +1293,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(updated["channels"]["dingtalk"]["clientId"], "legacy-client-id")
 
     def test_doctor_fix_mapping_tables_include_core_legacy_cases(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         self.assertIn(("api_key", "apiKey"), cli.LEGACY_PROVIDER_FIELD_MIGRATIONS)
         self.assertIn(("api_base", "apiBase"), cli.LEGACY_PROVIDER_FIELD_MIGRATIONS)
@@ -1302,7 +1302,7 @@ class CLITests(unittest.TestCase):
         self.assertIn(("telegram", "token", "TELEGRAM_BOT_TOKEN"), cli.CHANNEL_ENV_BACKFILL_MAPPINGS)
 
     def test_doctor_ensure_active_provider_enables_default(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         providers_cfg = cli.default_config()["providers"]
         for item in providers_cfg.values():
@@ -1317,7 +1317,7 @@ class CLITests(unittest.TestCase):
         self.assertIn(f"providers.{cli.DEFAULT_PROVIDER}.enabled <- true (doctor default)", changes)
 
     def test_doctor_ensure_at_least_one_enabled_channel_enables_local(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         channels_cfg = cli.default_config()["channels"]
         for item in channels_cfg.values():
@@ -1331,7 +1331,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("channels.local.enabled <- true (doctor default)", changes)
 
     def test_doctor_backfill_provider_api_key_from_env_sets_value(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         providers_cfg = cli.default_config()["providers"]
         providers_cfg["google"]["enabled"] = True
@@ -1349,7 +1349,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("providers.google.apiKey <- GOOGLE_API_KEY", changes)
 
     def test_doctor_backfill_provider_api_key_from_env_skips_without_active_provider(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         providers_cfg = cli.default_config()["providers"]
         changes: list[str] = []
@@ -1364,7 +1364,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(changes, [])
 
     def test_doctor_apply_minimal_fixes_dry_run_does_not_persist(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1392,7 +1392,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_doctor_apply_minimal_fixes_reports_channel_skip_reason_when_disabled(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1408,7 +1408,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(failed, [])
 
     def test_doctor_apply_minimal_fixes_backfills_email_consent_from_env(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1429,7 +1429,7 @@ class CLITests(unittest.TestCase):
         self.assertNotIn("EMAIL_CONSENT_GRANTED missing", skipped)
 
     def test_doctor_apply_minimal_fixes_reports_non_truthy_email_consent_env(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
@@ -1446,7 +1446,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(failed, [])
 
     def test_doctor_fix_summary_groups_changes(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         summary = cli._doctor_fix_summary(
             [
@@ -1472,7 +1472,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(summary["byRule"], {})
 
     def test_doctor_fix_summary_includes_reason_codes_and_by_rule(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         summary = cli._doctor_fix_summary(
             ["providers.google.apiKey <- GOOGLE_API_KEY"],
@@ -1502,7 +1502,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(summary["byRule"]["channel_env_backfill"]["total"], 1)
 
     def test_cmd_doctor_json_fix_contains_reason_codes_and_by_rule(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
         fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
@@ -1515,13 +1515,13 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "google",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "google",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                 "GOOGLE_API_KEY": "k",
             },
             clear=False,
         ):
-            with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+            with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                 with patch.object(cli, "validate_provider_runtime", return_value=None):
                     with patch.object(cli, "get_registry", return_value=fake_registry):
                         with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -1553,11 +1553,11 @@ class CLITests(unittest.TestCase):
         self.assertIsInstance(payload["fix"]["byRule"], dict)
 
     def test_cmd_doctor_text_output_includes_heartbeat_summary(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            snapshot_path = workspace / ".openheron" / "heartbeat_status.json"
+            snapshot_path = workspace / ".openpipixia" / "heartbeat_status.json"
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot_path.write_text(
                 json.dumps({"last_status": "ran", "last_reason": "exec:foreground", "recent_reason_counts": {"exec": 2}}),
@@ -1574,13 +1574,13 @@ class CLITests(unittest.TestCase):
             with patch.dict(
                 os.environ,
                 {
-                    "OPENHERON_PROVIDER": "google",
-                    "OPENHERON_PROVIDER_ENABLED": "1",
+                    "OPENPIPIXIA_PROVIDER": "google",
+                    "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                     "GOOGLE_API_KEY": "k",
                 },
                 clear=False,
             ):
-                with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+                with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                     with patch.object(cli, "validate_provider_runtime", return_value=None):
                         with patch.object(cli, "get_registry", return_value=fake_registry):
                             with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -1599,7 +1599,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("Environment looks good." in line for line in lines))
 
     def test_cmd_doctor_text_output_includes_install_prereqs(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
         fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
@@ -1612,13 +1612,13 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "google",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "google",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                 "GOOGLE_API_KEY": "k",
             },
             clear=False,
         ):
-            with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+            with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                 with patch.object(cli, "validate_provider_runtime", return_value=None):
                     with patch.object(cli, "get_registry", return_value=fake_registry):
                         with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -1641,7 +1641,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("Install prereq [warn]: optional package rich missing" == line for line in lines))
 
     def test_cmd_provider_status_json_output_includes_oauth_issue(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_oauth_status = {
             "required": True,
@@ -1651,8 +1651,8 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "openai_codex",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "openai_codex",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
             },
             clear=False,
         ):
@@ -1673,7 +1673,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload["provider"]["oauth"], fake_oauth_status)
 
     def test_log_mcp_startup_summary(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "summarize_mcp_toolsets", return_value=[]):
             with patch("builtins.print") as mocked_info:
@@ -1692,7 +1692,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("MCP server filesystem", mocked_info.call_args_list[1].args[0])
 
     def test_cmd_mcps_lists_connected_servers_and_api_names(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_toolset_ok = pytypes.SimpleNamespace(meta=pytypes.SimpleNamespace(name="filesystem"))
         fake_toolset_bad = pytypes.SimpleNamespace(meta=pytypes.SimpleNamespace(name="bad_remote"))
@@ -1741,7 +1741,7 @@ class CLITests(unittest.TestCase):
         self.assertNotIn("- bad_remote (http)", info_text)
 
     def test_cmd_mcps_closes_toolsets_in_same_run(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_toolset = pytypes.SimpleNamespace(
             meta=pytypes.SimpleNamespace(name="filesystem"),
@@ -1765,7 +1765,7 @@ class CLITests(unittest.TestCase):
         fake_toolset.close.assert_awaited_once()
 
     def test_collect_connected_mcp_apis_extracts_input_output_and_description(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_raw_tool = pytypes.SimpleNamespace(
             description="Read file content",
@@ -1786,10 +1786,10 @@ class CLITests(unittest.TestCase):
         self.assertEqual(rows[0]["output"], "type=string")
 
     def test_cmd_spawn_lists_recent_subagent_records(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            log_dir = Path(tmp) / ".openheron"
+            log_dir = Path(tmp) / ".openpipixia"
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path = log_dir / "subagents.log"
             log_path.write_text(
@@ -1835,11 +1835,11 @@ class CLITests(unittest.TestCase):
         self.assertIn("prompt: second", info_text)
 
     def test_required_mcp_preflight_fails_when_required_server_missing(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.dict(
             os.environ,
-            {"OPENHERON_MCP_REQUIRED_SERVERS": "filesystem,docs"},
+            {"OPENPIPIXIA_MCP_REQUIRED_SERVERS": "filesystem,docs"},
             clear=False,
         ):
             issues = asyncio.run(cli._required_mcp_preflight([]))
@@ -1847,8 +1847,8 @@ class CLITests(unittest.TestCase):
         self.assertIn("missing from configured toolsets", issues[0])
 
     def test_required_mcp_preflight_fails_when_required_server_unhealthy(self) -> None:
-        from openheron import cli
-        from openheron.core.mcp_registry import build_mcp_toolsets
+        from openpipixia import cli
+        from openpipixia.core.mcp_registry import build_mcp_toolsets
 
         toolsets = build_mcp_toolsets(
             {"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]}},
@@ -1867,7 +1867,7 @@ class CLITests(unittest.TestCase):
         }
         with patch.dict(
             os.environ,
-            {"OPENHERON_MCP_REQUIRED_SERVERS": "filesystem"},
+            {"OPENPIPIXIA_MCP_REQUIRED_SERVERS": "filesystem"},
             clear=False,
         ):
             with patch.object(cli, "probe_mcp_toolsets", new=AsyncMock(return_value=[fake_result])):
@@ -1876,9 +1876,9 @@ class CLITests(unittest.TestCase):
         self.assertIn("required MCP server 'filesystem' failed", issues[0])
 
     def test_cmd_gateway_continues_when_required_mcp_preflight_health_check_fails(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron", tools=[])
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia", tools=[])
         fake_agent_module = pytypes.SimpleNamespace(root_agent=fake_agent)
         state: dict[str, bool] = {"constructed": False, "started": False, "stopped": False}
 
@@ -1897,8 +1897,8 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             sys.modules,
             {
-                "openheron.app.agent": fake_agent_module,
-                "openheron.app.gateway": fake_gateway_module,
+                "openpipixia.app.agent": fake_agent_module,
+                "openpipixia.app.gateway": fake_gateway_module,
             },
         ):
             with patch.object(cli, "parse_enabled_channels", return_value=["local"]):
@@ -1926,9 +1926,9 @@ class CLITests(unittest.TestCase):
         )
 
     def test_cmd_gateway_exits_when_whatsapp_bridge_precheck_fails(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron", tools=[])
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia", tools=[])
         fake_agent_module = pytypes.SimpleNamespace(root_agent=fake_agent)
 
         class _UnexpectedGateway:
@@ -1940,8 +1940,8 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             sys.modules,
             {
-                "openheron.app.agent": fake_agent_module,
-                "openheron.app.gateway": fake_gateway_module,
+                "openpipixia.app.agent": fake_agent_module,
+                "openpipixia.app.gateway": fake_gateway_module,
             },
         ):
             with patch.object(cli, "parse_enabled_channels", return_value=["whatsapp"]):
@@ -1965,11 +1965,11 @@ class CLITests(unittest.TestCase):
         self.assertIn("[doctor] WhatsApp bridge precheck failed", messages)
 
     def test_cmd_gateway_start_writes_pid_and_meta(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_proc = pytypes.SimpleNamespace(pid=34567)
         with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp) / ".openheron"
+            data_dir = Path(tmp) / ".openpipixia"
             with patch.object(cli, "get_data_dir", return_value=data_dir):
                 with patch.object(cli, "get_config_path", return_value=data_dir / "config.json"):
                     with patch.object(cli, "parse_enabled_channels", return_value=["local", "feishu"]):
@@ -1988,12 +1988,12 @@ class CLITests(unittest.TestCase):
             self.assertEqual(meta["channels"], "local,feishu")
 
     def test_cmd_gateway_start_uses_global_config_for_multi_agent(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_proc_main = pytypes.SimpleNamespace(pid=10001)
         fake_proc_ops = pytypes.SimpleNamespace(pid=10002)
         with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp) / ".openheron"
+            data_dir = Path(tmp) / ".openpipixia"
             agent_main_cfg = data_dir / "main" / "config.json"
             agent_ops_cfg = data_dir / "ops" / "config.json"
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -2028,10 +2028,10 @@ class CLITests(unittest.TestCase):
             self.assertEqual(agent_names, ["main", "ops"])
 
     def test_cmd_gateway_status_prefers_multi_agent_metadata(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp) / ".openheron"
+            data_dir = Path(tmp) / ".openpipixia"
             log_dir = data_dir / "log"
             log_dir.mkdir(parents=True, exist_ok=True)
             (log_dir / "gateway.multi.meta.json").write_text(
@@ -2060,11 +2060,11 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload.get("runningCount"), 1)
 
     def test_cmd_gateway_start_warns_when_agent_workspace_is_global_default(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_proc = pytypes.SimpleNamespace(pid=19001)
         with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp) / ".openheron"
+            data_dir = Path(tmp) / ".openpipixia"
             agent_cfg = data_dir / "agent_name_1" / "config.json"
             data_dir.mkdir(parents=True, exist_ok=True)
             cfg = cli.default_config()
@@ -2086,10 +2086,10 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("workspace points to global default path" in line for line in lines))
 
     def test_cmd_gateway_stop_cleans_stale_pid(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp) / ".openheron"
+            data_dir = Path(tmp) / ".openpipixia"
             log_dir = data_dir / "log"
             log_dir.mkdir(parents=True, exist_ok=True)
             (log_dir / "gateway.pid").write_text("98765\n", encoding="utf-8")
@@ -2104,15 +2104,15 @@ class CLITests(unittest.TestCase):
             self.assertFalse((log_dir / "gateway.meta.json").exists())
 
     def test_cmd_install_init_setup_creates_config_and_workspace(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"HOME": tmp}, clear=False):
                 code = cli._cmd_install_init_setup(force=False)
 
             self.assertEqual(code, 0)
-            config_path = Path(tmp) / ".openheron" / "config.json"
-            runtime_config_path = Path(tmp) / ".openheron" / "runtime.json"
+            config_path = Path(tmp) / ".openpipixia" / "config.json"
+            runtime_config_path = Path(tmp) / ".openpipixia" / "runtime.json"
             self.assertTrue(config_path.exists())
             self.assertTrue(runtime_config_path.exists())
             data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -2122,11 +2122,11 @@ class CLITests(unittest.TestCase):
 
     def test_script_entrypoint_accepts_m(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
-        script_path = project_root / "openheron-cli"
+        script_path = project_root / "openpipixia-cli"
         self.assertTrue(script_path.exists())
 
     def test_cmd_message_collects_final_text(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_event_1 = pytypes.SimpleNamespace(content=pytypes.SimpleNamespace(parts=[]))
         fake_event_2 = pytypes.SimpleNamespace(
@@ -2140,11 +2140,11 @@ class CLITests(unittest.TestCase):
                 yield fake_event_1
                 yield fake_event_2
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
         fake_agent_module = pytypes.SimpleNamespace(root_agent=fake_agent)
 
-        with patch.dict("sys.modules", {"openheron.app.agent": fake_agent_module}):
-            with patch("openheron.app.cli.create_runner", return_value=(_FakeRunner(), object())):
+        with patch.dict("sys.modules", {"openpipixia.app.agent": fake_agent_module}):
+            with patch("openpipixia.app.cli.create_runner", return_value=(_FakeRunner(), object())):
                 with patch("builtins.print") as mocked_info:
                     code = cli._cmd_message("hello", user_id="u1", session_id="s1")
 
@@ -2157,7 +2157,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("\n\nhello", text)
 
     def test_cmd_message_merges_stream_snapshots(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_event_1 = pytypes.SimpleNamespace(
             content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="hello")])
@@ -2171,11 +2171,11 @@ class CLITests(unittest.TestCase):
                 yield fake_event_1
                 yield fake_event_2
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
         fake_agent_module = pytypes.SimpleNamespace(root_agent=fake_agent)
 
-        with patch.dict("sys.modules", {"openheron.app.agent": fake_agent_module}):
-            with patch("openheron.app.cli.create_runner", return_value=(_FakeRunner(), object())):
+        with patch.dict("sys.modules", {"openpipixia.app.agent": fake_agent_module}):
+            with patch("openpipixia.app.cli.create_runner", return_value=(_FakeRunner(), object())):
                 with patch("builtins.print") as mocked_info:
                     code = cli._cmd_message("hello", user_id="u1", session_id="s1")
 
@@ -2183,7 +2183,7 @@ class CLITests(unittest.TestCase):
         mocked_info.assert_called_with("hello world")
 
     def test_cron_list_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_cron_list", return_value=0) as mocked_list:
@@ -2194,7 +2194,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_heartbeat_status_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_heartbeat_status", return_value=0) as mocked_status:
@@ -2205,7 +2205,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_cmd_skills_aggregates_all_agents_when_not_specified(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_resolve_target_agent_names", return_value=(["agent_a", "agent_b"], None)):
             with patch.object(
@@ -2224,7 +2224,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload[1]["agent"], "agent_b")
 
     def test_cmd_heartbeat_status_json_aggregates_all_agents(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_resolve_target_agent_names", return_value=(["agent_a", "agent_b"], None)):
             with patch.object(
@@ -2243,7 +2243,7 @@ class CLITests(unittest.TestCase):
         self.assertFalse(payload["agent_b"]["running"])
 
     def test_cron_add_requires_agent_in_multi_agent_mode(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config"):
             with patch.object(cli, "_global_enabled_agent_names", return_value=["agent_a", "agent_b"]):
@@ -2255,7 +2255,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("requires --agent" in line for line in lines))
 
     def test_token_stats_mode_dispatch(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_token_stats", return_value=0) as mocked_stats:
@@ -2289,7 +2289,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_token_stats_mode_dispatch_with_utc_flag(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_token_stats", return_value=0) as mocked_stats:
@@ -2309,7 +2309,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_token_stats_mode_dispatch_with_agent(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_token_stats", return_value=0) as mocked_stats:
@@ -2329,7 +2329,7 @@ class CLITests(unittest.TestCase):
                 mocked_bootstrap.assert_called_once()
 
     def test_cron_add_dispatch_does_not_trigger_single_turn_message(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_global_enabled_agent_names", return_value=[]):
@@ -2364,7 +2364,7 @@ class CLITests(unittest.TestCase):
                     mocked_bootstrap.assert_called_once()
 
     def test_cmd_cron_add_validates_deliver_target(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch("builtins.print") as mocked_info:
             code = cli._cmd_cron_add(
@@ -2382,10 +2382,10 @@ class CLITests(unittest.TestCase):
         mocked_info.assert_called_with("Error: --to is required when --deliver is set")
 
     def test_cmd_cron_add_persists_job(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"OPENHERON_WORKSPACE": tmp}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": tmp}, clear=False):
                 with patch("builtins.print") as mocked_info:
                     code = cli._cmd_cron_add(
                         name="demo",
@@ -2401,14 +2401,14 @@ class CLITests(unittest.TestCase):
             self.assertEqual(code, 0)
             out = mocked_info.call_args[0][0]
             self.assertIn("Added job 'demo'", out)
-            store = Path(tmp) / ".openheron" / "cron_jobs.json"
+            store = Path(tmp) / ".openpipixia" / "cron_jobs.json"
             self.assertTrue(store.exists())
 
     def test_cmd_cron_run_reports_no_callback_in_plain_cli_process(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"OPENHERON_WORKSPACE": tmp}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": tmp}, clear=False):
                 add_code = cli._cmd_cron_add(
                     name="demo",
                     message="hello cron",
@@ -2429,7 +2429,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("no executor callback", mocked_info.call_args[0][0])
 
     def test_cmd_cron_status_prints_runtime_fields(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_service = pytypes.SimpleNamespace(
             status=lambda: {
@@ -2453,7 +2453,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("runtime_pid=12345", line)
 
     def test_cmd_cron_list_uses_plain_stdout(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_schedule = pytypes.SimpleNamespace(kind="every", every_seconds=30)
         fake_state = pytypes.SimpleNamespace(next_run_at_ms=None)
@@ -2471,7 +2471,7 @@ class CLITests(unittest.TestCase):
         mocked_print.assert_any_call("- demo (id: j1, every:30s, enabled, next=-)")
 
     def test_cmd_cron_list_multi_agent_uses_direct_store_read_without_subprocess(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_schedule = pytypes.SimpleNamespace(kind="every", every_seconds=30)
         fake_state = pytypes.SimpleNamespace(next_run_at_ms=None)
@@ -2491,7 +2491,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("[agent=agent_b]" in line for line in lines))
 
     def test_cmd_heartbeat_status_prints_runtime_fields(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             snapshot = {
@@ -2503,7 +2503,7 @@ class CLITests(unittest.TestCase):
                 "last_delivery": {"kind": "alert"},
                 "recent_reason_counts": {"cron": 2, "exec": 1},
             }
-            store = Path(tmp) / ".openheron" / "heartbeat_status.json"
+            store = Path(tmp) / ".openpipixia" / "heartbeat_status.json"
             store.parent.mkdir(parents=True, exist_ok=True)
             store.write_text(json.dumps(snapshot), encoding="utf-8")
             policy = pytypes.SimpleNamespace(workspace_root=Path(tmp))
@@ -2520,7 +2520,7 @@ class CLITests(unittest.TestCase):
         self.assertTrue(any("interval=timer" in line for line in lines))
 
     def test_cmd_token_stats_prints_summary_and_recent(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_stats = {
             "requests": 2,
@@ -2582,7 +2582,7 @@ class CLITests(unittest.TestCase):
         self.assertNotIn("2026-02-26T10:00:01+00:00", section_rows[0][2])
 
     def test_cmd_token_stats_outputs_json(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_stats = {
             "requests": 0,
@@ -2624,7 +2624,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(payload["agent_a"]["until"], "2026-02-26T23:59:59+08:00")
 
     def test_cmd_token_stats_returns_error_when_no_target_agents(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_resolve_target_agent_names", return_value=([], None)):
             with patch("builtins.print") as mocked_info:
@@ -2642,7 +2642,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("no target agents found", mocked_info.call_args[0][0])
 
     def test_cmd_token_stats_invalid_time_range_returns_error(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch("builtins.print") as mocked_info:
             code = cli._cmd_token_stats(
@@ -2658,7 +2658,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("--since must be earlier", mocked_info.call_args[0][0])
 
     def test_cmd_doctor_reports_whatsapp_bridge_precheck_issue(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_registry = pytypes.SimpleNamespace(workspace=Path("/tmp"), list_skills=lambda: [])
         fake_session_cfg = pytypes.SimpleNamespace(db_url="sqlite+aiosqlite:////tmp/sessions.db")
@@ -2671,13 +2671,13 @@ class CLITests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_PROVIDER": "google",
-                "OPENHERON_PROVIDER_ENABLED": "1",
+                "OPENPIPIXIA_PROVIDER": "google",
+                "OPENPIPIXIA_PROVIDER_ENABLED": "1",
                 "GOOGLE_API_KEY": "k",
             },
             clear=False,
         ):
-            with patch("openheron.app.cli.shutil.which", return_value="/usr/bin/adk"):
+            with patch("openpipixia.app.cli.shutil.which", return_value="/usr/bin/adk"):
                 with patch.object(cli, "validate_provider_runtime", return_value=None):
                     with patch.object(cli, "get_registry", return_value=fake_registry):
                         with patch.object(cli, "load_session_config", return_value=fake_session_cfg):
@@ -2700,7 +2700,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("WhatsApp bridge precheck failed", payload["issues"])
 
     def test_cmd_channels_login_rejects_unknown_channel(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch("builtins.print") as mocked_info:
             code = cli._cmd_channels_login(channel_name="telegram")
@@ -2708,7 +2708,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("Unsupported channel", mocked_info.call_args[0][0])
 
     def test_cmd_channels_login_starts_bridge_with_token_from_config(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_cfg = {
             "channels": {
@@ -2717,9 +2717,9 @@ class CLITests(unittest.TestCase):
                 }
             }
         }
-        with patch.object(cli, "_get_bridge_dir", return_value=Path("/tmp/openheron-bridge")) as mocked_bridge:
+        with patch.object(cli, "_get_bridge_dir", return_value=Path("/tmp/openpipixia-bridge")) as mocked_bridge:
             with patch.object(cli, "load_config", return_value=fake_cfg):
-                with patch("openheron.app.cli.subprocess.run") as mocked_run:
+                with patch("openpipixia.app.cli.subprocess.run") as mocked_run:
                     code = cli._cmd_channels_login(channel_name="whatsapp")
 
         self.assertEqual(code, 0)
@@ -2727,12 +2727,12 @@ class CLITests(unittest.TestCase):
         mocked_run.assert_called_once()
         call_args = mocked_run.call_args
         self.assertEqual(call_args.args[0], ["npm", "start"])
-        self.assertEqual(call_args.kwargs["cwd"], Path("/tmp/openheron-bridge"))
+        self.assertEqual(call_args.kwargs["cwd"], Path("/tmp/openpipixia-bridge"))
         self.assertTrue(call_args.kwargs["check"])
         self.assertEqual(call_args.kwargs["env"]["BRIDGE_TOKEN"], "bridge-token-1")
 
     def test_cmd_channels_bridge_start_persists_runtime_state(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         fake_cfg = {
             "channels": {
@@ -2745,10 +2745,10 @@ class CLITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             runtime_base = Path(tmp) / "bridge-runtime"
             with patch.object(cli, "_bridge_base_dir", return_value=runtime_base):
-                with patch.object(cli, "_get_bridge_dir", return_value=Path("/tmp/openheron-bridge")):
+                with patch.object(cli, "_get_bridge_dir", return_value=Path("/tmp/openpipixia-bridge")):
                     with patch.object(cli, "_is_pid_running", return_value=False):
                         with patch.object(cli, "load_config", return_value=fake_cfg):
-                            with patch("openheron.app.cli.subprocess.Popen", return_value=fake_proc) as mocked_popen:
+                            with patch("openpipixia.app.cli.subprocess.Popen", return_value=fake_proc) as mocked_popen:
                                 code = cli._cmd_channels_bridge_start(channel_name="whatsapp")
 
             self.assertEqual(code, 0)
@@ -2759,7 +2759,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(payload["pid"], 54321)
 
     def test_cmd_channels_bridge_start_handles_bridge_dir_permission_error(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with patch.object(cli, "_get_bridge_dir", side_effect=PermissionError("no permission")):
             with patch("builtins.print") as mocked_info:
@@ -2768,7 +2768,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("Failed to prepare bridge directory", mocked_info.call_args[0][0])
 
     def test_cmd_channels_bridge_status_reports_running(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             runtime_base = Path(tmp) / "bridge-runtime"
@@ -2784,7 +2784,7 @@ class CLITests(unittest.TestCase):
         self.assertIn("Bridge is running", mocked_info.call_args[0][0])
 
     def test_cmd_channels_bridge_stop_removes_stale_state(self) -> None:
-        from openheron import cli
+        from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             runtime_base = Path(tmp) / "bridge-runtime"

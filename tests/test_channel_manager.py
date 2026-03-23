@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from openheron.bus.events import OutboundMessage
-from openheron.bus.queue import MessageBus
-from openheron.channels.base import BaseChannel
-from openheron.channels.manager import ChannelManager
+from openpipixia.bus.events import OutboundMessage
+from openpipixia.bus.queue import MessageBus
+from openpipixia.channels.base import BaseChannel
+from openpipixia.channels.manager import ChannelManager
 
 
 class _FlakyChannel(BaseChannel):

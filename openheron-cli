@@ -1,8 +1,0 @@
-#!/usr/bin/env python3
-"""Script entrypoint to support: python openheron-cli -m '...'."""
-
-from openheron.cli import main
-
-
-if __name__ == "__main__":
-    main()

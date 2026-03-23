@@ -15,20 +15,20 @@
 
 ### 2.1 关键模块
 
-- `openheron/agent.py`
+- `openpipixia/agent.py`
   - 定义根代理 `root_agent`（`LlmAgent`）
   - 注册工具（含 `PreloadMemoryTool`、`spawn_subagent`）
   - `after_agent_callback` 中调用 `add_session_to_memory()` 做记忆写入
-- `openheron/gateway.py`
+- `openpipixia/gateway.py`
   - 网关主循环：消费 inbound，调用 ADK Runner，发布 outbound
   - 处理 `/help`、`/new` 等会话命令
-- `openheron/runtime/runner_factory.py`
+- `openpipixia/runtime/runner_factory.py`
   - 统一创建 `Runner`，启用 `ResumabilityConfig` 与 `EventsCompactionConfig`
-- `openheron/runtime/session_service.py`
+- `openpipixia/runtime/session_service.py`
   - 会话存储服务（SQLite `DatabaseSessionService`）
-- `openheron/runtime/memory_service.py`
+- `openpipixia/runtime/memory_service.py`
   - 记忆服务工厂（`in_memory` / `markdown`）
-- `openheron/runtime/markdown_memory_service.py`
+- `openpipixia/runtime/markdown_memory_service.py`
   - 本地 Markdown 记忆实现（按 `app_name/user_id` 分目录）
 
 ### 2.2 消息处理主链路
@@ -46,7 +46,7 @@
 - 用户隔离：`user_id` 作为用户级作用域
 - 会话隔离：`session_id` 作为单轮/多轮上下文容器
 - 默认 session key：`{channel}:{chat_id}`（由 `InboundMessage.session_key` 生成）
-- Session 持久化：SQLite，默认 `~/.openheron/database/sessions.db`
+- Session 持久化：SQLite，默认 `~/.openpipixia/database/sessions.db`
 
 ### 3.2 `/new` 与 `/help`
 
@@ -65,15 +65,15 @@
 
 ### 3.3 Memory 后端
 
-通过 `OPENHERON_MEMORY_BACKEND` 选择：
+通过 `OPENPIPIXIA_MEMORY_BACKEND` 选择：
 
 - `markdown`（默认）
-  - 本地落盘到 `OPENHERON_MEMORY_MARKDOWN_DIR`
-  - 默认目录：`~/.openheron/workspace/memory`
+  - 本地落盘到 `OPENPIPIXIA_MEMORY_MARKDOWN_DIR`
+  - 默认目录：`~/.openpipixia/workspace/memory`
 - `in_memory`（调试）
   - 进程内记忆，不落盘
 
-可通过 `OPENHERON_MEMORY_ENABLED` 控制是否启用记忆（默认开启）。
+可通过 `OPENPIPIXIA_MEMORY_ENABLED` 控制是否启用记忆（默认开启）。
 
 ### 3.4 Markdown Memory 落盘结构
 
@@ -100,11 +100,11 @@
 
 可配置项：
 
-- `OPENHERON_COMPACTION_ENABLED`（默认 `1`）
-- `OPENHERON_COMPACTION_INTERVAL`（默认 `8`）
-- `OPENHERON_COMPACTION_OVERLAP`（默认 `1`）
-- `OPENHERON_COMPACTION_TOKEN_THRESHOLD`（可选，正整数）
-- `OPENHERON_COMPACTION_EVENT_RETENTION`（可选，非负整数）
+- `OPENPIPIXIA_COMPACTION_ENABLED`（默认 `1`）
+- `OPENPIPIXIA_COMPACTION_INTERVAL`（默认 `8`）
+- `OPENPIPIXIA_COMPACTION_OVERLAP`（默认 `1`）
+- `OPENPIPIXIA_COMPACTION_TOKEN_THRESHOLD`（可选，正整数）
+- `OPENPIPIXIA_COMPACTION_EVENT_RETENTION`（可选，非负整数）
 
 注意：`TOKEN_THRESHOLD` 和 `EVENT_RETENTION` 必须成对设置；只设置一个会被忽略（防止启动时报错）。
 
@@ -127,26 +127,26 @@
 ### 6.1 推荐初始化
 
 ```bash
-openheron doctor --fix
+openpipixia doctor --fix
 ```
 
 会生成：
 
-- `~/.openheron/config.json`
-- `~/.openheron/runtime.json`
-- `~/.openheron/workspace`
+- `~/.openpipixia/config.json`
+- `~/.openpipixia/runtime.json`
+- `~/.openpipixia/workspace`
 
 ### 6.2 常用运行方式
 
 ```bash
 # 单轮调用
-python -m openheron.cli -m "Describe what you can do"
+python -m openpipixia.cli -m "Describe what you can do"
 
 # 网关本地模式
-python -m openheron.cli gateway run --channels local --interactive-local
+python -m openpipixia.cli gateway run --channels local --interactive-local
 
 # 网关多渠道模式
-openheron gateway run --channels local,feishu --interactive-local
+openpipixia gateway run --channels local,feishu --interactive-local
 ```
 
 ### 6.3 测试

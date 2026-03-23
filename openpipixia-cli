@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""Script entrypoint to support: python openpipixia-cli -m '...'."""
+
+from openpipixia.cli import main
+
+
+if __name__ == "__main__":
+    main()

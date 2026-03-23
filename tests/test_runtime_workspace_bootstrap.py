@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from openheron.runtime.workspace_bootstrap import (
+from openpipixia.runtime.workspace_bootstrap import (
     before_model_workspace_bootstrap_callback,
     load_workspace_bootstrap_sections,
 )
@@ -45,18 +45,18 @@ class WorkspaceBootstrapTests(unittest.TestCase):
             (root / "AGENTS.md").write_text("follow local agent rules", encoding="utf-8")
             (root / "SOUL.md").write_text("keep a concise tone", encoding="utf-8")
             (root / "TOOLS.md").write_text("always check tool constraints first", encoding="utf-8")
-            (root / "IDENTITY.md").write_text("name: openheron", encoding="utf-8")
+            (root / "IDENTITY.md").write_text("name: openpipixia", encoding="utf-8")
             (root / "USER.md").write_text("user prefers chinese", encoding="utf-8")
 
             llm_request = types.SimpleNamespace(
                 config=types.SimpleNamespace(system_instruction="base-system-instruction"),
             )
 
-            with patch.dict(os.environ, {"OPENHERON_WORKSPACE": str(root)}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": str(root)}, clear=False):
                 asyncio.run(before_model_workspace_bootstrap_callback(types.SimpleNamespace(), llm_request))
 
         system_instruction = llm_request.config.system_instruction
-        self.assertIn("Workspace Context (injected by openheron)", system_instruction)
+        self.assertIn("Workspace Context (injected by openpipixia)", system_instruction)
         self.assertIn("## AGENTS.md", system_instruction)
         self.assertIn("## SOUL.md", system_instruction)
         self.assertIn("## TOOLS.md", system_instruction)
@@ -65,10 +65,10 @@ class WorkspaceBootstrapTests(unittest.TestCase):
         self.assertIn("follow local agent rules", system_instruction)
         self.assertIn("keep a concise tone", system_instruction)
         self.assertIn("always check tool constraints first", system_instruction)
-        self.assertIn("name: openheron", system_instruction)
+        self.assertIn("name: openpipixia", system_instruction)
         self.assertIn("user prefers chinese", system_instruction)
         self.assertLess(
-            system_instruction.index("Workspace Context (injected by openheron)"),
+            system_instruction.index("Workspace Context (injected by openpipixia)"),
             system_instruction.index("base-system-instruction"),
         )
 
@@ -78,7 +78,7 @@ class WorkspaceBootstrapTests(unittest.TestCase):
             llm_request = types.SimpleNamespace(
                 config=types.SimpleNamespace(system_instruction="base-system-instruction"),
             )
-            with patch.dict(os.environ, {"OPENHERON_WORKSPACE": str(root)}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": str(root)}, clear=False):
                 asyncio.run(before_model_workspace_bootstrap_callback(types.SimpleNamespace(), llm_request))
 
         self.assertEqual(llm_request.config.system_instruction, "base-system-instruction")
@@ -90,7 +90,7 @@ class WorkspaceBootstrapTests(unittest.TestCase):
             llm_request = types.SimpleNamespace(
                 config=types.SimpleNamespace(system_instruction="base-system-instruction"),
             )
-            with patch.dict(os.environ, {"OPENHERON_WORKSPACE": str(root)}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": str(root)}, clear=False):
                 asyncio.run(
                     before_model_workspace_bootstrap_callback(
                         callback_context=types.SimpleNamespace(),
@@ -98,7 +98,7 @@ class WorkspaceBootstrapTests(unittest.TestCase):
                     )
                 )
 
-        self.assertIn("Workspace Context (injected by openheron)", llm_request.config.system_instruction)
+        self.assertIn("Workspace Context (injected by openpipixia)", llm_request.config.system_instruction)
 
 
 if __name__ == "__main__":

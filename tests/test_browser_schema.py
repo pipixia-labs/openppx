@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from openheron.browser.schema import (
+from openpipixia.browser.schema import (
     apply_status_metadata,
     build_action_guidance,
     make_profile_entry,
@@ -49,13 +49,13 @@ class BrowserSchemaTests(unittest.TestCase):
 
     def test_make_profile_entry_with_optional_metadata(self) -> None:
         entry = make_profile_entry(
-            name="openheron",
+            name="openpipixia",
             driver="playwright",
             description="Runtime profile",
             available=True,
             attach_mode="launch-or-cdp",
             ownership_model={"browser": "owned"},
-            requires={"OPENHERON_BROWSER_CDP_URL": False},
+            requires={"OPENPIPIXIA_BROWSER_CDP_URL": False},
         )
         self.assertEqual(entry["attachMode"], "launch-or-cdp")
         self.assertIn("ownershipModel", entry)
@@ -63,7 +63,7 @@ class BrowserSchemaTests(unittest.TestCase):
 
     def test_apply_status_metadata(self) -> None:
         payload = apply_status_metadata(
-            {"running": True, "profile": "openheron"},
+            {"running": True, "profile": "openpipixia"},
             attach_mode="launch-or-cdp",
             browser_owned=True,
             context_owned=False,
@@ -75,7 +75,7 @@ class BrowserSchemaTests(unittest.TestCase):
     def test_normalize_status_aliases(self) -> None:
         payload = normalize_profile_payload_aliases(
             {
-                "profile": "openheron",
+                "profile": "openpipixia",
                 "attachMode": "launch-or-cdp",
                 "browserOwned": True,
                 "contextOwned": False,
@@ -94,7 +94,7 @@ class BrowserSchemaTests(unittest.TestCase):
                     {
                         "name": "chrome",
                         "attachMode": "cdp-required",
-                        "requires": {"OPENHERON_BROWSER_CHROME_CDP_URL": True},
+                        "requires": {"OPENPIPIXIA_BROWSER_CHROME_CDP_URL": True},
                         "ownershipModel": {"browser": "borrowed"},
                         "capability": {
                             "backend": "extension-relay",

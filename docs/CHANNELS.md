@@ -72,7 +72,7 @@ Requires **Node.js ≥18**.
 **1. Link device**
 
 ```bash
-openheron channels login
+openpipixia channels login
 # Scan QR with WhatsApp → Settings → Linked Devices
 ```
 
@@ -100,7 +100,7 @@ Uses **WebSocket** long connection — no public IP required.
 - Create a new app → Enable **Bot** capability
 - **Permissions**: Add `im:message` (send messages) and `im:message.p2p_msg:readonly` (receive messages)
 - **Events**: Add `im.message.receive_v1` (receive messages)
-  - Select **Long Connection** mode (requires running openheron first to establish connection)
+  - Select **Long Connection** mode (requires running openpipixia first to establish connection)
 - Get **App ID** and **App Secret** from "Credentials & Basic Info"
 - Publish the app
 
@@ -145,7 +145,7 @@ Uses **botpy SDK** with WebSocket — no public IP required. Currently supports 
 
 **3. Configure**
 
-> - `allowFrom`: Leave empty for public access, or add user openids to restrict. You can find openids in the openheron logs when a user messages the bot.
+> - `allowFrom`: Leave empty for public access, or add user openids to restrict. You can find openids in the openpipixia logs when a user messages the bot.
 > - For production: submit a review in the bot console and publish. See [QQ Bot Docs](https://bot.q.qq.com/wiki/) for the full publishing flow.
 
 ```json
@@ -212,7 +212,7 @@ Uses **Socket Mode** — no public URL required.
 - **App Home**: Scroll to **Show Tabs** → Enable **Messages Tab** → Check **"Allow users to send Slash commands and messages from the messages tab"**
 - **Install App**: Click **Install to Workspace** → Authorize → copy the **Bot Token** (`xoxb-...`)
 
-**3. Configure openheron**
+**3. Configure openpipixia**
 
 ```json
 {
@@ -237,10 +237,10 @@ DM the bot directly or @mention it in a channel — it should respond!
 
 ### Email
 
-Give openheron its own email account. It polls **IMAP** for incoming mail and replies via **SMTP** — like a personal email assistant.
+Give openpipixia its own email account. It polls **IMAP** for incoming mail and replies via **SMTP** — like a personal email assistant.
 
 **1. Get credentials (Gmail example)**
-- Create a dedicated Gmail account for your bot (e.g. `my-openheron@gmail.com`)
+- Create a dedicated Gmail account for your bot (e.g. `my-openpipixia@gmail.com`)
 - Enable 2-Step Verification → Create an [App Password](https://myaccount.google.com/apppasswords)
 - Use this app password for both IMAP and SMTP
 
@@ -259,13 +259,13 @@ Give openheron its own email account. It polls **IMAP** for incoming mail and re
       "consentGranted": true,
       "imapHost": "imap.gmail.com",
       "imapPort": 993,
-      "imapUsername": "my-openheron@gmail.com",
+      "imapUsername": "my-openpipixia@gmail.com",
       "imapPassword": "your-app-password",
       "smtpHost": "smtp.gmail.com",
       "smtpPort": 587,
-      "smtpUsername": "my-openheron@gmail.com",
+      "smtpUsername": "my-openpipixia@gmail.com",
       "smtpPassword": "your-app-password",
-      "fromAddress": "my-openheron@gmail.com",
+      "fromAddress": "my-openpipixia@gmail.com",
       "allowFrom": ["your-real-email@gmail.com"]
     }
   }

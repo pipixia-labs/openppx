@@ -7,7 +7,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from openheron.gui.mcp_server import (
+from openpipixia.gui.mcp_server import (
     build_gui_mcp_server,
     main,
     run_gui_action,
@@ -23,7 +23,7 @@ class GuiMcpServerTests(unittest.TestCase):
 
     def test_run_gui_action_delegates(self) -> None:
         expected = {"ok": True, "action": "left_click"}
-        with patch("openheron.gui.mcp_server.execute_gui_action", return_value=expected) as mocked:
+        with patch("openpipixia.gui.mcp_server.execute_gui_action", return_value=expected) as mocked:
             result = run_gui_action(action=" click search box ", dry_run=True)
 
         self.assertEqual(result, expected)
@@ -36,7 +36,7 @@ class GuiMcpServerTests(unittest.TestCase):
         )
 
     def test_run_gui_action_wraps_exceptions(self) -> None:
-        with patch("openheron.gui.mcp_server.execute_gui_action", side_effect=RuntimeError("boom")):
+        with patch("openpipixia.gui.mcp_server.execute_gui_action", side_effect=RuntimeError("boom")):
             result = run_gui_action(action="click")
         self.assertEqual(result["ok"], False)
         self.assertIn("boom", result["error"])
@@ -48,7 +48,7 @@ class GuiMcpServerTests(unittest.TestCase):
 
     def test_run_gui_task_delegates(self) -> None:
         expected = {"ok": True, "finished": False}
-        with patch("openheron.gui.mcp_server.execute_gui_task", return_value=expected) as mocked:
+        with patch("openpipixia.gui.mcp_server.execute_gui_task", return_value=expected) as mocked:
             result = run_gui_task(task="open browser", max_steps=5, dry_run=True)
 
         self.assertEqual(result, expected)
@@ -69,7 +69,7 @@ class GuiMcpServerTests(unittest.TestCase):
         self.assertIn("gui_task", names)
 
     def test_main_raises_for_invalid_transport(self) -> None:
-        with patch.dict(os.environ, {"OPENHERON_GUI_MCP_TRANSPORT": "bad"}, clear=False):
+        with patch.dict(os.environ, {"OPENPIPIXIA_GUI_MCP_TRANSPORT": "bad"}, clear=False):
             with self.assertRaises(ValueError):
                 main()
 
@@ -77,12 +77,12 @@ class GuiMcpServerTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_GUI_MCP_NAME": "gui-server",
-                "OPENHERON_GUI_MCP_TRANSPORT": "stdio",
+                "OPENPIPIXIA_GUI_MCP_NAME": "gui-server",
+                "OPENPIPIXIA_GUI_MCP_TRANSPORT": "stdio",
             },
             clear=False,
         ):
-            with patch("openheron.gui.mcp_server.build_gui_mcp_server") as mocked_builder:
+            with patch("openpipixia.gui.mcp_server.build_gui_mcp_server") as mocked_builder:
                 main()
 
         mocked_builder.assert_called_once_with(name="gui-server")

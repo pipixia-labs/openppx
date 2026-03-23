@@ -30,21 +30,21 @@ while (($# > 0)); do
   esac
 done
 
-if ! command -v openheron >/dev/null 2>&1; then
-  echo "openheron command not found. Activate venv and run 'pip install -e .' first." >&2
+if ! command -v openpipixia >/dev/null 2>&1; then
+  echo "openpipixia command not found. Activate venv and run 'pip install -e .' first." >&2
   exit 1
 fi
 
 echo "[smoke] running install ${FORCE_FLAG}"
-openheron install ${FORCE_FLAG}
+openpipixia install ${FORCE_FLAG}
 
 echo "[smoke] running doctor"
-openheron doctor
+openpipixia doctor
 
 if [[ "${WITH_GATEWAY}" == "1" ]]; then
   echo "[smoke] running gateway probe"
   if command -v timeout >/dev/null 2>&1; then
-    timeout 5s openheron gateway run --channels local || true
+    timeout 5s openpipixia gateway run --channels local || true
   else
     echo "[smoke] 'timeout' not found, skipping gateway probe"
   fi

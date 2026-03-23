@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Environment:
 #   PYTHON_BIN                     Python executable (default: ./.venv/bin/python)
-#   OPENHERON_CHANNELS      Defaults to "whatsapp" for this script
+#   OPENPIPIXIA_CHANNELS      Defaults to "whatsapp" for this script
 #   WHATSAPP_BRIDGE_URL            Defaults to ws://127.0.0.1:3001 if unset
 #   WHATSAPP_BRIDGE_TOKEN          Optional token; should match bridge config
 #   RUN_DOCTOR                     1/0, whether smoke/full runs doctor --json (default: 1)
@@ -29,11 +29,11 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-export OPENHERON_CHANNELS="${OPENHERON_CHANNELS:-whatsapp}"
+export OPENPIPIXIA_CHANNELS="${OPENPIPIXIA_CHANNELS:-whatsapp}"
 export WHATSAPP_BRIDGE_URL="${WHATSAPP_BRIDGE_URL:-ws://127.0.0.1:3001}"
 
 run_cli() {
-  "${PYTHON_BIN}" -m openheron.cli "$@"
+  "${PYTHON_BIN}" -m openpipixia.cli "$@"
 }
 
 cmd_login() {
@@ -73,10 +73,10 @@ cmd_full() {
 
   cat <<'EOF'
 [next] Manual runtime validation:
-  1) Start bridge: ./.venv/bin/python -m openheron.cli channels bridge start
-  2) Start gateway: ./.venv/bin/python -m openheron.cli gateway --channels whatsapp
+  1) Start bridge: ./.venv/bin/python -m openpipixia.cli channels bridge start
+  2) Start gateway: ./.venv/bin/python -m openpipixia.cli gateway --channels whatsapp
   3) Send a WhatsApp message to your linked account/group and observe gateway logs.
-  4) Stop gateway (Ctrl+C), then stop bridge: ./.venv/bin/python -m openheron.cli channels bridge stop
+  4) Stop gateway (Ctrl+C), then stop bridge: ./.venv/bin/python -m openpipixia.cli channels bridge stop
 EOF
 }
 

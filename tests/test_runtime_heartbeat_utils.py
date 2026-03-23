@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from openheron.runtime.heartbeat_utils import (
+from openpipixia.runtime.heartbeat_utils import (
     DEFAULT_HEARTBEAT_PROMPT,
     HEARTBEAT_TOKEN,
     resolve_heartbeat_prompt,

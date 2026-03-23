@@ -14,14 +14,14 @@ from unittest.mock import AsyncMock, Mock, patch
 from google.adk.agents import LlmAgent
 from google.adk.tools import LongRunningFunctionTool
 
-from openheron.bus.events import InboundMessage, OutboundMessage
-from openheron.bus.queue import MessageBus
-from openheron.app.gateway import Gateway
-from openheron.runtime.cron_service import CronJob, CronJobState, CronPayload, CronSchedule
-from openheron.runtime.heartbeat_runner import HeartbeatRunRequest
-from openheron.runtime.heartbeat_status_store import read_heartbeat_status_snapshot
-from openheron.runtime.heartbeat_utils import DEFAULT_HEARTBEAT_PROMPT
-from openheron.tooling.registry import SubagentSpawnRequest
+from openpipixia.bus.events import InboundMessage, OutboundMessage
+from openpipixia.bus.queue import MessageBus
+from openpipixia.app.gateway import Gateway
+from openpipixia.runtime.cron_service import CronJob, CronJobState, CronPayload, CronSchedule
+from openpipixia.runtime.heartbeat_runner import HeartbeatRunRequest
+from openpipixia.runtime.heartbeat_status_store import read_heartbeat_status_snapshot
+from openpipixia.runtime.heartbeat_utils import DEFAULT_HEARTBEAT_PROMPT
+from openpipixia.tooling.registry import SubagentSpawnRequest
 
 
 class MessageBusTests(unittest.IsolatedAsyncioTestCase):
@@ -61,9 +61,9 @@ class GatewayTests(unittest.TestCase):
                 yield fake_event_1
                 yield fake_event_2
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
             inbound = InboundMessage(
                 channel="local",
                 sender_id="u1",
@@ -95,9 +95,9 @@ class GatewayTests(unittest.TestCase):
                 yield fake_event_1
                 yield fake_event_2
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
             inbound = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="hello")
             outbound = asyncio.run(gateway.process_message(inbound))
 
@@ -114,9 +114,9 @@ class GatewayTests(unittest.TestCase):
                 captured_calls.append(kwargs)
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
             inbound = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="/help")
             outbound = asyncio.run(gateway.process_message(inbound))
 
@@ -135,9 +135,9 @@ class GatewayTests(unittest.TestCase):
                 captured_calls.append(kwargs)
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
             first = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="hello")
             first_outbound = asyncio.run(gateway.process_message(first))
@@ -173,21 +173,21 @@ class GatewayTests(unittest.TestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
         with patch(
-            "openheron.app.gateway.create_runner",
+            "openpipixia.app.gateway.create_runner",
             side_effect=[
-                (_FakeRunner(memory_service=memory_service, app_name="openheron"), session_service),
-                (_FakeRunner(memory_service=memory_service, app_name="openheron"), session_service),
+                (_FakeRunner(memory_service=memory_service, app_name="openpipixia"), session_service),
+                (_FakeRunner(memory_service=memory_service, app_name="openpipixia"), session_service),
             ],
         ):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
             inbound = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="/new")
             outbound = asyncio.run(gateway.process_message(inbound))
 
         self.assertEqual(outbound.content, "Started a new conversation session.")
         session_service.get_session.assert_awaited_once_with(
-            app_name="openheron",
+            app_name="openpipixia",
             user_id="u1",
             session_id="local:c1",
         )
@@ -201,10 +201,10 @@ class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):
                 if False:
                     yield  # pragma: no cover
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         success_outbound = OutboundMessage(channel="local", chat_id="c2", content="ok")
         gateway.process_message = AsyncMock(side_effect=[RuntimeError("boom"), success_outbound])  # type: ignore[method-assign]
@@ -230,17 +230,17 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
                 if False:
                     yield  # pragma: no cover
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
         fake_cron_service = pytypes.SimpleNamespace(start=AsyncMock(), stop=Mock())
         fake_heartbeat_runner = pytypes.SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
         heartbeat_waker = Mock()
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             with (
-                patch("openheron.app.gateway.CronService", return_value=fake_cron_service),
-                patch("openheron.app.gateway.HeartbeatRunner", return_value=fake_heartbeat_runner),
-                patch("openheron.app.gateway.configure_heartbeat_waker", heartbeat_waker),
+                patch("openpipixia.app.gateway.CronService", return_value=fake_cron_service),
+                patch("openpipixia.app.gateway.HeartbeatRunner", return_value=fake_heartbeat_runner),
+                patch("openpipixia.app.gateway.configure_heartbeat_waker", heartbeat_waker),
             ):
-                gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+                gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
                 await gateway.start()
                 fake_cron_service.start.assert_awaited_once()
                 fake_heartbeat_runner.start.assert_awaited_once()
@@ -261,9 +261,9 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
                 captured.update(kwargs)
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
         await gateway._run_heartbeat(req)
@@ -284,14 +284,14 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
                 if False:
                     yield  # pragma: no cover
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         req = HeartbeatRunRequest(reason="interval", prompt=DEFAULT_HEARTBEAT_PROMPT)
         with tempfile.TemporaryDirectory() as tmp:
             policy = pytypes.SimpleNamespace(workspace_root=Path(tmp))
-            with patch("openheron.app.gateway.load_security_policy", return_value=policy):
+            with patch("openpipixia.app.gateway.load_security_policy", return_value=policy):
                 await gateway._run_heartbeat(req)
 
         self.assertFalse(called)
@@ -309,16 +309,16 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
                 if False:
                     yield  # pragma: no cover
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         req = HeartbeatRunRequest(reason="interval", prompt=DEFAULT_HEARTBEAT_PROMPT)
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             (workspace / "HEARTBEAT.md").write_text("\n  \n", encoding="utf-8")
             policy = pytypes.SimpleNamespace(workspace_root=workspace)
-            with patch("openheron.app.gateway.load_security_policy", return_value=policy):
+            with patch("openpipixia.app.gateway.load_security_policy", return_value=policy):
                 await gateway._run_heartbeat(req)
 
         self.assertFalse(called)
@@ -335,13 +335,13 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         req = HeartbeatRunRequest(reason="interval", prompt="ops check")
-        with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_SHOW_OK": "0"}, clear=False):
+        with patch.dict(os.environ, {"OPENPIPIXIA_HEARTBEAT_SHOW_OK": "0"}, clear=False):
             await gateway._run_heartbeat(req)
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
@@ -355,13 +355,13 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         req = HeartbeatRunRequest(reason="interval", prompt="ops check")
-        with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_SHOW_OK": "1"}, clear=False):
+        with patch.dict(os.environ, {"OPENPIPIXIA_HEARTBEAT_SHOW_OK": "1"}, clear=False):
             await gateway._run_heartbeat(req)
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
         self.assertEqual(outbound.channel, "local")
@@ -377,18 +377,18 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         req = HeartbeatRunRequest(reason="interval", prompt="ops check")
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_HEARTBEAT_SHOW_OK": "0",
-                "OPENHERON_HEARTBEAT_SHOW_ALERTS": "0",
-                "OPENHERON_HEARTBEAT_ACK_MAX_CHARS": "0",
+                "OPENPIPIXIA_HEARTBEAT_SHOW_OK": "0",
+                "OPENPIPIXIA_HEARTBEAT_SHOW_ALERTS": "0",
+                "OPENPIPIXIA_HEARTBEAT_ACK_MAX_CHARS": "0",
             },
             clear=False,
         ):
@@ -399,9 +399,9 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_HEARTBEAT_SHOW_OK": "0",
-                "OPENHERON_HEARTBEAT_SHOW_ALERTS": "1",
-                "OPENHERON_HEARTBEAT_ACK_MAX_CHARS": "0",
+                "OPENPIPIXIA_HEARTBEAT_SHOW_OK": "0",
+                "OPENPIPIXIA_HEARTBEAT_SHOW_ALERTS": "1",
+                "OPENPIPIXIA_HEARTBEAT_ACK_MAX_CHARS": "0",
             },
             clear=False,
         ):
@@ -418,14 +418,14 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
         gateway._last_inbound_route = ("feishu", "chat-ops")
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
-        with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_TARGET": "last"}, clear=False):
+        with patch.dict(os.environ, {"OPENPIPIXIA_HEARTBEAT_TARGET": "last"}, clear=False):
             await gateway._run_heartbeat(req)
 
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
@@ -442,13 +442,13 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
-        with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_TARGET": "none"}, clear=False):
+        with patch.dict(os.environ, {"OPENPIPIXIA_HEARTBEAT_TARGET": "none"}, clear=False):
             await gateway._run_heartbeat(req)
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
@@ -462,19 +462,19 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         req = HeartbeatRunRequest(reason="interval", prompt="ops check")
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_HEARTBEAT_SHOW_OK": "1",
-                "OPENHERON_HEARTBEAT_TARGET": "channel",
-                "OPENHERON_HEARTBEAT_TARGET_CHANNEL": "slack",
-                "OPENHERON_HEARTBEAT_TARGET_CHAT_ID": "C123",
+                "OPENPIPIXIA_HEARTBEAT_SHOW_OK": "1",
+                "OPENPIPIXIA_HEARTBEAT_TARGET": "channel",
+                "OPENPIPIXIA_HEARTBEAT_TARGET_CHANNEL": "slack",
+                "OPENPIPIXIA_HEARTBEAT_TARGET_CHAT_ID": "C123",
             },
             clear=False,
         ):
@@ -493,19 +493,19 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
         with patch.dict(
             os.environ,
             {
-                "OPENHERON_HEARTBEAT_TARGET": "channel",
-                "OPENHERON_HEARTBEAT_TARGET_CHANNEL": "feishu",
-                "OPENHERON_HEARTBEAT_TARGET_CHAT_ID": "ops-room",
-                "OPENHERON_HEARTBEAT_SHOW_ALERTS": "1",
-                "OPENHERON_HEARTBEAT_ACK_MAX_CHARS": "0",
+                "OPENPIPIXIA_HEARTBEAT_TARGET": "channel",
+                "OPENPIPIXIA_HEARTBEAT_TARGET_CHANNEL": "feishu",
+                "OPENPIPIXIA_HEARTBEAT_TARGET_CHAT_ID": "ops-room",
+                "OPENPIPIXIA_HEARTBEAT_SHOW_ALERTS": "1",
+                "OPENPIPIXIA_HEARTBEAT_ACK_MAX_CHARS": "0",
             },
             clear=False,
         ):
@@ -527,15 +527,15 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         req = HeartbeatRunRequest(reason="manual", prompt="ops check")
         with tempfile.TemporaryDirectory() as tmp:
             policy = pytypes.SimpleNamespace(workspace_root=Path(tmp))
-            with patch("openheron.app.gateway.load_security_policy", return_value=policy):
-                with patch.dict(os.environ, {"OPENHERON_HEARTBEAT_SHOW_OK": "1"}, clear=False):
+            with patch("openpipixia.app.gateway.load_security_policy", return_value=policy):
+                with patch.dict(os.environ, {"OPENPIPIXIA_HEARTBEAT_SHOW_OK": "1"}, clear=False):
                     await gateway._run_heartbeat(req)
                 snapshot = read_heartbeat_status_snapshot(Path(tmp))
 
@@ -549,9 +549,9 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
                 if False:
                     yield  # pragma: no cover
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         status = gateway.heartbeat_status()
         self.assertFalse(bool(status["running"]))
@@ -569,10 +569,10 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
                 captured.update(kwargs)
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         job = CronJob(
             id="job12345",
@@ -605,9 +605,9 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         fake_heartbeat_runner = pytypes.SimpleNamespace(request_wake=Mock())
         gateway._heartbeat_runner = fake_heartbeat_runner
@@ -634,9 +634,9 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
             async def run_async(self, **kwargs):
                 yield fake_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=MessageBus())
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=MessageBus())
 
         job = CronJob(
             id="job12345",
@@ -670,10 +670,10 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     yield subagent_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         request = SubagentSpawnRequest(
             task_id="subagent-abc",
@@ -712,10 +712,10 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     yield subagent_event
 
-        fake_agent = pytypes.SimpleNamespace(name="openheron")
-        with patch("openheron.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+        fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+        with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openheron", bus=bus)
+            gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
 
         request = SubagentSpawnRequest(
             task_id="subagent-def",
@@ -743,7 +743,7 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
             return {"status": "pending", "task_id": "x"}
 
         root = LlmAgent(
-            name="openheron",
+            name="openpipixia",
             model="gemini-2.0-flash",
             instruction="test",
             tools=[
@@ -763,7 +763,7 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
             created_agents.append(agent)
             return _FakeRunner(), object()
 
-        with patch("openheron.app.gateway.create_runner", side_effect=_create_runner_side_effect):
+        with patch("openpipixia.app.gateway.create_runner", side_effect=_create_runner_side_effect):
             Gateway(agent=root, app_name=root.name, bus=MessageBus())
 
         self.assertEqual(len(created_agents), 2)

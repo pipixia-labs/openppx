@@ -6,7 +6,7 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from openheron.runtime.heartbeat_runner import (
+from openpipixia.runtime.heartbeat_runner import (
     HeartbeatRunner,
     parse_heartbeat_every_ms,
 )
@@ -175,7 +175,7 @@ class HeartbeatRunnerAsyncTests(unittest.IsolatedAsyncioTestCase):
             every="10m",
             is_busy=lambda: busy["value"],
         )
-        with patch("openheron.runtime.heartbeat_runner.DEFAULT_WAKE_RETRY_MS", 30):
+        with patch("openpipixia.runtime.heartbeat_runner.DEFAULT_WAKE_RETRY_MS", 30):
             await runner.start()
             try:
                 runner.request_wake(reason="manual", coalesce_ms=0)

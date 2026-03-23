@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Minimal smoke runner for openheron GUI tools.
+"""Minimal smoke runner for openpipixia GUI tools.
 
 Usage:
   python scripts/gui_smoke.py --mode single --action "click browser icon"
-  python scripts/gui_smoke.py --mode task --task "open browser and search openheron"
+  python scripts/gui_smoke.py --mode task --task "open browser and search openpipixia"
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ import argparse
 import json
 import sys
 
-from openheron.tooling.registry import computer_task, computer_use
+from openpipixia.tooling.registry import computer_task, computer_use
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Smoke test for openheron GUI automation tools.")
+    parser = argparse.ArgumentParser(description="Smoke test for openpipixia GUI automation tools.")
     parser.add_argument("--mode", choices=["single", "task"], default="single")
     parser.add_argument("--action", default="", help="Single-step action text for computer_use.")
     parser.add_argument("--task", default="", help="Multi-step task text for computer_task.")

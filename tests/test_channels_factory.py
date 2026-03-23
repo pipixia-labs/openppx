@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import unittest
 
-from openheron.bus.queue import MessageBus
-from openheron.channels.factory import (
+from openpipixia.bus.queue import MessageBus
+from openpipixia.channels.factory import (
     build_channel_manager,
     parse_enabled_channels,
     validate_channel_setup,

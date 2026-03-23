@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from openheron.bus.events import OutboundMessage
-from openheron.bus.queue import MessageBus
-from openheron.channels.feishu import FeishuChannel
+from openpipixia.bus.events import OutboundMessage
+from openpipixia.bus.queue import MessageBus
+from openpipixia.channels.feishu import FeishuChannel
 
 
 class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):

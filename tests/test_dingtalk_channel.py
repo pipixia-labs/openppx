@@ -7,9 +7,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from openheron.bus.events import OutboundMessage
-from openheron.bus.queue import MessageBus
-from openheron.channels.dingtalk import DingTalkChannel
+from openpipixia.bus.events import OutboundMessage
+from openpipixia.bus.queue import MessageBus
+from openpipixia.channels.dingtalk import DingTalkChannel
 
 
 class DingTalkChannelTests(unittest.IsolatedAsyncioTestCase):
@@ -40,7 +40,7 @@ class DingTalkChannelTests(unittest.IsolatedAsyncioTestCase):
                 "robotCode": "dt-app-id",
                 "userIds": ["staff-1"],
                 "msgKey": "sampleMarkdown",
-                "msgParam": '{"text":"hello dingtalk","title":"openheron reply"}',
+                "msgParam": '{"text":"hello dingtalk","title":"openpipixia reply"}',
             },
             headers={"x-acs-dingtalk-access-token": "token-1"},
         )
@@ -101,10 +101,10 @@ class DingTalkChannelTests(unittest.IsolatedAsyncioTestCase):
             client_secret="dt-app-secret",
         )
         with (
-            patch("openheron.channels.dingtalk.DINGTALK_AVAILABLE", True),
-            patch("openheron.channels.dingtalk.Credential", _FakeCredential),
-            patch("openheron.channels.dingtalk.DingTalkStreamClient", _FakeStreamClient),
-            patch("openheron.channels.dingtalk.ChatbotMessage", _FakeChatbotMessage),
+            patch("openpipixia.channels.dingtalk.DINGTALK_AVAILABLE", True),
+            patch("openpipixia.channels.dingtalk.Credential", _FakeCredential),
+            patch("openpipixia.channels.dingtalk.DingTalkStreamClient", _FakeStreamClient),
+            patch("openpipixia.channels.dingtalk.ChatbotMessage", _FakeChatbotMessage),
         ):
             await channel.start()
             self.assertIsNotNone(channel._stream_client)
@@ -134,7 +134,7 @@ class DingTalkChannelTests(unittest.IsolatedAsyncioTestCase):
                     sender_nick="stream-bob",
                 )
 
-        with patch("openheron.channels.dingtalk.ChatbotMessage", _FakeChatbotMessage):
+        with patch("openpipixia.channels.dingtalk.ChatbotMessage", _FakeChatbotMessage):
             await channel._process_stream_payload({"text": {"content": "ignored"}})
 
         inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=0.2)

@@ -10,7 +10,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from openheron.runtime.cron_service import CronSchedule, CronService, _compute_next_run
+from openpipixia.runtime.cron_service import CronSchedule, CronService, _compute_next_run
 
 
 class _FakeClock:

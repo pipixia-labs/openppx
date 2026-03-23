@@ -12,7 +12,7 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
     StreamableHTTPConnectionParams,
 )
 
-from openheron.core.mcp_registry import (
+from openpipixia.core.mcp_registry import (
     _MCP_SERVERS_ENV,
     build_mcp_toolsets,
     build_mcp_toolsets_from_env,
@@ -134,7 +134,7 @@ class McpRegistryProbeTests(unittest.IsolatedAsyncioTestCase):
             log_registered=False,
         )
         toolset = toolsets[0]
-        with patch("openheron.core.mcp_registry.McpToolset.get_tools", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        with patch("openpipixia.core.mcp_registry.McpToolset.get_tools", new=AsyncMock(side_effect=RuntimeError("boom"))):
             tools = await toolset.get_tools()
         self.assertEqual(tools, [])
         self.assertEqual(toolset.availability_status, "unavailable")
@@ -145,7 +145,7 @@ class McpRegistryProbeTests(unittest.IsolatedAsyncioTestCase):
             {"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]}},
             log_registered=False,
         )
-        with patch("openheron.core.mcp_registry.McpToolset.get_tools", new=AsyncMock(return_value=[object(), object()])):
+        with patch("openpipixia.core.mcp_registry.McpToolset.get_tools", new=AsyncMock(return_value=[object(), object()])):
             results = await probe_mcp_toolsets(toolsets, timeout_seconds=2.0)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["status"], "ok")
@@ -158,7 +158,7 @@ class McpRegistryProbeTests(unittest.IsolatedAsyncioTestCase):
             log_registered=False,
         )
         with patch(
-            "openheron.core.mcp_registry.McpToolset.get_tools",
+            "openpipixia.core.mcp_registry.McpToolset.get_tools",
             new=AsyncMock(side_effect=RuntimeError("boom")),
         ):
             results = await probe_mcp_toolsets(toolsets, timeout_seconds=2.0)
@@ -174,8 +174,8 @@ class McpRegistryProbeTests(unittest.IsolatedAsyncioTestCase):
             log_registered=False,
         )
         side_effects = [RuntimeError("connection refused"), [object()]]
-        with patch("openheron.core.mcp_registry.McpToolset.get_tools", new=AsyncMock(side_effect=side_effects)):
-            with patch("openheron.core.mcp_registry.asyncio.sleep", new=AsyncMock()) as mocked_sleep:
+        with patch("openpipixia.core.mcp_registry.McpToolset.get_tools", new=AsyncMock(side_effect=side_effects)):
+            with patch("openpipixia.core.mcp_registry.asyncio.sleep", new=AsyncMock()) as mocked_sleep:
                 results = await probe_mcp_toolsets(
                     toolsets,
                     timeout_seconds=2.0,
@@ -192,10 +192,10 @@ class McpRegistryProbeTests(unittest.IsolatedAsyncioTestCase):
             log_registered=False,
         )
         with patch(
-            "openheron.core.mcp_registry.McpToolset.get_tools",
+            "openpipixia.core.mcp_registry.McpToolset.get_tools",
             new=AsyncMock(side_effect=RuntimeError("invalid URL scheme")),
         ):
-            with patch("openheron.core.mcp_registry.asyncio.sleep", new=AsyncMock()) as mocked_sleep:
+            with patch("openpipixia.core.mcp_registry.asyncio.sleep", new=AsyncMock()) as mocked_sleep:
                 results = await probe_mcp_toolsets(
                     toolsets,
                     timeout_seconds=2.0,

@@ -6,9 +6,9 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from openheron.bus.events import OutboundMessage
-from openheron.bus.queue import MessageBus
-from openheron.channels.telegram import TelegramChannel
+from openpipixia.bus.events import OutboundMessage
+from openpipixia.bus.queue import MessageBus
+from openpipixia.channels.telegram import TelegramChannel
 
 
 class TelegramChannelTests(unittest.IsolatedAsyncioTestCase):

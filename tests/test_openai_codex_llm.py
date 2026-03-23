@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 from google.adk.models.llm_request import LlmRequest
 from google.genai import types
 
-from openheron.core.openai_codex_llm import (
+from openpipixia.core.openai_codex_llm import (
     OpenAICodexLlm,
     _consume_codex_events,
     _convert_llm_request,
@@ -107,9 +107,9 @@ class OpenAICodexLlmTests(unittest.TestCase):
         )
 
         fake_token = type("Token", (), {"account_id": "acc_1", "access": "tok_1"})()
-        with patch("openheron.core.openai_codex_llm._get_codex_token", return_value=fake_token):
+        with patch("openpipixia.core.openai_codex_llm._get_codex_token", return_value=fake_token):
             with patch(
-                "openheron.core.openai_codex_llm._request_codex",
+                "openpipixia.core.openai_codex_llm._request_codex",
                 new=AsyncMock(return_value=("hello world", [], types.FinishReason.STOP)),
             ):
                 async def _collect():

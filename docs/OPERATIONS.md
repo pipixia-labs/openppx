@@ -1,9 +1,9 @@
-# openheron 运行与操作指南
+# openpipixia 运行与操作指南
 
 ## 安装
 
 ```bash
-cd openheron
+cd openpipixia
 pip install -e .
 ```
 
@@ -13,34 +13,34 @@ pip install -e .
 
 ```bash
 # 初始化/修复最小可运行配置
-openheron doctor --fix
+openpipixia doctor --fix
 
 # 查看完整诊断结果
-openheron doctor
+openpipixia doctor
 ```
 
 ## Gateway 后台服务（进程级）
 
 ```bash
-# 启动后台 gateway（写 pid/meta/log 到 ~/.openheron/log）
-openheron gateway start --channels local,feishu
+# 启动后台 gateway（写 pid/meta/log 到 ~/.openpipixia/log）
+openpipixia gateway start --channels local,feishu
 
 # 查看状态（可加 --json）
-openheron gateway status
-openheron gateway status --json
+openpipixia gateway status
+openpipixia gateway status --json
 
 # 重启 / 停止
-openheron gateway restart --channels local,feishu
-openheron gateway stop
+openpipixia gateway restart --channels local,feishu
+openpipixia gateway stop
 ```
 
 后台运行相关文件：
 
-- `~/.openheron/log/gateway.pid`
-- `~/.openheron/log/gateway.meta.json`
-- `~/.openheron/log/gateway.out.log`
-- `~/.openheron/log/gateway.err.log`
-- `~/.openheron/log/gateway.debug.log`
+- `~/.openpipixia/log/gateway.pid`
+- `~/.openpipixia/log/gateway.meta.json`
+- `~/.openpipixia/log/gateway.out.log`
+- `~/.openpipixia/log/gateway.err.log`
+- `~/.openpipixia/log/gateway.debug.log`
 
 一键 smoke（doctor，可选 gateway 探活）：
 
@@ -54,15 +54,15 @@ Gateway service manifest（对齐 OpenClaw install-daemon 的最小实现）：
 
 ```bash
 # 写入用户级 service manifest（不直接执行 launchctl/systemctl）
-openheron gateway-service install
-openheron gateway-service install --force --channels local,feishu
+openpipixia gateway-service install
+openpipixia gateway-service install --force --channels local,feishu
 
 # 写入后立即启用并启动（会调用 launchctl/systemctl --user）
-openheron gateway-service install --enable
+openpipixia gateway-service install --enable
 
 # 查看当前平台下 manifest 状态
-openheron gateway-service status
-openheron gateway-service status --json
+openpipixia gateway-service status
+openpipixia gateway-service status --json
 ```
 
 ### 常见缺失字段与修复路径
@@ -87,33 +87,33 @@ openheron gateway-service status --json
 
 当前相关代码位置：
 
-- `openheron/doctor_rules.py`：doctor/install 共用的基础规则表与 doctor backfill 元数据。
-- `openheron/onboarding_adapters.py`：provider/channel onboarding adapter 协议、默认 adapter 与注册表。
-- `openheron/cli.py`：命令编排层，调用上述模块执行规则与 adapter。
+- `openpipixia/doctor_rules.py`：doctor/install 共用的基础规则表与 doctor backfill 元数据。
+- `openpipixia/onboarding_adapters.py`：provider/channel onboarding adapter 协议、默认 adapter 与注册表。
+- `openpipixia/cli.py`：命令编排层，调用上述模块执行规则与 adapter。
 
 建议后续扩展字段时，优先改规则表，再补测试，不要直接在流程函数里新增硬编码 if/else。
 ### 常见问题
 
 - `Missing ... API key`  
-  打开 `~/.openheron/config.json`，给启用 provider 填 `apiKey`，再运行 `openheron doctor`。
-  如果本地环境变量已配置，也可先运行 `openheron doctor --fix` 让系统自动回填缺失项。
+  打开 `~/.openpipixia/config.json`，给启用 provider 填 `apiKey`，再运行 `openpipixia doctor`。
+  如果本地环境变量已配置，也可先运行 `openpipixia doctor --fix` 让系统自动回填缺失项。
 
 - `channels....` 凭证字段缺失（例如 feishu/telegram/discord/dingtalk/slack/whatsapp/email/qq）  
-  在 `~/.openheron/config.json` 的 `channels` 段补齐对应字段，再运行 `openheron doctor`。
-  如果不确定具体字段，直接看 `openheron doctor --json` 的缺失项。
+  在 `~/.openpipixia/config.json` 的 `channels` 段补齐对应字段，再运行 `openpipixia doctor`。
+  如果不确定具体字段，直接看 `openpipixia doctor --json` 的缺失项。
 
 - `MCP server ... health check failed`  
-  先确认 MCP 服务进程可达，再用 `openheron doctor --json` 查看 `mcp.health` 明细错误。
+  先确认 MCP 服务进程可达，再用 `openpipixia doctor --json` 查看 `mcp.health` 明细错误。
 
 - provider/channel 全部被关闭导致无法运行  
-  执行 `openheron doctor --fix`，会自动启用默认 provider 与 `channels.local`（最小可运行修复）。
+  执行 `openpipixia doctor --fix`，会自动启用默认 provider 与 `channels.local`（最小可运行修复）。
 
 ### doctor --fix --json 字段说明（新增）
 
 当你需要把修复结果喂给上层自动化逻辑（例如告警/重试/策略回路）时，建议用：
 
 ```bash
-openheron doctor --fix --json
+openpipixia doctor --fix --json
 ```
 
 `fix` 节点关键字段：
@@ -151,51 +151,51 @@ openheron doctor --fix --json
 ### 单轮调用
 
 ```bash
-python -m openheron.cli -m "Describe what you can do"
+python -m openpipixia.cli -m "Describe what you can do"
 ```
 
 可显式指定会话标识：
 
 ```bash
-python -m openheron.cli -m "Describe what you can do" --user-id local --session-id demo001
+python -m openpipixia.cli -m "Describe what you can do" --user-id local --session-id demo001
 ```
 
 ### ADK CLI 模式
 
 ```bash
-adk run openheron
+adk run openpipixia
 ```
 
 ### Wrapper CLI
 
 ```bash
-openheron run
+openpipixia run
 ```
 
 ### 常用工具命令
 
 ```bash
-openheron skills
-openheron doctor
-openheron doctor --fix
-openheron doctor --fix-dry-run
-openheron heartbeat status
-openheron heartbeat status --json
-openheron token stats
-openheron token stats --provider google --limit 50
-openheron token stats --json
-openheron gateway-service install
-openheron gateway-service status
-openheron provider list
-openheron provider status
-openheron provider status --json
-openheron provider login github-copilot
-openheron provider login openai-codex
-openheron provider login codex
-openheron channels login
-openheron channels bridge start
-openheron channels bridge status
-openheron channels bridge stop
+openpipixia skills
+openpipixia doctor
+openpipixia doctor --fix
+openpipixia doctor --fix-dry-run
+openpipixia heartbeat status
+openpipixia heartbeat status --json
+openpipixia token stats
+openpipixia token stats --provider google --limit 50
+openpipixia token stats --json
+openpipixia gateway-service install
+openpipixia gateway-service status
+openpipixia provider list
+openpipixia provider status
+openpipixia provider status --json
+openpipixia provider login github-copilot
+openpipixia provider login openai-codex
+openpipixia provider login codex
+openpipixia channels login
+openpipixia channels bridge start
+openpipixia channels bridge status
+openpipixia channels bridge stop
 ```
 
 ## Gateway 模式
@@ -203,34 +203,34 @@ openheron channels bridge stop
 ### 本地通道
 
 ```bash
-python -m openheron.cli gateway run --channels local --interactive-local
+python -m openpipixia.cli gateway run --channels local --interactive-local
 ```
 
 ### 多通道模式（含 Feishu）
 
 ```bash
-openheron gateway run --channels local,feishu --interactive-local
+openpipixia gateway run --channels local,feishu --interactive-local
 ```
 
 也可通过环境变量指定默认通道：
 
 ```bash
-export OPENHERON_CHANNELS=feishu
-openheron gateway
+export OPENPIPIXIA_CHANNELS=feishu
+openpipixia gateway
 ```
 
 ## WhatsApp Bridge
 
-`openheron` 使用本地 Node.js Bridge（Baileys + WebSocket）完成 WhatsApp 登录和消息收发。
+`openpipixia` 使用本地 Node.js Bridge（Baileys + WebSocket）完成 WhatsApp 登录和消息收发。
 
 ```bash
 # 前台扫码登录
-openheron channels login
+openpipixia channels login
 
 # 后台 bridge 生命周期
-openheron channels bridge start
-openheron channels bridge status
-openheron channels bridge stop
+openpipixia channels bridge start
+openpipixia channels bridge status
+openpipixia channels bridge stop
 ```
 
 快速自检：
@@ -242,38 +242,38 @@ scripts/whatsapp_bridge_e2e.sh smoke
 
 ## Cron 调度
 
-`openheron` 的 cron 是进程内调度器，不写系统 crontab。只有网关运行时任务才会执行。
+`openpipixia` 的 cron 是进程内调度器，不写系统 crontab。只有网关运行时任务才会执行。
 
-- 存储文件：`OPENHERON_WORKSPACE/.openheron/cron_jobs.json`
+- 存储文件：`OPENPIPIXIA_WORKSPACE/.openpipixia/cron_jobs.json`
 - 支持调度：`every`、`cron`（可配 `tz`）、`at`
 
 常用命令：
 
 ```bash
-openheron cron list
-openheron cron add --name weather --message "check weather and summarize" --every 300
-openheron cron add --name daily --message "daily report" --cron "0 9 * * 1-5" --tz Asia/Shanghai
-openheron cron add --name reminder --message "remind me to review PR" --at 2026-02-19T09:30:00
-openheron cron add --name push --message "send update" --every 600 --deliver --channel feishu --to ou_xxx
-openheron cron run <job_id>
-openheron cron enable <job_id>
-openheron cron enable <job_id> --disable
-openheron cron remove <job_id>
-openheron cron status
+openpipixia cron list
+openpipixia cron add --name weather --message "check weather and summarize" --every 300
+openpipixia cron add --name daily --message "daily report" --cron "0 9 * * 1-5" --tz Asia/Shanghai
+openpipixia cron add --name reminder --message "remind me to review PR" --at 2026-02-19T09:30:00
+openpipixia cron add --name push --message "send update" --every 600 --deliver --channel feishu --to ou_xxx
+openpipixia cron run <job_id>
+openpipixia cron enable <job_id>
+openpipixia cron enable <job_id> --disable
+openpipixia cron remove <job_id>
+openpipixia cron status
 ```
 
 ## Token 统计
 
-`openheron` 会在每次 LLM 调用结束后记录 token 使用信息（请求/响应、文本/图像、时间戳）。
+`openpipixia` 会在每次 LLM 调用结束后记录 token 使用信息（请求/响应、文本/图像、时间戳）。
 
-- 存储位置：`~/.openheron/token_usage.db`（SQLite）
+- 存储位置：`~/.openpipixia/token_usage.db`（SQLite）
 - 记录粒度：每次 request/response 一条事件
 - 查询命令：
 
 ```bash
-openheron token stats
-openheron token stats --provider google --limit 50
-openheron token stats --provider openai --json
+openpipixia token stats
+openpipixia token stats --provider google --limit 50
+openpipixia token stats --provider openai --json
 ```
 
 说明：
@@ -294,6 +294,6 @@ pytest -q
 ## 示例
 
 ```bash
-python -m openheron.cli -m "search for the latest research progress today, and create a PPT for me."
-python -m openheron.cli -m "download all PDF files from this page: https://bbs.kangaroo.study/forum.php?mod=viewthread&tid=467"
+python -m openpipixia.cli -m "search for the latest research progress today, and create a PPT for me."
+python -m openpipixia.cli -m "download all PDF files from this page: https://bbs.kangaroo.study/forum.php?mod=viewthread&tid=467"
 ```

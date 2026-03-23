@@ -7,7 +7,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from openheron.gui.prompts import (
+from openpipixia.gui.prompts import (
     DEFAULT_GUI_EXECUTOR_SYSTEM_PROMPT_PATH_ENV,
     DEFAULT_GUI_PLANNER_SYSTEM_PROMPT_PATH_ENV,
     load_executor_system_prompt,

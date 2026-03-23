@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openheron.runtime.heartbeat_status_store import (
+from openpipixia.runtime.heartbeat_status_store import (
     heartbeat_status_path,
     read_heartbeat_status_snapshot,
     write_heartbeat_status_snapshot,
@@ -23,11 +23,11 @@ class HeartbeatStatusStoreTests(unittest.TestCase):
 
         self.assertEqual(loaded, payload)
 
-    def test_path_is_under_openheron_runtime_dir(self) -> None:
+    def test_path_is_under_openpipixia_runtime_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             path = heartbeat_status_path(workspace)
-        self.assertEqual(path, workspace / ".openheron" / "heartbeat_status.json")
+        self.assertEqual(path, workspace / ".openpipixia" / "heartbeat_status.json")
 
     def test_read_returns_none_when_payload_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -17,19 +17,19 @@ dependencies = [
 ]
 
 [project.scripts]
-openheron = "openheron.app.cli:main"
-openheron-gui-mcp = "openheron.gui.mcp_server:main"
+openpipixia = "openpipixia.app.cli:main"
+openpipixia-gui-mcp = "openpipixia.gui.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["openheron"]
+packages = ["openpipixia"]
 
 [tool.hatch.build]
 include = [
-    "openheron/**/*.py",
-    "openheron/bridge/**",
-    "openheron/skills/**",
+    "openpipixia/**/*.py",
+    "openpipixia/bridge/**",
+    "openpipixia/skills/**",
 ]

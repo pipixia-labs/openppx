@@ -1,4 +1,4 @@
-"""Tests for openheron core tools."""
+"""Tests for openpipixia core tools."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.error import URLError
 
-from openheron.browser.service import BrowserDispatchResponse
-from openheron.runtime.tool_context import route_context
-from openheron.tooling.registry import (
+from openpipixia.browser.service import BrowserDispatchResponse
+from openpipixia.runtime.tool_context import route_context
+from openpipixia.tooling.registry import (
     SubagentSpawnRequest,
     browser,
     computer_task,
@@ -54,7 +54,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_file_tools_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             out = write_file("tmp/demo.txt", "hello world")
             self.assertIn("Successfully wrote", out)
             content = read_file("tmp/demo.txt")
@@ -65,13 +65,13 @@ class ToolsTests(unittest.TestCase):
 
     def test_read_file_supports_file_path_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             write_file("tmp/alias.txt", "alias-ok")
             self.assertEqual(read_file(file_path="tmp/alias.txt"), "alias-ok")
 
     def test_read_file_supports_offset_and_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             content = "\n".join(f"line-{idx}" for idx in range(1, 7))
             write_file("tmp/lines.txt", content)
 
@@ -87,7 +87,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_read_file_limit_appends_continuation_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             content = "\n".join(f"line-{idx}" for idx in range(1, 7))
             write_file("tmp/lines.txt", content)
 
@@ -98,8 +98,8 @@ class ToolsTests(unittest.TestCase):
 
     def test_read_file_caps_output_without_explicit_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
-            os.environ["OPENHERON_READ_FILE_MAX_BYTES"] = "1024"
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_READ_FILE_MAX_BYTES"] = "1024"
             big = "\n".join(f"line-{idx}-{'x' * 80}" for idx in range(1, 400))
             write_file("tmp/big.txt", big)
 
@@ -110,7 +110,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_list_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             Path(tmp, "a").mkdir()
             Path(tmp, "b.txt").write_text("x", encoding="utf-8")
             listing = list_dir(".")
@@ -123,14 +123,14 @@ class ToolsTests(unittest.TestCase):
 
     def test_computer_use_tool_calls_executor(self) -> None:
         payload = {"ok": True, "arguments": {"action": "wait", "time": 1}}
-        with patch("openheron.tooling.registry.execute_gui_action", return_value=payload) as mocked:
+        with patch("openpipixia.tooling.registry.execute_gui_action", return_value=payload) as mocked:
             result = computer_use("wait 1 second", dry_run=True, model="m", api_key="k")
         self.assertIn('"ok": true', result)
         mocked.assert_called_once()
 
     def test_computer_task_tool_calls_runner(self) -> None:
         payload = {"ok": True, "finished": True, "message": "done", "steps": []}
-        with patch("openheron.tooling.registry.execute_gui_task", return_value=payload) as mocked:
+        with patch("openpipixia.tooling.registry.execute_gui_task", return_value=payload) as mocked:
             result = computer_task("finish login flow", max_steps=5, dry_run=True, planner_model="m", planner_api_key="k")
         self.assertIn('"ok": true', result)
         mocked.assert_called_once()
@@ -153,7 +153,7 @@ class ToolsTests(unittest.TestCase):
 
         reasons: list[str] = []
         configure_heartbeat_waker(reasons.append)
-        with patch("openheron.tooling.registry.get_process_session_manager", return_value=_DummyManager()):
+        with patch("openpipixia.tooling.registry.get_process_session_manager", return_value=_DummyManager()):
             process_session("write", session_id="s1", data="abc")
             process_session("send-keys", session_id="s1", literal="x")
             process_session("submit", session_id="s1")
@@ -413,112 +413,112 @@ class ToolsTests(unittest.TestCase):
 
     def test_exec_tool_supports_shell_compound_command(self) -> None:
         if os.name == "nt":
-            cmd = "set OPENHERON_EXEC_TEST=hello && echo %OPENHERON_EXEC_TEST%"
+            cmd = "set OPENPIPIXIA_EXEC_TEST=hello && echo %OPENPIPIXIA_EXEC_TEST%"
         else:
-            cmd = "export OPENHERON_EXEC_TEST=hello && echo $OPENHERON_EXEC_TEST"
+            cmd = "export OPENPIPIXIA_EXEC_TEST=hello && echo $OPENPIPIXIA_EXEC_TEST"
         out = exec_command(cmd)
         self.assertIn("hello", out.lower())
 
     def test_exec_tool_respects_allowlist(self) -> None:
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "python"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = "python"
         out = exec_command("echo hello")
         self.assertIn("allowlist", out.lower())
 
     def test_exec_tool_allowlist_checks_all_chain_segments(self) -> None:
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = "echo"
         out = exec_command("echo ok && python -V")
         self.assertIn("allowlist", out.lower())
         self.assertIn("python", out.lower())
 
     def test_exec_tool_allowlist_allows_builtin_plus_allowed_command(self) -> None:
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = "echo"
         if os.name == "nt":
-            cmd = "set OPENHERON_EXEC_TEST=hello && echo %OPENHERON_EXEC_TEST%"
+            cmd = "set OPENPIPIXIA_EXEC_TEST=hello && echo %OPENPIPIXIA_EXEC_TEST%"
         else:
-            cmd = "export OPENHERON_EXEC_TEST=hello && echo $OPENHERON_EXEC_TEST"
+            cmd = "export OPENPIPIXIA_EXEC_TEST=hello && echo $OPENPIPIXIA_EXEC_TEST"
         out = exec_command(cmd)
         self.assertIn("hello", out.lower())
 
     def test_exec_tool_allowlist_handles_env_assignment_prefix(self) -> None:
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = "echo"
         if os.name == "nt":
-            cmd = "set OPENHERON_EXEC_TEST=hello && echo %OPENHERON_EXEC_TEST%"
+            cmd = "set OPENPIPIXIA_EXEC_TEST=hello && echo %OPENPIPIXIA_EXEC_TEST%"
         else:
-            cmd = "OPENHERON_EXEC_TEST=hello echo hello"
+            cmd = "OPENPIPIXIA_EXEC_TEST=hello echo hello"
         out = exec_command(cmd)
         self.assertIn("hello", out.lower())
 
     def test_exec_tool_security_mode_deny_blocks_execution(self) -> None:
-        os.environ["OPENHERON_EXEC_SECURITY"] = "deny"
+        os.environ["OPENPIPIXIA_EXEC_SECURITY"] = "deny"
         out = exec_command("echo hello")
         self.assertIn("mode=deny", out.lower())
 
     def test_exec_tool_security_mode_full_ignores_allowlist(self) -> None:
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "python"
-        os.environ["OPENHERON_EXEC_SECURITY"] = "full"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = "python"
+        os.environ["OPENPIPIXIA_EXEC_SECURITY"] = "full"
         out = exec_command("echo hello")
         self.assertIn("hello", out.lower())
 
     def test_exec_tool_allowlist_mode_allows_safe_bins(self) -> None:
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = ""
-        os.environ["OPENHERON_EXEC_SECURITY"] = "allowlist"
-        os.environ["OPENHERON_EXEC_SAFE_BINS"] = "echo"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = ""
+        os.environ["OPENPIPIXIA_EXEC_SECURITY"] = "allowlist"
+        os.environ["OPENPIPIXIA_EXEC_SAFE_BINS"] = "echo"
         out = exec_command("echo hello")
         self.assertIn("hello", out.lower())
 
     def test_exec_tool_rejects_invalid_security_mode(self) -> None:
-        os.environ["OPENHERON_EXEC_SECURITY"] = "invalid"
+        os.environ["OPENPIPIXIA_EXEC_SECURITY"] = "invalid"
         out = exec_command("echo hello")
-        self.assertIn("invalid openheron_exec_security", out.lower())
+        self.assertIn("invalid openpipixia_exec_security", out.lower())
 
     def test_exec_tool_rejects_invalid_ask_mode(self) -> None:
-        os.environ["OPENHERON_EXEC_ASK"] = "invalid"
+        os.environ["OPENPIPIXIA_EXEC_ASK"] = "invalid"
         out = exec_command("echo hello")
-        self.assertIn("invalid openheron_exec_ask", out.lower())
+        self.assertIn("invalid openpipixia_exec_ask", out.lower())
 
     def test_exec_tool_ask_always_requires_approval(self) -> None:
-        os.environ["OPENHERON_EXEC_ASK"] = "always"
+        os.environ["OPENPIPIXIA_EXEC_ASK"] = "always"
         out = exec_command("echo hello")
         self.assertIn("approval required", out.lower())
         self.assertIn("ask=always", out.lower())
 
     def test_exec_tool_ask_on_miss_requires_approval_for_allowlist_miss(self) -> None:
-        os.environ["OPENHERON_EXEC_SECURITY"] = "allowlist"
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "python"
-        os.environ["OPENHERON_EXEC_ASK"] = "on-miss"
+        os.environ["OPENPIPIXIA_EXEC_SECURITY"] = "allowlist"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = "python"
+        os.environ["OPENPIPIXIA_EXEC_ASK"] = "on-miss"
         out = exec_command("echo hello")
         self.assertIn("approval required", out.lower())
         self.assertIn("ask=on-miss", out.lower())
 
     def test_exec_tool_ask_on_miss_allows_allowlist_hit(self) -> None:
-        os.environ["OPENHERON_EXEC_SECURITY"] = "allowlist"
-        os.environ["OPENHERON_EXEC_ALLOWLIST"] = "echo"
-        os.environ["OPENHERON_EXEC_ASK"] = "on-miss"
+        os.environ["OPENPIPIXIA_EXEC_SECURITY"] = "allowlist"
+        os.environ["OPENPIPIXIA_EXEC_ALLOWLIST"] = "echo"
+        os.environ["OPENPIPIXIA_EXEC_ASK"] = "on-miss"
         out = exec_command("echo hello")
         self.assertIn("hello", out.lower())
 
     def test_exec_tool_is_disabled_when_allow_exec_is_off(self) -> None:
-        os.environ["OPENHERON_ALLOW_EXEC"] = "0"
+        os.environ["OPENPIPIXIA_ALLOW_EXEC"] = "0"
         out = exec_command("echo hello")
         self.assertIn("disabled by security policy", out.lower())
 
     def test_file_tools_respect_workspace_restriction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
-            os.environ["OPENHERON_RESTRICT_TO_WORKSPACE"] = "1"
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_RESTRICT_TO_WORKSPACE"] = "1"
             out = write_file("../outside.txt", "nope")
             self.assertIn("outside workspace", out.lower())
 
     def test_exec_tool_chain_path_guard_blocks_outside_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
-            os.environ["OPENHERON_RESTRICT_TO_WORKSPACE"] = "1"
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_RESTRICT_TO_WORKSPACE"] = "1"
             out = exec_command("echo ok;../outside.sh")
             self.assertIn("outside workspace", out.lower())
 
     def test_message_tool_writes_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             response = message("hi", channel="local", chat_id="u1")
             self.assertIn("Message recorded", response)
             outbox = Path(tmp) / "messages" / "outbox.log"
@@ -526,7 +526,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_message_tool_uses_route_context_when_target_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             with route_context("telegram", "u2"):
                 response = message("hi-context", channel=None, chat_id=None)
             self.assertIn("Message recorded", response)
@@ -537,7 +537,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_message_image_tool_writes_image_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             image_path = Path(tmp) / "tmp" / "demo.png"
             image_path.parent.mkdir(parents=True, exist_ok=True)
             image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -554,7 +554,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_message_file_tool_writes_file_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             file_path = Path(tmp) / "tmp" / "report.txt"
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text("done", encoding="utf-8")
@@ -572,17 +572,17 @@ class ToolsTests(unittest.TestCase):
 
     def test_message_file_tool_rejects_missing_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             response = message_file("tmp/missing.txt", channel="feishu", chat_id="oc_2")
             self.assertIn("Error: File not found", response)
 
     def test_cron_tool_add_list_remove(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             with route_context("telegram", "u2"):
                 create = cron(action="add", message="remind me", every_seconds=30)
             self.assertIn("Created job", create)
-            store_path = Path(tmp) / ".openheron" / "cron_jobs.json"
+            store_path = Path(tmp) / ".openpipixia" / "cron_jobs.json"
             self.assertTrue(store_path.exists())
             payload = json.loads(store_path.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("version"), 2)
@@ -628,7 +628,7 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("example.org", navigated["url"])
 
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = tmp
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = tmp
             shot_path = Path(tmp) / "shots" / "shot.png"
             screenshot = json.loads(
                 browser(
@@ -646,7 +646,7 @@ class ToolsTests(unittest.TestCase):
             self.assertEqual(Path(screenshot["path"]).resolve(), shot_path.resolve())
             self.assertTrue(shot_path.exists())
 
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = tmp
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = tmp
             pdf_path = Path(tmp) / "pdfs" / "shot.pdf"
             pdf = json.loads(
                 browser(
@@ -660,7 +660,7 @@ class ToolsTests(unittest.TestCase):
             self.assertTrue(pdf_path.exists())
 
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = tmp
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = tmp
             console_path = Path(tmp) / "console" / "tool.json"
             console = json.loads(
                 browser(
@@ -679,7 +679,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_browser_tool_blocks_pdf_outside_artifact_root(self) -> None:
         with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as outside_tmp:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = root_tmp
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = root_tmp
             json.loads(browser(action="start"))
             opened = json.loads(browser(action="open", target_url="https://example.com"))
             target_id = opened["targetId"]
@@ -696,7 +696,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_browser_tool_blocks_screenshot_outside_artifact_root(self) -> None:
         with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as outside_tmp:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = root_tmp
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = root_tmp
             json.loads(browser(action="start"))
             opened = json.loads(browser(action="open", target_url="https://example.com"))
             target_id = opened["targetId"]
@@ -713,7 +713,7 @@ class ToolsTests(unittest.TestCase):
 
     def test_browser_tool_blocks_console_export_outside_artifact_root(self) -> None:
         with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as outside_tmp:
-            os.environ["OPENHERON_BROWSER_ARTIFACT_ROOT"] = root_tmp
+            os.environ["OPENPIPIXIA_BROWSER_ARTIFACT_ROOT"] = root_tmp
             json.loads(browser(action="start"))
             opened = json.loads(browser(action="open", target_url="https://example.com"))
             target_id = opened["targetId"]
@@ -732,7 +732,7 @@ class ToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             upload_file = Path(tmp) / "upload.txt"
             upload_file.write_text("demo", encoding="utf-8")
-            os.environ["OPENHERON_BROWSER_UPLOAD_ROOT"] = tmp
+            os.environ["OPENPIPIXIA_BROWSER_UPLOAD_ROOT"] = tmp
             uploaded = json.loads(
                 browser(
                     action="upload",
@@ -897,7 +897,7 @@ class ToolsTests(unittest.TestCase):
 
         reasons: list[str] = []
         configure_heartbeat_waker(reasons.append)
-        with patch("openheron.tooling.registry.get_browser_control_service", return_value=_DummyService()):
+        with patch("openpipixia.tooling.registry.get_browser_control_service", return_value=_DummyService()):
             payload = json.loads(browser(action="upload", paths=["tmp/a.txt"]))
         self.assertTrue(payload["ok"])
         self.assertIn("hook:upload", reasons)
@@ -909,7 +909,7 @@ class ToolsTests(unittest.TestCase):
 
         reasons: list[str] = []
         configure_heartbeat_waker(reasons.append)
-        with patch("openheron.tooling.registry.get_browser_control_service", return_value=_DummyService()):
+        with patch("openpipixia.tooling.registry.get_browser_control_service", return_value=_DummyService()):
             payload = json.loads(browser(action="dialog", accept=True))
         self.assertTrue(payload["ok"])
         self.assertIn("hook:dialog", reasons)
@@ -918,7 +918,7 @@ class ToolsTests(unittest.TestCase):
         profiles = json.loads(browser(action="profiles"))
         self.assertTrue(profiles["profiles"])
         names = {entry["name"] for entry in profiles["profiles"]}
-        self.assertIn("openheron", names)
+        self.assertIn("openpipixia", names)
         self.assertIn("chrome", names)
 
         json.loads(browser(action="start"))
@@ -935,10 +935,10 @@ class ToolsTests(unittest.TestCase):
                     {
                         "profiles": [
                             {
-                                "name": "openheron",
+                                "name": "openpipixia",
                                 "attachMode": "launch-or-cdp",
                                 "ownershipModel": {"browser": "owned"},
-                                "requires": {"OPENHERON_BROWSER_CDP_URL": False},
+                                "requires": {"OPENPIPIXIA_BROWSER_CDP_URL": False},
                                 "capability": {
                                     "backend": "playwright",
                                     "attachMode": "launch-or-cdp",
@@ -949,7 +949,7 @@ class ToolsTests(unittest.TestCase):
                     },
                 )
 
-        with patch("openheron.tooling.registry.get_browser_control_service", return_value=_FakeBrowserService()):
+        with patch("openpipixia.tooling.registry.get_browser_control_service", return_value=_FakeBrowserService()):
             payload = json.loads(browser(action="profiles"))
         self.assertEqual(payload["profiles"][0]["attach_mode"], "launch-or-cdp")
         self.assertIn("ownership_model", payload["profiles"][0])
@@ -964,8 +964,8 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("not implemented", unsupported["error"])
 
     def test_browser_tool_auto_includes_browser_service_tokens(self) -> None:
-        os.environ["OPENHERON_BROWSER_CONTROL_TOKEN"] = "token-3"
-        os.environ["OPENHERON_BROWSER_MUTATION_TOKEN"] = "mut-3"
+        os.environ["OPENPIPIXIA_BROWSER_CONTROL_TOKEN"] = "token-3"
+        os.environ["OPENPIPIXIA_BROWSER_MUTATION_TOKEN"] = "mut-3"
         configure_browser_runtime(None)
 
         started = json.loads(browser(action="start"))
@@ -999,18 +999,18 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_TOKEN"] = "node-token"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_TOKEN"] = "node-token"
 
         captured: dict[str, str] = {}
 
         def _fake_urlopen(req, timeout=20):
             captured["url"] = req.full_url
-            captured["token"] = req.headers.get("X-openheron-browser-proxy-token", "")
+            captured["token"] = req.headers.get("X-openpipixia-browser-proxy-token", "")
             captured["timeout"] = str(timeout)
             return _DummyResponse('{"ok": true, "via": "node-proxy"}')
 
-        with patch("openheron.tooling.registry.urlopen", side_effect=_fake_urlopen):
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=_fake_urlopen):
             payload = json.loads(browser(action="status", target="node", node="node-1", timeout_ms=3500))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["via"], "node-proxy")
@@ -1034,17 +1034,17 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = "http://sandbox-proxy.local:9797"
-        os.environ["OPENHERON_BROWSER_PROXY_TOKEN"] = "shared-token"
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = "http://sandbox-proxy.local:9797"
+        os.environ["OPENPIPIXIA_BROWSER_PROXY_TOKEN"] = "shared-token"
 
         captured: dict[str, str] = {}
 
         def _fake_urlopen(req, timeout=20):
             captured["url"] = req.full_url
-            captured["token"] = req.headers.get("X-openheron-browser-proxy-token", "")
+            captured["token"] = req.headers.get("X-openpipixia-browser-proxy-token", "")
             return _DummyResponse('{"ok": true, "via": "sandbox-proxy"}')
 
-        with patch("openheron.tooling.registry.urlopen", side_effect=_fake_urlopen):
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=_fake_urlopen):
             payload = json.loads(browser(action="status", target="sandbox"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["via"], "sandbox-proxy")
@@ -1052,11 +1052,11 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(captured["token"], "shared-token")
 
     def test_browser_tool_blocks_unsupported_action_by_proxy_capability(self) -> None:
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "snapshot"]}}
         )
-        with patch("openheron.tooling.registry.urlopen") as mocked_urlopen:
+        with patch("openpipixia.tooling.registry.urlopen") as mocked_urlopen:
             payload = json.loads(browser(action="pdf", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 501)
@@ -1066,8 +1066,8 @@ class ToolsTests(unittest.TestCase):
         mocked_urlopen.assert_not_called()
 
     def test_browser_tool_unsupported_action_includes_capability_warnings(self) -> None:
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {
                 "capability": {
                     "supportedActions": ["status"],
@@ -1075,7 +1075,7 @@ class ToolsTests(unittest.TestCase):
                 }
             }
         )
-        with patch("openheron.tooling.registry.urlopen") as mocked_urlopen:
+        with patch("openpipixia.tooling.registry.urlopen") as mocked_urlopen:
             payload = json.loads(browser(action="pdf", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 501)
@@ -1097,11 +1097,11 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"supportedActions": ["status", "snapshot"]}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')) as mocked_urlopen:
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')) as mocked_urlopen:
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         mocked_urlopen.assert_called_once()
@@ -1120,11 +1120,11 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"backend": "node-proxy", "attachMode": "remote", "supportedActions": ["status"]}}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["target"], "node")
@@ -1145,12 +1145,12 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"backend": "node-proxy", "supportedActions": ["status"]}}
         )
         with patch(
-            "openheron.tooling.registry.urlopen",
+            "openpipixia.tooling.registry.urlopen",
             return_value=_DummyResponse('{"ok":true,"capability":{"backend":"proxy-inline","attachMode":"inline"}}'),
         ):
             payload = json.loads(browser(action="status", target="node"))
@@ -1172,8 +1172,8 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["target"], "node")
@@ -1195,9 +1195,9 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = '{"capability":'
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = '{"capability":'
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertIn("capabilityWarnings", payload)
@@ -1218,11 +1218,11 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"backend": "node-proxy", "supportedActions": ["status"], "errorCodes": "bad-shape"}}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertIn("capabilityWarnings", payload)
@@ -1243,9 +1243,9 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = '{"capability":'
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = '{"capability":'
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="profiles", target="node"))
         self.assertTrue(payload["ok"])
         self.assertIn("capabilityWarnings", payload)
@@ -1266,11 +1266,11 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "snapshot", "tabs"]}}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["supportedActions"], ["status", "tabs", "snapshot"])
@@ -1290,8 +1290,8 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {
                 "capability": {
                     "supportedActions": [
@@ -1307,7 +1307,7 @@ class ToolsTests(unittest.TestCase):
                 }
             }
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(
@@ -1330,12 +1330,12 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "2"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs", "snapshot"]}}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["recommendedActions"], ["status", "profiles"])
@@ -1354,12 +1354,12 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "bad-value"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_LIMIT"] = "bad-value"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "tabs", "snapshot", "open", "pdf"]}}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["recommendedActions"], ["status", "profiles", "tabs", "snapshot", "open"])
@@ -1378,14 +1378,14 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = json.dumps(
             ["pdf", "snapshot", "status"]
         )
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "snapshot", "pdf"]}}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["supportedActions"], ["pdf", "snapshot", "status", "profiles"])
@@ -1406,12 +1406,12 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = '{"bad":"shape"}'
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_RECOMMENDED_ACTIONS_ORDER_JSON"] = '{"bad":"shape"}'
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"supportedActions": ["status", "profiles", "snapshot"]}}
         )
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="status", target="node"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["supportedActions"], ["status", "profiles", "snapshot"])
@@ -1430,8 +1430,8 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = "http://sandbox-proxy.local:9797"
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = "http://sandbox-proxy.local:9797"
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
             payload = json.loads(browser(action="profiles", target="sandbox"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["target"], "sandbox")
@@ -1456,10 +1456,10 @@ class ToolsTests(unittest.TestCase):
             def dispatch(self, _request):
                 return BrowserDispatchResponse(
                     status=409,
-                    body={"ok": False, "error": "profile mismatch: active profile is openheron"},
+                    body={"ok": False, "error": "profile mismatch: active profile is openpipixia"},
                 )
 
-        with patch("openheron.tooling.registry.get_browser_control_service", return_value=_DummyService()):
+        with patch("openpipixia.tooling.registry.get_browser_control_service", return_value=_DummyService()):
             payload = json.loads(browser(action="status"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 409)
@@ -1480,7 +1480,7 @@ class ToolsTests(unittest.TestCase):
                     },
                 )
 
-        with patch("openheron.tooling.registry.get_browser_control_service", return_value=_DummyService()):
+        with patch("openpipixia.tooling.registry.get_browser_control_service", return_value=_DummyService()):
             payload = json.loads(browser(action="status"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 503)
@@ -1497,8 +1497,8 @@ class ToolsTests(unittest.TestCase):
             def __exit__(self, exc_type, exc, tb) -> None:
                 return None
 
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        with patch("openheron.tooling.registry.urlopen", return_value=_DummyResponse()):
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_DummyResponse()):
             payload = json.loads(browser(action="status", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 502)
@@ -1506,7 +1506,7 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("invalid proxy response", payload["error"])
 
     def test_browser_tool_uses_structured_proxy_error_payload(self) -> None:
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
         http_error = HTTPError(
             url="http://proxy.local:8787/",
             code=502,
@@ -1514,7 +1514,7 @@ class ToolsTests(unittest.TestCase):
             hdrs=None,
             fp=BytesIO(b'{"error":"rate limited","status":429}'),
         )
-        with patch("openheron.tooling.registry.urlopen", side_effect=http_error):
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=http_error):
             payload = json.loads(browser(action="status", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 429)
@@ -1522,8 +1522,8 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(payload["errorCode"], "proxy_http_error")
 
     def test_browser_tool_maps_proxy_timeout_error(self) -> None:
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        with patch("openheron.tooling.registry.urlopen", side_effect=URLError(TimeoutError("timed out"))):
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=URLError(TimeoutError("timed out"))):
             payload = json.loads(browser(action="status", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 504)
@@ -1531,16 +1531,16 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("timeout", payload["error"])
 
     def test_browser_tool_maps_proxy_direct_timeout_error(self) -> None:
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        with patch("openheron.tooling.registry.urlopen", side_effect=TimeoutError("timed out")):
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=TimeoutError("timed out")):
             payload = json.loads(browser(action="status", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 504)
         self.assertEqual(payload["errorCode"], "proxy_timeout")
 
     def test_browser_tool_maps_proxy_connection_refused_error(self) -> None:
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        with patch("openheron.tooling.registry.urlopen", side_effect=URLError(ConnectionRefusedError("refused"))):
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=URLError(ConnectionRefusedError("refused"))):
             payload = json.loads(browser(action="status", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], 503)
@@ -1548,8 +1548,8 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("connection refused", payload["error"])
 
     def test_browser_tool_proxy_http_error_includes_target_capability(self) -> None:
-        os.environ["OPENHERON_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
-        os.environ["OPENHERON_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+        os.environ["OPENPIPIXIA_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+        os.environ["OPENPIPIXIA_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
             {"capability": {"backend": "node-proxy", "supportedActions": ["status"]}}
         )
         http_error = HTTPError(
@@ -1559,15 +1559,15 @@ class ToolsTests(unittest.TestCase):
             hdrs=None,
             fp=BytesIO(b'{"error":"failed","status":502}'),
         )
-        with patch("openheron.tooling.registry.urlopen", side_effect=http_error):
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=http_error):
             payload = json.loads(browser(action="status", target="node"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["target"], "node")
         self.assertEqual(payload["capability"]["backend"], "node-proxy")
 
     def test_browser_tool_proxy_url_error_includes_default_target_capability(self) -> None:
-        os.environ["OPENHERON_BROWSER_SANDBOX_PROXY_URL"] = "http://sandbox-proxy.local:9797"
-        with patch("openheron.tooling.registry.urlopen", side_effect=URLError(TimeoutError("timed out"))):
+        os.environ["OPENPIPIXIA_BROWSER_SANDBOX_PROXY_URL"] = "http://sandbox-proxy.local:9797"
+        with patch("openpipixia.tooling.registry.urlopen", side_effect=URLError(TimeoutError("timed out"))):
             payload = json.loads(browser(action="status", target="sandbox"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["target"], "sandbox")
@@ -1581,7 +1581,7 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("blocked by policy", blocked["error"])
 
     def test_browser_tool_allows_private_navigation_when_disabled(self) -> None:
-        os.environ["OPENHERON_BROWSER_BLOCK_PRIVATE_NETWORKS"] = "0"
+        os.environ["OPENPIPIXIA_BROWSER_BLOCK_PRIVATE_NETWORKS"] = "0"
         configure_browser_runtime(None)
         json.loads(browser(action="start"))
         opened = json.loads(browser(action="open", target_url="http://127.0.0.1:9222"))
@@ -1591,7 +1591,7 @@ class ToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root_tmp, tempfile.TemporaryDirectory() as outside_tmp:
             outside_file = Path(outside_tmp) / "upload.txt"
             outside_file.write_text("demo", encoding="utf-8")
-            os.environ["OPENHERON_BROWSER_UPLOAD_ROOT"] = root_tmp
+            os.environ["OPENPIPIXIA_BROWSER_UPLOAD_ROOT"] = root_tmp
             configure_browser_runtime(None)
             json.loads(browser(action="start"))
             json.loads(browser(action="open", target_url="https://example.com"))
@@ -1604,21 +1604,21 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("error", payload)
 
     def test_web_tools_respect_security_network_flag(self) -> None:
-        os.environ["OPENHERON_ALLOW_NETWORK"] = "0"
+        os.environ["OPENPIPIXIA_ALLOW_NETWORK"] = "0"
         search_out = web_search("adk")
         fetch_payload = json.loads(web_fetch("https://example.com"))
         self.assertIn("disabled by security policy", search_out.lower())
         self.assertIn("disabled by security policy", fetch_payload["error"].lower())
 
     def test_web_search_respects_disabled_flag(self) -> None:
-        os.environ["OPENHERON_WEB_ENABLED"] = "0"
+        os.environ["OPENPIPIXIA_WEB_ENABLED"] = "0"
         out = web_search("adk")
         self.assertIn("disabled", out.lower())
 
     def test_web_search_respects_provider_config(self) -> None:
-        os.environ["OPENHERON_WEB_ENABLED"] = "1"
-        os.environ["OPENHERON_WEB_SEARCH_ENABLED"] = "1"
-        os.environ["OPENHERON_WEB_SEARCH_PROVIDER"] = "dummy"
+        os.environ["OPENPIPIXIA_WEB_ENABLED"] = "1"
+        os.environ["OPENPIPIXIA_WEB_SEARCH_ENABLED"] = "1"
+        os.environ["OPENPIPIXIA_WEB_SEARCH_PROVIDER"] = "dummy"
         out = web_search("adk")
         self.assertIn("not supported", out.lower())
 
@@ -1669,12 +1669,12 @@ class ToolsTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            os.environ["OPENHERON_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
             with route_context("feishu", "oc_123"):
                 out = spawn_subagent(prompt="summarize logs", tool_context=ctx)
 
             self.assertEqual(out.get("status"), "pending")
-            log_path = Path(tmp) / ".openheron" / "subagents.log"
+            log_path = Path(tmp) / ".openpipixia" / "subagents.log"
             self.assertTrue(log_path.exists())
             record = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
             self.assertEqual(record["status"], "pending")

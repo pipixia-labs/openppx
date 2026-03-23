@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 import unittest.mock
 
-from openheron.gui.executor import CapturedScreen, GroundingExecutor, PyAutoGuiRuntime, execute_gui_action
+from openpipixia.gui.executor import CapturedScreen, GroundingExecutor, PyAutoGuiRuntime, execute_gui_action
 
 
 class _FakeRuntime:
@@ -34,7 +34,7 @@ class GuiExecutorTests(unittest.TestCase):
         with unittest.mock.patch("google.adk.models.lite_llm.LiteLlm") as mocked_litellm:
             with unittest.mock.patch("google.adk.agents.LlmAgent") as mocked_agent:
                 with unittest.mock.patch(
-                    "openheron.runtime.runner_factory.create_runner",
+                    "openpipixia.runtime.runner_factory.create_runner",
                     return_value=(object(), None),
                 ):
                     GroundingExecutor._build_adk_grounding_runner(
@@ -52,7 +52,7 @@ class GuiExecutorTests(unittest.TestCase):
             mocked_litellm.return_value = object()
             with unittest.mock.patch("google.adk.agents.LlmAgent"):
                 with unittest.mock.patch(
-                    "openheron.runtime.runner_factory.create_runner",
+                    "openpipixia.runtime.runner_factory.create_runner",
                     return_value=(object(), None),
                 ):
                     GroundingExecutor._build_adk_grounding_runner(
@@ -139,7 +139,7 @@ class GuiExecutorTests(unittest.TestCase):
             max_wait_seconds=0.1,
         )
 
-        with unittest.mock.patch("openheron.gui.executor.time.sleep") as mocked_sleep:
+        with unittest.mock.patch("openpipixia.gui.executor.time.sleep") as mocked_sleep:
             runtime.perform({"action": "wait", "time": 8})
         mocked_sleep.assert_called_once_with(0.1)
 
@@ -259,12 +259,12 @@ class GuiExecutorTests(unittest.TestCase):
             def run(self, action: str, *, dry_run: bool = False) -> dict[str, object]:
                 return {"ok": True, "action": action, "dry_run": dry_run}
 
-        with unittest.mock.patch("openheron.gui.executor.GroundingExecutor", _FakeExecutor):
+        with unittest.mock.patch("openpipixia.gui.executor.GroundingExecutor", _FakeExecutor):
             with unittest.mock.patch.dict(
                 "os.environ",
                 {
-                    "OPENHERON_GUI_MODEL": "test-model",
-                    "OPENHERON_GUI_GROUNDING_PROVIDER": "openai",
+                    "OPENPIPIXIA_GUI_MODEL": "test-model",
+                    "OPENPIPIXIA_GUI_GROUNDING_PROVIDER": "openai",
                     "OPENAI_API_KEY": "test-key",
                 },
                 clear=False,
