@@ -34,6 +34,20 @@ class BaseChannel(ABC):
     async def send(self, msg: OutboundMessage) -> None:
         """Send outbound message to channel."""
 
+    async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
+        """Best-effort streaming delta delivery for channels without native support."""
+        meta = metadata or {}
+        if meta.get("_stream_end"):
+            return
+        await self.send(
+            OutboundMessage(
+                channel=self.name,
+                chat_id=chat_id,
+                content=delta,
+                metadata=meta,
+            )
+        )
+
     async def publish_inbound(
         self,
         *,

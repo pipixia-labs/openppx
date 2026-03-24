@@ -85,6 +85,25 @@ class LocalChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"channel": "local"', lines[0])
         self.assertIn('"content": "hello"', lines[0])
 
+    async def test_send_delta_renders_stream_snapshots(self) -> None:
+        lines: list[str] = []
+        channel = LocalChannel(bus=MessageBus(), writer=lines.append)
+
+        await channel.send_delta("terminal", "hel")
+        await channel.send_delta("terminal", "lo")
+        await channel.send_delta("terminal", "", {"_stream_end": True})
+
+        self.assertEqual(lines, ["[stream] hel", "[stream] hello"])
+
+    async def test_ingest_text_requests_streaming(self) -> None:
+        bus = MessageBus()
+        channel = LocalChannel(bus=bus, writer=lambda _line: None)
+
+        await channel.ingest_text("hello", chat_id="terminal", sender_id="u1")
+
+        inbound = await bus.consume_inbound()
+        self.assertTrue(inbound.metadata.get("_wants_stream"))
+
 
 if __name__ == "__main__":
     unittest.main()

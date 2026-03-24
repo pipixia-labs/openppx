@@ -387,6 +387,7 @@ class Gateway:
         channel: str,
         chat_id: str,
         default_when_empty: str | None = "(no response)",
+        emit_stream: bool = False,
         **run_kwargs: Any,
     ) -> str:
         """Run one ADK stream and merge emitted text parts into final output."""
@@ -394,7 +395,28 @@ class Gateway:
         with route_context(channel, chat_id):
             async for event in runner.run_async(**run_kwargs):
                 text = extract_text(getattr(event, "content", None))
-                final = merge_text_stream(final, text)
+                merged = merge_text_stream(final, text)
+                if emit_stream and merged and merged != final:
+                    delta = merged[len(final):] if final and merged.startswith(final) else merged
+                    if delta:
+                        await self.bus.publish_outbound(
+                            OutboundMessage(
+                                channel=channel,
+                                chat_id=chat_id,
+                                content=delta,
+                                metadata={"_stream_delta": True},
+                            )
+                        )
+                final = merged
+        if emit_stream:
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content="",
+                    metadata={"_stream_end": True},
+                )
+            )
         if final:
             return final
         if default_when_empty is None:
@@ -495,6 +517,7 @@ class Gateway:
             runner=self.runner,
             channel=msg.channel,
             chat_id=msg.chat_id,
+            emit_stream=bool((msg.metadata or {}).get("_wants_stream")),
             user_id=msg.sender_id,
             session_id=active_session_id,
             new_message=request,
@@ -503,7 +526,10 @@ class Gateway:
             channel=msg.channel,
             chat_id=msg.chat_id,
             content=final,
-            metadata=msg.metadata,
+            metadata={
+                **(msg.metadata or {}),
+                **({"_streamed": True} if (msg.metadata or {}).get("_wants_stream") else {}),
+            },
         )
 
     def _dispatch_subagent_request(self, request: SubagentSpawnRequest) -> asyncio.Task[None] | None:

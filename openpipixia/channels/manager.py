@@ -49,7 +49,13 @@ class ChannelManager:
                 logger.warning("Dropping outbound message: unknown channel '%s'", msg.channel)
                 continue
             try:
-                await channel.send(msg)
+                metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+                if metadata.get("_stream_delta") or metadata.get("_stream_end"):
+                    await channel.send_delta(msg.chat_id, msg.content, metadata)
+                elif metadata.get("_streamed"):
+                    continue
+                else:
+                    await channel.send(msg)
             except Exception:
                 logger.exception(
                     "Failed sending outbound message via channel=%s chat_id=%s",

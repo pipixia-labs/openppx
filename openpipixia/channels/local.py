@@ -19,6 +19,7 @@ class LocalChannel(BaseChannel):
     def __init__(self, bus: MessageBus, writer: Callable[[str], None] | None = None):
         super().__init__(bus)
         self._writer = writer or print
+        self._stream_buffers: dict[str, str] = {}
 
     async def start(self) -> None:
         self._running = True
@@ -44,8 +45,16 @@ class LocalChannel(BaseChannel):
             }
             self._writer(json.dumps(payload, ensure_ascii=False))
             return
-        if delta:
-            self._writer(delta)
+        meta = metadata or {}
+        if meta.get("_stream_end"):
+            self._stream_buffers.pop(chat_id, None)
+            return
+        if not delta:
+            return
+        current = self._stream_buffers.get(chat_id, "")
+        current += delta
+        self._stream_buffers[chat_id] = current
+        self._writer(f"[stream] {current}")
 
     async def ingest_text(
         self,
@@ -54,7 +63,12 @@ class LocalChannel(BaseChannel):
         chat_id: str = "terminal",
         sender_id: str = "local-user",
     ) -> None:
-        await self.publish_inbound(sender_id=sender_id, chat_id=chat_id, content=text)
+        await self.publish_inbound(
+            sender_id=sender_id,
+            chat_id=chat_id,
+            content=text,
+            metadata={"_wants_stream": True},
+        )
 
 
 def _local_json_output_enabled() -> bool:

@@ -103,6 +103,49 @@ class GatewayTests(unittest.TestCase):
 
         self.assertEqual(outbound.content, "hello world")
 
+    def test_process_message_streams_deltas_when_requested(self) -> None:
+        fake_event_1 = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="hello")])
+        )
+        fake_event_2 = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="hello world")])
+        )
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                yield fake_event_1
+                yield fake_event_2
+
+        async def _run() -> tuple[OutboundMessage, list[OutboundMessage]]:
+            bus = MessageBus()
+            fake_agent = pytypes.SimpleNamespace(name="openpipixia")
+            with patch("openpipixia.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+                gateway = Gateway(agent=fake_agent, app_name="openpipixia", bus=bus)
+                inbound = InboundMessage(
+                    channel="local",
+                    sender_id="u1",
+                    chat_id="c1",
+                    content="hello",
+                    metadata={"_wants_stream": True},
+                )
+                outbound = await gateway.process_message(inbound)
+                streamed = [
+                    await asyncio.wait_for(bus.consume_outbound(), timeout=0.2),
+                    await asyncio.wait_for(bus.consume_outbound(), timeout=0.2),
+                    await asyncio.wait_for(bus.consume_outbound(), timeout=0.2),
+                ]
+                return outbound, streamed
+
+        outbound, streamed = asyncio.run(_run())
+
+        self.assertEqual(outbound.content, "hello world")
+        self.assertTrue(outbound.metadata.get("_streamed"))
+        self.assertEqual(streamed[0].metadata.get("_stream_delta"), True)
+        self.assertEqual(streamed[0].content, "hello")
+        self.assertEqual(streamed[1].metadata.get("_stream_delta"), True)
+        self.assertEqual(streamed[1].content, " world")
+        self.assertEqual(streamed[2].metadata.get("_stream_end"), True)
+
     def test_process_message_help_command_skips_runner(self) -> None:
         fake_event = pytypes.SimpleNamespace(
             content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="unused")])
