@@ -278,6 +278,12 @@ Give openpipixia its own email account. It polls **IMAP** for incoming mail and 
 
 Uses the Weixin HTTP long-poll API and QR-code login flow.
 
+**0. Install optional dependency**
+
+```bash
+pip install -e .[weixin]
+```
+
 **1. Log in**
 
 ```bash
@@ -306,6 +312,7 @@ This prints a QR code or login URL in the terminal. After you confirm the login 
 > - `allowFrom`: Leave empty to allow all contacts, or add specific sender IDs from the logs.
 > - `token`: Optional. Usually you should leave this empty and use `ppx channels login weixin`.
 > - `stateDir`: Optional. Leave empty to use the default runtime state directory.
+> - Supports text plus basic image/file receive and send. Outbound image/file delivery is used automatically when tools queue `content_type=image/file`.
 
 **3. Run**
 

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
+import time
 import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -32,6 +35,12 @@ MESSAGE_STATE_FINISH = 2
 BASE_INFO: dict[str, str] = {"channel_version": "1.0.2"}
 ERRCODE_SESSION_EXPIRED = -14
 DEFAULT_LONG_POLL_TIMEOUT_S = 35
+WEIXIN_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
+UPLOAD_MEDIA_IMAGE = 1
+UPLOAD_MEDIA_VIDEO = 2
+UPLOAD_MEDIA_FILE = 3
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".ico", ".svg"}
+_VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
 
 
 class WeixinChannel(BaseChannel):
@@ -121,20 +130,29 @@ class WeixinChannel(BaseChannel):
                 self._client = None
 
     async def send(self, msg: OutboundMessage) -> None:
-        """Send a text reply to the Weixin user."""
+        """Send a text, image, or file reply to the Weixin user."""
         if not self._client or not self._token:
             logger.warning("Skip Weixin send: client is not ready.")
             return
 
         content = (msg.content or "").strip()
-        if not content:
-            return
-
         context_token = self._context_tokens.get(msg.chat_id, "")
         if not context_token:
             logger.warning("Skip Weixin send: missing context token for chat_id=%s.", msg.chat_id)
             return
-        await self._send_text(msg.chat_id, content, context_token)
+        metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+        content_type = str(metadata.get("content_type", "")).strip().lower()
+        if content_type == "image":
+            image_path = str(metadata.get("image_path", "")).strip()
+            if image_path:
+                await self._send_media_file(msg.chat_id, image_path, context_token)
+        elif content_type == "file":
+            file_path = str(metadata.get("file_path", "")).strip()
+            if file_path:
+                await self._send_media_file(msg.chat_id, file_path, context_token)
+
+        if content:
+            await self._send_text(msg.chat_id, content, context_token)
 
     def _get_state_dir(self) -> Path:
         if self.state_dir:
@@ -145,6 +163,11 @@ class WeixinChannel(BaseChannel):
         path = self._get_state_dir()
         path.mkdir(parents=True, exist_ok=True)
         return path / "account.json"
+
+    def _media_dir(self) -> Path:
+        path = self._get_state_dir() / "media"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _clear_state(self) -> None:
         self._token = ""
@@ -346,6 +369,7 @@ class WeixinChannel(BaseChannel):
             self._context_tokens[sender_id] = context_token
 
         content_parts: list[str] = []
+        media_paths: list[str] = []
         item_list = msg.get("item_list", [])
         if isinstance(item_list, list):
             for item in item_list:
@@ -359,11 +383,26 @@ class WeixinChannel(BaseChannel):
                         if text:
                             content_parts.append(text)
                 elif item_type == ITEM_IMAGE:
-                    content_parts.append("[image]")
+                    image_item = item.get("image_item", {})
+                    local_path = await self._download_media_item(image_item, "image")
+                    if local_path:
+                        content_parts.append(f"[image]\n[Image: source: {local_path}]")
+                        media_paths.append(local_path)
+                    else:
+                        content_parts.append("[image]")
                 elif item_type == ITEM_VOICE:
-                    content_parts.append("[voice]")
+                    voice_item = item.get("voice_item", {})
+                    voice_text = str(voice_item.get("text", "")).strip() if isinstance(voice_item, dict) else ""
+                    content_parts.append(f"[voice] {voice_text}".strip() if voice_text else "[voice]")
                 elif item_type == ITEM_FILE:
-                    content_parts.append("[file]")
+                    file_item = item.get("file_item", {})
+                    file_name = str(file_item.get("file_name", "attachment.bin")).strip() if isinstance(file_item, dict) else "attachment.bin"
+                    local_path = await self._download_media_item(file_item, "file", filename=file_name)
+                    if local_path:
+                        content_parts.append(f"[file: {Path(local_path).name}]\n[File: source: {local_path}]")
+                        media_paths.append(local_path)
+                    else:
+                        content_parts.append(f"[file: {file_name}]")
                 elif item_type == ITEM_VIDEO:
                     content_parts.append("[video]")
 
@@ -375,6 +414,7 @@ class WeixinChannel(BaseChannel):
             sender_id=sender_id,
             chat_id=sender_id,
             content=content,
+            media=media_paths if media_paths else None,
             metadata={"message_id": msg_id},
         )
 
@@ -396,3 +436,203 @@ class WeixinChannel(BaseChannel):
         errcode = response.get("errcode", 0)
         if errcode not in (None, 0):
             logger.warning("Weixin send error: code=%s message=%s", errcode, response.get("errmsg", ""))
+
+    async def _download_media_item(
+        self,
+        typed_item: dict[str, Any],
+        media_type: str,
+        *,
+        filename: str | None = None,
+    ) -> str | None:
+        """Download and decrypt one inbound Weixin media item."""
+        media = typed_item.get("media", {}) if isinstance(typed_item, dict) else {}
+        if not isinstance(media, dict):
+            return None
+        encrypt_query_param = str(media.get("encrypt_query_param", "")).strip()
+        if not encrypt_query_param or self._client is None:
+            return None
+
+        raw_aeskey_hex = str(typed_item.get("aeskey", "")).strip() if isinstance(typed_item, dict) else ""
+        media_aes_key_b64 = str(media.get("aes_key", "")).strip()
+        aes_key_b64 = ""
+        if raw_aeskey_hex:
+            aes_key_b64 = base64.b64encode(bytes.fromhex(raw_aeskey_hex)).decode("utf-8")
+        elif media_aes_key_b64:
+            aes_key_b64 = media_aes_key_b64
+
+        response = await self._client.get(
+            f"{WEIXIN_CDN_BASE_URL}/download?encrypted_query_param={quote(encrypt_query_param)}"
+        )
+        response.raise_for_status()
+        data = response.content
+        if aes_key_b64 and data:
+            data = _decrypt_aes_ecb(data, aes_key_b64)
+        if not data:
+            return None
+
+        if not filename:
+            filename = f"{media_type}_{int(time.time())}_{abs(hash(encrypt_query_param)) % 100000}{_ext_for_type(media_type)}"
+        target = self._media_dir() / os.path.basename(filename)
+        target.write_bytes(data)
+        return str(target)
+
+    async def _send_media_file(self, to_user_id: str, media_path: str, context_token: str) -> None:
+        """Upload one local file to Weixin CDN and send it as media."""
+        path = Path(media_path).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Weixin media not found: {media_path}")
+
+        raw_data = path.read_bytes()
+        raw_size = len(raw_data)
+        raw_md5 = hashlib.md5(raw_data).hexdigest()
+        ext = path.suffix.lower()
+        if ext in _IMAGE_EXTS:
+            upload_type = UPLOAD_MEDIA_IMAGE
+            item_type = ITEM_IMAGE
+            item_key = "image_item"
+        elif ext in _VIDEO_EXTS:
+            upload_type = UPLOAD_MEDIA_VIDEO
+            item_type = ITEM_VIDEO
+            item_key = "video_item"
+        else:
+            upload_type = UPLOAD_MEDIA_FILE
+            item_type = ITEM_FILE
+            item_key = "file_item"
+
+        aes_key_raw = os.urandom(16)
+        aes_key_hex = aes_key_raw.hex()
+        padded_size = ((raw_size + 1 + 15) // 16) * 16
+        file_key = os.urandom(16).hex()
+
+        upload_resp = await self._api_post(
+            "ilink/bot/getuploadurl",
+            {
+                "filekey": file_key,
+                "media_type": upload_type,
+                "to_user_id": to_user_id,
+                "rawsize": raw_size,
+                "rawfilemd5": raw_md5,
+                "filesize": padded_size,
+                "no_need_thumb": True,
+                "aeskey": aes_key_hex,
+            },
+        )
+        upload_param = str(upload_resp.get("upload_param", "")).strip()
+        if not upload_param:
+            raise RuntimeError(f"Weixin getuploadurl returned no upload_param: {upload_resp}")
+
+        aes_key_b64 = base64.b64encode(aes_key_raw).decode("utf-8")
+        encrypted_data = _encrypt_aes_ecb(raw_data, aes_key_b64)
+        cdn_upload_url = (
+            f"{WEIXIN_CDN_BASE_URL}/upload"
+            f"?encrypted_query_param={quote(upload_param)}"
+            f"&filekey={quote(file_key)}"
+        )
+        assert self._client is not None
+        cdn_resp = await self._client.post(
+            cdn_upload_url,
+            content=encrypted_data,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+        cdn_resp.raise_for_status()
+        download_param = str(cdn_resp.headers.get("x-encrypted-param", "")).strip()
+        if not download_param:
+            raise RuntimeError("Weixin CDN upload response missing x-encrypted-param header")
+
+        cdn_aes_key_b64 = base64.b64encode(aes_key_hex.encode("utf-8")).decode("utf-8")
+        media_item: dict[str, Any] = {
+            "media": {
+                "encrypt_query_param": download_param,
+                "aes_key": cdn_aes_key_b64,
+                "encrypt_type": 1,
+            },
+        }
+        if item_type == ITEM_IMAGE:
+            media_item["mid_size"] = padded_size
+        elif item_type == ITEM_VIDEO:
+            media_item["video_size"] = padded_size
+        else:
+            media_item["file_name"] = path.name
+            media_item["len"] = str(raw_size)
+
+        body = {
+            "msg": {
+                "from_user_id": "",
+                "to_user_id": to_user_id,
+                "client_id": f"openpipixia-{uuid.uuid4().hex[:12]}",
+                "message_type": MESSAGE_TYPE_BOT,
+                "message_state": MESSAGE_STATE_FINISH,
+                "item_list": [{"type": item_type, item_key: media_item}],
+                "context_token": context_token,
+            },
+            "base_info": BASE_INFO,
+        }
+        response = await self._api_post("ilink/bot/sendmessage", body)
+        errcode = response.get("errcode", 0)
+        if errcode not in (None, 0):
+            raise RuntimeError(f"Weixin send media error: code={errcode} message={response.get('errmsg', '')}")
+
+
+def _parse_aes_key(aes_key_b64: str) -> bytes:
+    """Decode Weixin AES keys from either raw bytes or hex-string bytes."""
+    decoded = base64.b64decode(aes_key_b64)
+    if len(decoded) == 16:
+        return decoded
+    if len(decoded) == 32 and all(chr(ch) in "0123456789abcdefABCDEF" for ch in decoded):
+        return bytes.fromhex(decoded.decode("ascii"))
+    raise ValueError(f"Unsupported Weixin AES key length: {len(decoded)}")
+
+
+def _encrypt_aes_ecb(data: bytes, aes_key_b64: str) -> bytes:
+    """Encrypt media for Weixin CDN upload with AES-128-ECB + PKCS7."""
+    key = _parse_aes_key(aes_key_b64)
+    pad_len = 16 - len(data) % 16
+    padded = data + bytes([pad_len] * pad_len)
+    try:
+        from Crypto.Cipher import AES
+
+        cipher = AES.new(key, AES.MODE_ECB)
+        return cipher.encrypt(padded)
+    except ImportError:
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+            cipher = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
+            return cipher.update(padded) + cipher.finalize()
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise RuntimeError("Weixin media upload requires `pycryptodome` or `cryptography`.") from exc
+
+
+def _decrypt_aes_ecb(data: bytes, aes_key_b64: str) -> bytes:
+    """Decrypt inbound Weixin media bytes."""
+    key = _parse_aes_key(aes_key_b64)
+    try:
+        from Crypto.Cipher import AES
+
+        cipher = AES.new(key, AES.MODE_ECB)
+        decrypted = cipher.decrypt(data)
+    except ImportError:
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+            decryptor = Cipher(algorithms.AES(key), modes.ECB()).decryptor()
+            decrypted = decryptor.update(data) + decryptor.finalize()
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            raise RuntimeError("Weixin media download requires `pycryptodome` or `cryptography`.") from exc
+
+    if not decrypted:
+        return decrypted
+    pad_len = decrypted[-1]
+    if 0 < pad_len <= 16 and decrypted.endswith(bytes([pad_len]) * pad_len):
+        return decrypted[:-pad_len]
+    return decrypted
+
+
+def _ext_for_type(media_type: str) -> str:
+    """Return a default extension for downloaded Weixin media."""
+    return {
+        "image": ".jpg",
+        "voice": ".mp3",
+        "file": ".bin",
+        "video": ".mp4",
+    }.get(media_type, ".bin")

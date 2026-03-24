@@ -20,6 +20,10 @@ dependencies = [
 wecom = [
     "wecom-aibot-sdk-python>=0.1.5",
 ]
+weixin = [
+    "qrcode[pil]>=8.0",
+    "pycryptodome>=3.20.0",
+]
 
 [project.scripts]
 ppx = "openpipixia.app.cli:main"

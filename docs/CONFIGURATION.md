@@ -29,6 +29,41 @@
 
 Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true”。
 
+### Channel 配置示例
+
+下面是一段可直接合并到 agent `config.json` 的示例：
+
+```json
+{
+  "channels": {
+    "local": {
+      "enabled": true
+    },
+    "weixin": {
+      "enabled": true,
+      "baseUrl": "https://ilinkai.weixin.qq.com",
+      "token": "",
+      "stateDir": "",
+      "pollTimeoutSeconds": 35,
+      "allowFrom": []
+    },
+    "wecom": {
+      "enabled": false,
+      "botId": "",
+      "secret": "",
+      "allowFrom": [],
+      "welcomeMessage": ""
+    }
+  }
+}
+```
+
+说明：
+- `weixin.token` 一般留空，先执行 `ppx channels login weixin`
+- `weixin.stateDir` 留空时会使用默认运行时目录
+- `wecom` 需要先安装 `pip install -e .[wecom]`
+- `weixin` 若要稳定使用二维码登录和媒体收发，建议安装 `pip install -e .[weixin]`
+
 ## `runtime.json`（高级）关键字段
 
 - `env`（可选）：通用环境变量覆盖映射，支持任意运行时 env 配置项

@@ -113,6 +113,12 @@ WeCom optional dependency:
 pip install -e .[wecom]
 ```
 
+Weixin optional dependency for QR/media support:
+
+```bash
+pip install -e .[weixin]
+```
+
 ## 🖥️ Computer Use
 
 `openpipixia` includes desktop GUI tools.
