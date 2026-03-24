@@ -68,7 +68,14 @@ class GuiTaskRunnerTests(unittest.TestCase):
 
         def _fake_action_executor(*, action: str, dry_run: bool = False) -> dict:
             actions.append(action)
-            return {"ok": True, "screen_changed": True, "retries_used": 0}
+            return {
+                "ok": True,
+                "screen_changed": True,
+                "retries_used": 0,
+                "raw_model_output": '{"action":"left_click","coordinate":[500,500]}',
+                "tool_call": {"action": "left_click", "coordinate": [500, 500]},
+                "screenshots": {"before_path": "/tmp/before.png", "after_path": "/tmp/after.png"},
+            }
 
         runner = GuiTaskRunner(
             planner_model="test-planner",
@@ -95,6 +102,9 @@ class GuiTaskRunnerTests(unittest.TestCase):
         self.assertEqual(len(result["steps"]), 1)
         self.assertEqual(result["steps"][0]["type"], "execute")
         self.assertEqual(result["steps"][0]["action"], "click login button")
+        self.assertEqual(result["steps"][0]["planner_raw_model_output"], planned[0])
+        self.assertEqual(result["steps"][0]["executor_raw_model_output"], '{"action":"left_click","coordinate":[500,500]}')
+        self.assertEqual(result["steps"][0]["screenshots"]["before_path"], "/tmp/before.png")
         self.assertEqual(actions, ["click login button"])
 
     def test_task_runner_supports_save_info_and_modify_plan(self) -> None:

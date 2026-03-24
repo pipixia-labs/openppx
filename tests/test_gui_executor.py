@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 import unittest.mock
+from pathlib import Path
 
 from openpipixia.gui.executor import CapturedScreen, GroundingExecutor, PyAutoGuiRuntime, execute_gui_action
 
@@ -30,6 +31,46 @@ class _FakeRuntime:
 
 
 class GuiExecutorTests(unittest.TestCase):
+    def test_runtime_capture_falls_back_to_image_grab_when_pyautogui_unavailable(self) -> None:
+        class _FakeShot:
+            width = 1920
+            height = 1080
+
+            def save(self, path):
+                Path(path).write_bytes(b"fake-png")
+
+        class _FakeImageGrab:
+            @staticmethod
+            def grab():
+                return _FakeShot()
+
+        with unittest.mock.patch("openpipixia.gui.executor._load_pyautogui", return_value=None):
+            with unittest.mock.patch("openpipixia.gui.executor._load_image_grab", return_value=_FakeImageGrab()):
+                runtime = PyAutoGuiRuntime()
+                captured = runtime.capture()
+        self.assertEqual(captured.width, 1920)
+        self.assertEqual(captured.height, 1080)
+        self.assertTrue(captured.base64_png)
+
+    def test_runtime_perform_lazy_loads_pyautogui(self) -> None:
+        class _FakeAutoGui:
+            class _Size:
+                width = 1920
+                height = 1080
+
+            def size(self):
+                return self._Size()
+
+            def click(self, x, y):
+                self.clicked = (x, y)
+
+        fake_pyautogui = _FakeAutoGui()
+        with unittest.mock.patch("openpipixia.gui.executor._load_pyautogui", return_value=fake_pyautogui):
+            runtime = PyAutoGuiRuntime(pyperclip_module=object())
+            runtime.perform({"action": "left_click", "coordinate": [10, 10]})
+
+        self.assertEqual(fake_pyautogui.clicked, (19.2, 10.8))
+
     def test_build_runner_uses_native_google_model_without_litellm(self) -> None:
         with unittest.mock.patch("google.adk.models.lite_llm.LiteLlm") as mocked_litellm:
             with unittest.mock.patch("google.adk.agents.LlmAgent") as mocked_agent:

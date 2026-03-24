@@ -21,6 +21,8 @@ class GuiPromptTests(unittest.TestCase):
         planner_prompt = load_planner_system_prompt()
 
         self.assertIn("desktop action grounding model", executor_prompt)
+        self.assertIn('"action":"..."', executor_prompt)
+        self.assertNotIn('"name":"computer_use"', executor_prompt)
         self.assertIn("GUI task planner", planner_prompt)
 
     def test_env_override_prompt_path(self) -> None:

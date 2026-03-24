@@ -299,6 +299,7 @@ class GuiTaskRunner:
                 action = parsed.get("action")
                 if not isinstance(action, dict):
                     raise ValueError("missing action object")
+                parsed.setdefault("raw_model_output", raw)
                 _debug(
                     "gui.task_runner.parse_success",
                     {
@@ -417,6 +418,7 @@ class GuiTaskRunner:
                         "step": step,
                         "type": "save_info",
                         "thinking": planned.get("thinking", ""),
+                        "planner_raw_model_output": planned.get("raw_model_output"),
                         "action": f"save_info:{key}",
                         "ok": True,
                         "screen_changed": None,
@@ -442,6 +444,7 @@ class GuiTaskRunner:
                         "step": step,
                         "type": "modify_plan",
                         "thinking": planned.get("thinking", ""),
+                        "planner_raw_model_output": planned.get("raw_model_output"),
                         "action": "modify_plan",
                         "ok": True,
                         "screen_changed": None,
@@ -475,11 +478,15 @@ class GuiTaskRunner:
                 "step": step,
                 "type": "execute",
                 "thinking": planned.get("thinking", ""),
+                "planner_raw_model_output": planned.get("raw_model_output"),
                 "action": action_text,
                 "ok": bool(result.get("ok", False)),
                 "screen_changed": result.get("screen_changed"),
                 "retries_used": result.get("retries_used"),
                 "error": result.get("error"),
+                "executor_raw_model_output": result.get("raw_model_output"),
+                "executor_tool_call": result.get("tool_call"),
+                "screenshots": result.get("screenshots"),
             }
             history.append(step_record)
             _debug(

@@ -146,7 +146,7 @@ class PyAutoGuiRuntime:
         pyautogui_module: Any | None = None,
         pyperclip_module: Any | None = None,
     ) -> None:
-        self._pyautogui = pyautogui_module or _load_pyautogui()
+        self._pyautogui = pyautogui_module
         self._pyperclip = pyperclip_module or _load_pyperclip()
         self._image_grab = _load_image_grab()
         self._allow_dangerous_keys = bool(allow_dangerous_keys)
@@ -158,13 +158,24 @@ class PyAutoGuiRuntime:
         )
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
 
+    def _ensure_pyautogui(self) -> Any:
+        """Load pyautogui only when action execution actually needs it."""
+        if self._pyautogui is None:
+            self._pyautogui = _load_pyautogui()
+        return self._pyautogui
+
     def capture(self) -> CapturedScreen:
         """Capture a screenshot and encode to base64 PNG."""
-        if self._pyautogui is not None:
-            shot = self._pyautogui.screenshot()
-        elif self._image_grab is not None:
+        pyautogui = self._ensure_pyautogui()
+        shot = None
+        if pyautogui is not None:
+            try:
+                shot = pyautogui.screenshot()
+            except Exception:
+                shot = None
+        if shot is None and self._image_grab is not None:
             shot = self._image_grab.grab()
-        else:  # pragma: no cover - runtime dependent
+        if shot is None:  # pragma: no cover - runtime dependent
             raise RuntimeError(
                 "No screenshot backend available. Install pyautogui or Pillow ImageGrab support."
             )
@@ -209,13 +220,14 @@ class PyAutoGuiRuntime:
 
     def perform(self, arguments: dict[str, Any]) -> None:
         """Execute one GUI action."""
-        if self._pyautogui is None:  # pragma: no cover - runtime dependent
+        pyautogui = self._ensure_pyautogui()
+        if pyautogui is None:  # pragma: no cover - runtime dependent
             raise RuntimeError(
                 "pyautogui is required for non-dry-run GUI actions. Install pyautogui to execute actions."
             )
         action = str(arguments.get("action", "")).strip().lower()
         self._validate_action_policy(action)
-        screen = self._pyautogui.size()
+        screen = pyautogui.size()
         width = int(getattr(screen, "width", 0) or 0)
         height = int(getattr(screen, "height", 0) or 0)
         x, y = self._to_absolute_coordinate(arguments, width, height)
@@ -224,44 +236,44 @@ class PyAutoGuiRuntime:
             keys = [str(k) for k in (arguments.get("keys") or [])]
             self._validate_key_action(keys)
             if len(keys) == 1:
-                self._pyautogui.press(keys[0])
+                pyautogui.press(keys[0])
                 return
             for key in keys[:-1]:
-                self._pyautogui.keyDown(key)
+                pyautogui.keyDown(key)
             if keys:
-                self._pyautogui.press(keys[-1])
+                pyautogui.press(keys[-1])
             for key in reversed(keys[:-1]):
-                self._pyautogui.keyUp(key)
+                pyautogui.keyUp(key)
             return
 
         if action == "type":
             text = str(arguments.get("text", ""))
             self._pyperclip.copy(text)
-            self._pyautogui.hotkey("command" if os.name != "nt" else "ctrl", "v")
+            pyautogui.hotkey("command" if os.name != "nt" else "ctrl", "v")
             return
 
         if action == "mouse_move":
-            self._pyautogui.moveTo(x, y)
+            pyautogui.moveTo(x, y)
             return
 
         if action == "left_click":
-            self._pyautogui.click(x, y)
+            pyautogui.click(x, y)
             return
 
         if action == "double_click":
-            self._pyautogui.doubleClick(x, y)
+            pyautogui.doubleClick(x, y)
             return
 
         if action == "right_click":
-            self._pyautogui.rightClick(x, y)
+            pyautogui.rightClick(x, y)
             return
 
         if action == "left_click_drag":
-            self._pyautogui.dragTo(x, y, duration=0.5)
+            pyautogui.dragTo(x, y, duration=0.5)
             return
 
         if action == "scroll":
-            self._pyautogui.scroll(int(arguments.get("pixels", -500)))
+            pyautogui.scroll(int(arguments.get("pixels", -500)))
             return
 
         if action == "wait":
