@@ -23,6 +23,8 @@ from ..runtime.heartbeat_utils import DEFAULT_HEARTBEAT_PROMPT, HEARTBEAT_TOKEN,
 from ..runtime.heartbeat_runner import HeartbeatRunRequest, HeartbeatRunner
 from ..runtime.message_time import append_execution_time, inject_request_time
 from ..runtime.runner_factory import create_runner
+from ..runtime.step_events import build_step_metadata
+from ..runtime.step_events import configure_step_event_publisher
 from ..runtime.subagent_agent import build_restricted_subagent
 from ..runtime.tool_context import route_context
 from ..core.security import load_security_policy
@@ -243,6 +245,7 @@ class Gateway:
 
     async def _run_heartbeat(self, req: HeartbeatRunRequest) -> None:
         """Execute one heartbeat turn through the shared ADK runner."""
+        heartbeat_step_id = f"heartbeat:{req.reason}"
         try:
             should_invoke, skip_kind = self._heartbeat_task_gate(req.prompt)
             if not should_invoke:
@@ -284,7 +287,21 @@ class Gateway:
                             channel=target_channel,
                             chat_id=target_chat_id,
                             content=HEARTBEAT_TOKEN,
-                            metadata={"system": "heartbeat", "reason": req.reason},
+                            metadata={
+                                **build_step_metadata(
+                                    step_phase="finished",
+                                    step_title="Heartbeat OK",
+                                    step_kind="runtime",
+                                    step_id=heartbeat_step_id,
+                                    session_id="heartbeat:main",
+                                    tool_name="heartbeat",
+                                    done=True,
+                                    content=HEARTBEAT_TOKEN,
+                                ),
+                                "_feedback_origin": "runtime",
+                                "system": "heartbeat",
+                                "reason": req.reason,
+                            },
                         )
                     )
                     self._last_heartbeat_delivery = {
@@ -328,7 +345,21 @@ class Gateway:
                     channel=target_channel,
                     chat_id=target_chat_id,
                     content=content,
-                    metadata={"system": "heartbeat", "reason": req.reason},
+                    metadata={
+                        **build_step_metadata(
+                            step_phase="finished",
+                            step_title="Heartbeat alert",
+                            step_kind="runtime",
+                            step_id=heartbeat_step_id,
+                            session_id="heartbeat:main",
+                            tool_name="heartbeat",
+                            done=True,
+                            content=content,
+                        ),
+                        "_feedback_origin": "runtime",
+                        "system": "heartbeat",
+                        "reason": req.reason,
+                    },
                 )
             )
             self._last_heartbeat_delivery = {
@@ -431,6 +462,28 @@ class Gateway:
         """Execute a scheduled cron job through the shared ADK runner."""
         target_channel = job.payload.channel or "local"
         target_chat_id = job.payload.to or "default"
+        cron_step_id = f"cron:{job.id}"
+        await self.bus.publish_outbound(
+            OutboundMessage(
+                channel=target_channel,
+                chat_id=target_chat_id,
+                content=f"Cron job `{job.name}` started.",
+                metadata={
+                    **build_step_metadata(
+                        step_phase="started",
+                        step_title=f"Cron: {job.name}",
+                        step_kind="runtime",
+                        step_id=cron_step_id,
+                        task_id=job.id,
+                        session_id=f"cron:{job.id}",
+                        tool_name="cron",
+                        done=False,
+                        content=f"Cron job `{job.name}` started.",
+                    ),
+                    "_feedback_origin": "runtime",
+                },
+            )
+        )
         prompt = append_execution_time(job.payload.message)
         request = types.UserContent(parts=[types.Part.from_text(text=prompt)])
         final = await self._run_text_stream(
@@ -447,8 +500,44 @@ class Gateway:
                     channel=target_channel,
                     chat_id=target_chat_id,
                     content=final,
+                    metadata={
+                        **build_step_metadata(
+                            event_class="step_output",
+                            step_phase="finished",
+                            step_title=f"Cron result: {job.name}",
+                            step_kind="runtime",
+                            step_id=cron_step_id,
+                            task_id=job.id,
+                            session_id=f"cron:{job.id}",
+                            tool_name="cron",
+                            done=True,
+                            content=final,
+                        ),
+                        "_feedback_origin": "runtime",
+                    },
                 )
             )
+        await self.bus.publish_outbound(
+            OutboundMessage(
+                channel=target_channel,
+                chat_id=target_chat_id,
+                content=f"Cron job `{job.name}` finished.",
+                metadata={
+                    **build_step_metadata(
+                        step_phase="finished",
+                        step_title=f"Cron: {job.name}",
+                        step_kind="runtime",
+                        step_id=cron_step_id,
+                        task_id=job.id,
+                        session_id=f"cron:{job.id}",
+                        tool_name="cron",
+                        done=True,
+                        content=f"Cron job `{job.name}` finished.",
+                    ),
+                    "_feedback_origin": "runtime",
+                },
+            )
+        )
         if self._heartbeat_runner is not None:
             self._heartbeat_runner.request_wake(reason=f"cron:{job.id}", coalesce_ms=0)
         return final
@@ -459,6 +548,7 @@ class Gateway:
         # Tools call `message(...)` from inside runner execution; this bridges
         # those tool-level sends back into the outbound queue.
         configure_outbound_publisher(self.bus.publish_outbound)
+        configure_step_event_publisher(self.bus.publish_outbound)
         configure_subagent_dispatcher(self._dispatch_subagent_request)
         configure_heartbeat_waker(self._request_heartbeat_wake)
         if self._cron_service is None:
@@ -482,6 +572,7 @@ class Gateway:
             self._cron_service.stop()
         configure_heartbeat_waker(None)
         configure_subagent_dispatcher(None)
+        configure_step_event_publisher(None)
         configure_outbound_publisher(None)
         await self._stop_subagent_tasks()
         await _cancel_task(self._inbound_task)
@@ -561,6 +652,28 @@ class Gateway:
     async def _run_subagent_request(self, request: SubagentSpawnRequest) -> None:
         """Execute a sub-agent task, resume parent invocation, then notify target."""
         async with self._subagent_semaphore:
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=request.channel,
+                    chat_id=request.chat_id,
+                    content="Sub-agent execution started.",
+                    metadata={
+                        **build_step_metadata(
+                            step_phase="running",
+                            step_title="Sub-agent running",
+                            step_kind="subagent",
+                            invocation_id=request.invocation_id,
+                            function_call_id=request.function_call_id,
+                            step_id=request.task_id,
+                            task_id=request.task_id,
+                            tool_name="spawn_subagent",
+                            done=False,
+                            content="Sub-agent execution started.",
+                        ),
+                        "_feedback_origin": "runtime",
+                    },
+                )
+            )
             response_payload: dict[str, Any]
             try:
                 subagent_result = await self._execute_subagent_prompt(request)
@@ -643,6 +756,7 @@ class Gateway:
         response_payload: dict[str, Any],
     ) -> None:
         """Publish one completion notification for a background sub-agent task."""
+        completed = response_payload.get("status") == "completed"
         if resume_text:
             content = resume_text
         elif response_payload.get("status") == "completed":
@@ -655,22 +769,56 @@ class Gateway:
                 f"Sub-agent task failed (id: {request.task_id}). "
                 f"{response_payload.get('error', 'unknown error')}"
             )
+        base_metadata = {
+            **build_step_metadata(
+                step_phase="finished" if completed else "failed",
+                step_title="Sub-agent completed" if completed else "Sub-agent failed",
+                step_kind="subagent",
+                invocation_id=request.invocation_id,
+                function_call_id=request.function_call_id,
+                step_id=request.task_id,
+                task_id=request.task_id,
+                tool_name="spawn_subagent",
+                done=True,
+                important=not completed,
+                content=content,
+            ),
+            "_feedback_origin": "runtime",
+        }
         await self.bus.publish_outbound(
             OutboundMessage(
                 channel=request.channel,
                 chat_id=request.chat_id,
                 content=content,
-                metadata={
-                    "_feedback_type": "status",
-                    "_feedback_origin": "runtime",
-                    "_feedback_status": str(response_payload.get("status", "completed")),
-                    "_tool_name": "spawn_subagent",
-                    "_task_id": request.task_id,
-                    "_done": True,
-                    "_important": response_payload.get("status") != "completed",
-                },
+                metadata=base_metadata,
             )
         )
+        if completed:
+            result_text = str(response_payload.get("result", "") or "").strip()
+            if result_text:
+                await self.bus.publish_outbound(
+                    OutboundMessage(
+                        channel=request.channel,
+                        chat_id=request.chat_id,
+                        content=result_text,
+                        metadata={
+                            **build_step_metadata(
+                                event_class="step_output",
+                                step_phase="finished",
+                                step_title="Sub-agent result",
+                                step_kind="subagent",
+                                invocation_id=request.invocation_id,
+                                function_call_id=request.function_call_id,
+                                step_id=request.task_id,
+                                task_id=request.task_id,
+                                tool_name="spawn_subagent",
+                                done=True,
+                                content=result_text,
+                            ),
+                            "_feedback_origin": "runtime",
+                        },
+                    )
+                )
 
     async def _consume_inbound(self) -> None:
         while True:

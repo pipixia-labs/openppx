@@ -10,6 +10,7 @@ from openpipixia.runtime.runner_factory import (
     _build_events_compaction_config,
     create_runner,
 )
+from openpipixia.runtime.step_events import OpenPpxStepEventPlugin
 
 
 class RunnerFactoryTests(unittest.TestCase):
@@ -77,6 +78,9 @@ class RunnerFactoryTests(unittest.TestCase):
         self.assertIs(kwargs["memory_service"], sentinel_memory)
         self.assertIs(kwargs["session_service"], sentinel_session_service)
         self.assertIs(kwargs["app"], sentinel_app)
+        app_kwargs = mocked_app.call_args.kwargs
+        self.assertEqual(len(app_kwargs["plugins"]), 1)
+        self.assertIsInstance(app_kwargs["plugins"][0], OpenPpxStepEventPlugin)
 
 
 if __name__ == "__main__":

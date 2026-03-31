@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..runtime.step_events import classify_outbound_message
 from .base import BaseChannel
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,220 @@ def _suffix_from_content_type(content_type: str, default_suffix: str) -> str:
     return mapping.get(normalized, default_suffix)
 
 
+def _strip_markdown_formatting(text: str) -> str:
+    value = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    value = re.sub(r"__(.+?)__", r"\1", value)
+    value = re.sub(r"~~(.+?)~~", r"\1", value)
+    value = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", value)
+    return value
+
+
+def _parse_md_table(table_text: str) -> dict[str, Any] | None:
+    lines = [line.strip() for line in table_text.strip().splitlines() if line.strip()]
+    if len(lines) < 3:
+        return None
+
+    def split(line: str) -> list[str]:
+        return [_strip_markdown_formatting(cell.strip()) for cell in line.strip("|").split("|")]
+
+    headers = split(lines[0])
+    rows = [split(line) for line in lines[2:]]
+    columns = [
+        {"tag": "column", "name": f"c{index}", "display_name": header, "width": "auto"}
+        for index, header in enumerate(headers)
+    ]
+    table_rows = [{f"c{i}": row[i] if i < len(row) else "" for i in range(len(headers))} for row in rows]
+    return {
+        "tag": "table",
+        "page_size": len(table_rows) + 1,
+        "columns": columns,
+        "rows": table_rows,
+    }
+
+
+_TABLE_RE = re.compile(
+    r"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)",
+    re.MULTILINE,
+)
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+_CODE_BLOCK_RE = re.compile(r"(```[\s\S]*?```)", re.MULTILINE)
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\)]+)\)")
+_COMPLEX_MD_RE = re.compile(r"```|^\|.+\|.*\n\s*\|[-:\s|]+\||^#{1,6}\s+|^[\s]*[-*+]\s+|^[\s]*\d+\.\s+", re.MULTILINE)
+_SIMPLE_MD_RE = re.compile(r"\*\*.+?\*\*|__.+?__|(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|~~.+?~~", re.DOTALL)
+
+
+def _split_headings(content: str) -> list[dict[str, Any]]:
+    protected = content
+    code_blocks: list[str] = []
+    for match in _CODE_BLOCK_RE.finditer(content):
+        code_blocks.append(match.group(1))
+        protected = protected.replace(match.group(1), f"\x00CODE{len(code_blocks)-1}\x00", 1)
+
+    elements: list[dict[str, Any]] = []
+    last_end = 0
+    for match in _HEADING_RE.finditer(protected):
+        before = protected[last_end:match.start()].strip()
+        if before:
+            elements.append({"tag": "markdown", "content": before})
+        text = _strip_markdown_formatting(match.group(2).strip())
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**{text}**"}})
+        last_end = match.end()
+    remaining = protected[last_end:].strip()
+    if remaining:
+        elements.append({"tag": "markdown", "content": remaining})
+
+    for index, code_block in enumerate(code_blocks):
+        marker = f"\x00CODE{index}\x00"
+        for element in elements:
+            if element.get("tag") == "markdown":
+                element["content"] = str(element.get("content", "")).replace(marker, code_block)
+    return elements or [{"tag": "markdown", "content": content}]
+
+
+def _build_card_elements(content: str) -> list[dict[str, Any]]:
+    elements: list[dict[str, Any]] = []
+    last_end = 0
+    for match in _TABLE_RE.finditer(content):
+        before = content[last_end:match.start()]
+        if before.strip():
+            elements.extend(_split_headings(before))
+        elements.append(_parse_md_table(match.group(1)) or {"tag": "markdown", "content": match.group(1)})
+        last_end = match.end()
+    remaining = content[last_end:]
+    if remaining.strip():
+        elements.extend(_split_headings(remaining))
+    return elements or [{"tag": "markdown", "content": content}]
+
+
+def _split_elements_by_table_limit(elements: list[dict[str, Any]], max_tables: int = 1) -> list[list[dict[str, Any]]]:
+    """Split card elements into groups with at most ``max_tables`` tables."""
+
+    if not elements:
+        return [[]]
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    table_count = 0
+    for element in elements:
+        if element.get("tag") == "table":
+            if table_count >= max_tables:
+                if current:
+                    groups.append(current)
+                current = []
+                table_count = 0
+            current.append(element)
+            table_count += 1
+        else:
+            current.append(element)
+    if current:
+        groups.append(current)
+    return groups or [[]]
+
+
+def _detect_msg_format(content: str) -> str:
+    stripped = content.strip()
+    if not stripped:
+        return "text"
+    if _COMPLEX_MD_RE.search(stripped) or _SIMPLE_MD_RE.search(stripped):
+        return "interactive"
+    if len(stripped) > 2000:
+        return "interactive"
+    if _MD_LINK_RE.search(stripped):
+        return "post"
+    if len(stripped) <= 200:
+        return "text"
+    return "post"
+
+
+def _markdown_to_post(content: str) -> str:
+    paragraphs: list[list[dict[str, Any]]] = []
+    for line in content.strip().splitlines() or [""]:
+        elements: list[dict[str, Any]] = []
+        last_end = 0
+        for match in _MD_LINK_RE.finditer(line):
+            before = line[last_end:match.start()]
+            if before:
+                elements.append({"tag": "text", "text": before})
+            elements.append({"tag": "a", "text": match.group(1), "href": match.group(2)})
+            last_end = match.end()
+        remaining = line[last_end:]
+        if remaining:
+            elements.append({"tag": "text", "text": remaining})
+        if not elements:
+            elements.append({"tag": "text", "text": ""})
+        paragraphs.append(elements)
+    return json.dumps({"zh_cn": {"content": paragraphs}}, ensure_ascii=False)
+
+
+def _render_step_markdown(content: str, metadata: dict[str, Any]) -> str:
+    phase = str(metadata.get("_step_phase", "")).strip() or "update"
+    title = str(metadata.get("_step_title", "")).strip() or str(metadata.get("_tool_name", "")).strip() or "Step"
+    body = (content or "").strip()
+    markers = {
+        "started": "[started]",
+        "running": "[running]",
+        "waiting": "[waiting]",
+        "finished": "[finished]",
+        "failed": "[failed]",
+        "cancelled": "[cancelled]",
+        "queued": "[queued]",
+    }
+    prefix = markers.get(phase, "[update]")
+    lines = [f"{prefix} **{title}**", f"Status: `{phase}`"]
+    if body:
+        lines.append(body)
+    return "\n".join(lines)
+
+
+def _build_step_card(content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Build one interactive Feishu card for a structured step event."""
+
+    step_title = str(metadata.get("_step_title", "")).strip() or str(metadata.get("_tool_name", "")).strip() or "Step"
+    step_phase = str(metadata.get("_step_phase", "")).strip() or "update"
+    step_kind = str(metadata.get("_step_kind", "")).strip() or "system"
+    task_id = str(metadata.get("_task_id", "")).strip()
+    step_id = str(metadata.get("_step_id", "")).strip()
+    event_class = str(metadata.get("_event_class", "")).strip() or "step_update"
+
+    template = {
+        "finished": "green",
+        "failed": "red",
+        "cancelled": "red",
+        "running": "blue",
+        "started": "blue",
+        "waiting": "orange",
+        "queued": "wathet",
+    }.get(step_phase, "grey")
+
+    fields = [
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**Status**\n`{step_phase}`"}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**Kind**\n`{step_kind}`"}},
+    ]
+    if task_id:
+        fields.append({"is_short": False, "text": {"tag": "lark_md", "content": f"**Task**\n`{task_id}`"}})
+    elif step_id:
+        fields.append({"is_short": False, "text": {"tag": "lark_md", "content": f"**Step**\n`{step_id}`"}})
+
+    body = (content or "").strip()
+    body_tag = "markdown" if event_class == "step_output" or _detect_msg_format(body) != "text" else "div"
+    body_element: dict[str, Any]
+    if body_tag == "markdown":
+        body_element = {"tag": "markdown", "content": body or "_No details_"}
+    else:
+        body_element = {"tag": "div", "text": {"tag": "plain_text", "content": body or "No details"}}
+
+    return {
+        "config": {"wide_screen_mode": True, "enable_forward": True},
+        "header": {
+            "template": template,
+            "title": {"tag": "plain_text", "content": step_title},
+        },
+        "elements": [
+            {"tag": "div", "fields": fields},
+            body_element,
+        ],
+    }
+
+
 class FeishuChannel(BaseChannel):
     """Minimal Feishu adapter compatible with the bus/gateway flow."""
 
@@ -177,6 +392,7 @@ class FeishuChannel(BaseChannel):
         self._ws_client: Any = None
         self._ws_thread: threading.Thread | None = None
         self._stream_states: dict[str, dict[str, Any]] = {}
+        self._step_states: dict[tuple[str, str], dict[str, Any]] = {}
 
     @staticmethod
     def _stream_update_interval_seconds() -> float:
@@ -270,18 +486,106 @@ class FeishuChannel(BaseChannel):
         )
         return self._send_message_request_sync(request, request_type="text")
 
-    def _patch_text_sync(self, message_id: str, text: str) -> None:
-        """Patch one existing Feishu text message with refreshed content."""
+    def _send_post_sync(self, msg, content: str) -> str:
+        if not self._client:
+            return ""
+        receive_id_type = self._resolve_receive_id_type(msg.chat_id)
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(receive_id_type)
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(msg.chat_id)
+                .msg_type("post")
+                .content(_markdown_to_post(content))
+                .build()
+            )
+            .build()
+        )
+        return self._send_message_request_sync(request, request_type="post")
+
+    def _send_interactive_sync(self, msg, content: str) -> str:
+        if not self._client:
+            return ""
+        receive_id_type = self._resolve_receive_id_type(msg.chat_id)
+        element_groups = _split_elements_by_table_limit(_build_card_elements(content), max_tables=1)
+        message_ids: list[str] = []
+        for elements in element_groups:
+            card = {
+                "config": {"wide_screen_mode": True, "enable_forward": True},
+                "elements": elements,
+            }
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type(receive_id_type)
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(msg.chat_id)
+                    .msg_type("interactive")
+                    .content(json.dumps(card, ensure_ascii=False))
+                    .build()
+                )
+                .build()
+            )
+            message_ids.append(self._send_message_request_sync(request, request_type="interactive"))
+        return next((message_id for message_id in message_ids if message_id), "")
+
+    def _send_step_cards_sync(self, msg, content: str, metadata: dict[str, Any]) -> str:
+        """Send a structured step event as an interactive card."""
+
+        if not self._client:
+            return ""
+        step_id = str(metadata.get("_step_id", "")).strip()
+        state_key = (str(msg.chat_id), step_id) if step_id else None
+        card_payload = json.dumps(_build_step_card(content, metadata), ensure_ascii=False)
+        if state_key is not None:
+            existing = self._step_states.get(state_key)
+            if existing and str(existing.get("message_id", "")).strip():
+                self._patch_message_sync(
+                    str(existing["message_id"]),
+                    msg_type="interactive",
+                    content=card_payload,
+                )
+                if metadata.get("_done"):
+                    self._step_states.pop(state_key, None)
+                return str(existing["message_id"])
+        receive_id_type = self._resolve_receive_id_type(msg.chat_id)
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(receive_id_type)
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(msg.chat_id)
+                .msg_type("interactive")
+                .content(card_payload)
+                .build()
+            )
+            .build()
+        )
+        message_id = self._send_message_request_sync(request, request_type="interactive")
+        if state_key is not None and message_id and not metadata.get("_done"):
+            self._step_states[state_key] = {"message_id": message_id}
+        return message_id
+
+    def _send_rich_text_sync(self, msg, content: str, *, preferred_format: str | None = None) -> str:
+        format_name = preferred_format or _detect_msg_format(content)
+        if format_name == "interactive":
+            return self._send_interactive_sync(msg, content)
+        if format_name == "post":
+            return self._send_post_sync(msg, content)
+        return str(self._send_text_sync(msg, content) or "")
+
+    def _patch_message_sync(self, message_id: str, *, msg_type: str, content: str) -> None:
+        """Patch one existing Feishu message with refreshed content."""
         if not self._client:
             return
-        payload = json.dumps({"text": text}, ensure_ascii=False)
         if PatchMessageRequest is not None and PatchMessageRequestBody is not None:
             request = (
                 PatchMessageRequest.builder()
                 .message_id(message_id)
                 .request_body(
                     PatchMessageRequestBody.builder()
-                    .content(payload)
+                    .content(content)
                     .build()
                 )
                 .build()
@@ -293,8 +597,8 @@ class FeishuChannel(BaseChannel):
                 .message_id(message_id)
                 .request_body(
                     UpdateMessageRequestBody.builder()
-                    .msg_type("text")
-                    .content(payload)
+                    .msg_type(msg_type)
+                    .content(content)
                     .build()
                 )
                 .build()
@@ -310,6 +614,10 @@ class FeishuChannel(BaseChannel):
             log_id_fn = getattr(response, "get_log_id", None)
             log_id = log_id_fn() if callable(log_id_fn) else ""
             raise RuntimeError(f"Feishu patch message failed: code={code}, msg={message}, log_id={log_id}")
+
+    def _patch_text_sync(self, message_id: str, text: str) -> None:
+        payload = json.dumps({"text": text}, ensure_ascii=False)
+        self._patch_message_sync(message_id, msg_type="text", content=payload)
 
     def _send_message_request_sync(self, request, *, request_type: str) -> str:
         if not self._client:
@@ -442,7 +750,12 @@ class FeishuChannel(BaseChannel):
     def _send_sync(self, msg) -> None:
         if not self._client:
             return
-        metadata = msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {}
+        normalized = classify_outbound_message(
+            getattr(msg, "content", "") or "",
+            msg.metadata if isinstance(getattr(msg, "metadata", None), dict) else {},
+        )
+        metadata = normalized.metadata
+        msg.metadata = metadata
         content_type = str(metadata.get("content_type", "")).strip().lower()
         image_path = str(metadata.get("image_path", "")).strip() if content_type == "image" else ""
         file_path = str(metadata.get("file_path", "")).strip() if content_type == "file" else ""
@@ -494,7 +807,16 @@ class FeishuChannel(BaseChannel):
                     "message_ids": [fallback_id] if fallback_id else [],
                 }
             return
-        text_id = self._send_text_sync(msg)
+        content = msg.content or ""
+        if normalized.event_class in {"step_update", "step_output"}:
+            content = _render_step_markdown(content, metadata)
+            text_id = self._send_step_cards_sync(msg, content, metadata)
+        else:
+            detected_format = _detect_msg_format(content)
+            if detected_format == "text":
+                text_id = str(self._send_text_sync(msg) or "")
+            else:
+                text_id = self._send_rich_text_sync(msg, content, preferred_format=detected_format)
         metadata["delivery"] = {
             "status": "sent",
             "content_type": "text",

@@ -205,6 +205,11 @@ class ToolsTests(unittest.TestCase):
                 for record in records
                 if isinstance(record.get("metadata"), dict)
             }
+            step_phases = {
+                str(record.get("metadata", {}).get("_step_phase", ""))
+                for record in records
+                if isinstance(record.get("metadata"), dict)
+            }
             tool_names = {
                 str(record.get("metadata", {}).get("_tool_name", ""))
                 for record in records
@@ -212,6 +217,8 @@ class ToolsTests(unittest.TestCase):
             }
             self.assertIn("started", statuses)
             self.assertIn("running", statuses)
+            self.assertIn("started", step_phases)
+            self.assertIn("running", step_phases)
             self.assertIn("exec", tool_names)
 
     def test_exec_background_write_stdin(self) -> None:
@@ -258,6 +265,8 @@ class ToolsTests(unittest.TestCase):
             self.assertTrue(output_events)
             self.assertEqual(output_events[-1]["metadata"]["_tool_name"], "process")
             self.assertEqual(output_events[-1]["metadata"]["_session_id"], session_id)
+            self.assertEqual(output_events[-1]["metadata"]["_event_class"], "step_output")
+            self.assertEqual(output_events[-1]["metadata"]["_step_id"], session_id)
 
     def test_exec_background_send_keys(self) -> None:
         cmd = 'python -c "import sys;print(sys.stdin.readline().strip())"'
@@ -1756,6 +1765,9 @@ class ToolsTests(unittest.TestCase):
             self.assertEqual(feedback["metadata"]["_feedback_status"], "accepted")
             self.assertEqual(feedback["metadata"]["_tool_name"], "spawn_subagent")
             self.assertTrue(str(feedback["metadata"]["_task_id"]).startswith("subagent-"))
+            self.assertEqual(feedback["metadata"]["_event_class"], "step_update")
+            self.assertEqual(feedback["metadata"]["_step_kind"], "subagent")
+            self.assertEqual(feedback["metadata"]["_step_phase"], "queued")
 
 
 if __name__ == "__main__":

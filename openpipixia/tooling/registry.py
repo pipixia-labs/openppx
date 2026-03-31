@@ -38,6 +38,7 @@ from ..runtime.cron_helpers import cron_store_path, format_schedule
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.cron_service import CronService
 from ..runtime.process_sessions import get_process_session_manager
+from ..runtime.step_events import build_step_metadata, normalize_outbound_metadata
 from ..runtime.tool_context import get_route
 from ..core.security import PathGuard, SecurityPolicy, load_security_policy
 
@@ -741,6 +742,15 @@ def exec_command(
         done=False,
         important=True,
         extra_metadata={
+            **_tool_step_extra_metadata(
+                tool_name="exec",
+                step_title="Starting command",
+                step_phase="started",
+                step_id=f"exec:{cmd[:80]}",
+                done=False,
+                important=True,
+                content=f"Starting command: {cmd[:200]}",
+            ),
             "command": cmd,
             "background": bool(background),
             "pty": bool(pty),
@@ -772,6 +782,15 @@ def exec_command(
             done=True,
             important=completed.returncode != 0,
             extra_metadata={
+                **_tool_step_extra_metadata(
+                    tool_name="exec",
+                    step_title="Command finished",
+                    step_phase="finished" if completed.returncode == 0 else "failed",
+                    step_id=f"exec:{cmd[:80]}",
+                    done=True,
+                    important=completed.returncode != 0,
+                    content="Command finished.",
+                ),
                 "command": cmd,
                 "exit_code": completed.returncode,
             },
@@ -807,6 +826,16 @@ def exec_command(
             done=False,
             important=True,
             extra_metadata={
+                **_tool_step_extra_metadata(
+                    tool_name="exec",
+                    step_title="Background command started",
+                    step_phase="running",
+                    step_id=session.session_id,
+                    session_id=session.session_id,
+                    done=False,
+                    important=True,
+                    content=f"Command running in background (session {session.session_id}).",
+                ),
                 "command": cmd,
                 "pid": session.process.pid,
                 "scope": effective_scope,
@@ -841,6 +870,16 @@ def exec_command(
             done=True,
             important=int(polled.get("exit_code") or 0) != 0,
             extra_metadata={
+                **_tool_step_extra_metadata(
+                    tool_name="exec",
+                    step_title="Command finished",
+                    step_phase="finished" if int(polled.get("exit_code") or 0) == 0 else "failed",
+                    step_id=session.session_id,
+                    session_id=session.session_id,
+                    done=True,
+                    important=int(polled.get("exit_code") or 0) != 0,
+                    content="Command finished during initial wait window.",
+                ),
                 "command": cmd,
                 "exit_code": polled.get("exit_code"),
             },
@@ -861,6 +900,16 @@ def exec_command(
         done=False,
         important=True,
         extra_metadata={
+            **_tool_step_extra_metadata(
+                tool_name="exec",
+                step_title="Command still running",
+                step_phase="running",
+                step_id=session.session_id,
+                session_id=session.session_id,
+                done=False,
+                important=True,
+                content=f"Command still running (session {session.session_id}).",
+            ),
             "command": cmd,
             "pid": session.process.pid,
             "scope": effective_scope,
@@ -973,7 +1022,20 @@ def process_session(
                 step_title="Process finished",
                 done=True,
                 important=status != "exited" or int(payload.get("exit_code") or 0) != 0,
-                extra_metadata=poll_meta,
+                extra_metadata={
+                    **_tool_step_extra_metadata(
+                        tool_name="process",
+                        step_title="Process finished",
+                        step_phase="finished" if status == "exited" and int(payload.get("exit_code") or 0) == 0 else "failed",
+                        feedback_status="finished" if status == "exited" and int(payload.get("exit_code") or 0) == 0 else status,
+                        step_id=sid,
+                        session_id=sid,
+                        done=True,
+                        important=status != "exited" or int(payload.get("exit_code") or 0) != 0,
+                        content=trailer,
+                    ),
+                    **poll_meta,
+                },
             )
         else:
             trailer = "Process still running."
@@ -988,7 +1050,19 @@ def process_session(
                 step_title="Process still running",
                 done=False,
                 important=False,
-                extra_metadata=poll_meta,
+                extra_metadata={
+                    **_tool_step_extra_metadata(
+                        tool_name="process",
+                        step_title="Process still running",
+                        step_phase="running",
+                        step_id=sid,
+                        session_id=sid,
+                        done=False,
+                        important=False,
+                        content=trailer,
+                    ),
+                    **poll_meta,
+                },
             )
         if str(payload.get("stdout", "")).strip() or str(payload.get("stderr", "")).strip():
             _emit_feedback(
@@ -1000,7 +1074,20 @@ def process_session(
                 step_title="Process output",
                 done=bool(payload.get("exited")),
                 important=False,
-                extra_metadata=poll_meta,
+                extra_metadata={
+                    **_tool_step_extra_metadata(
+                        event_class="step_output",
+                        tool_name="process",
+                        step_title="Process output",
+                        step_phase="finished" if bool(payload.get("exited")) else "running",
+                        step_id=sid,
+                        session_id=sid,
+                        done=bool(payload.get("exited")),
+                        important=False,
+                        content=output,
+                    ),
+                    **poll_meta,
+                },
             )
         meta_prefix = f"[poll-meta]{json.dumps(poll_meta, ensure_ascii=False, separators=(',', ':'))}"
         return _ret("tool.process.output", f"{meta_prefix}\n\n{output}\n\n{trailer}")
@@ -1050,6 +1137,16 @@ def process_session(
             step_title="Process input written",
             done=False,
             important=False,
+            extra_metadata=_tool_step_extra_metadata(
+                tool_name="process",
+                step_title="Process input written",
+                step_phase="running",
+                step_id=sid,
+                session_id=sid,
+                done=False,
+                important=False,
+                content=f"Wrote input to process session {sid}.",
+            ),
         )
         _request_heartbeat_wake("exec:write")
         suffix = " (stdin closed)" if eof else ""
@@ -1074,6 +1171,16 @@ def process_session(
             step_title="Process keys sent",
             done=False,
             important=False,
+            extra_metadata=_tool_step_extra_metadata(
+                tool_name="process",
+                step_title="Process keys sent",
+                step_phase="running",
+                step_id=sid,
+                session_id=sid,
+                done=False,
+                important=False,
+                content=f"Sent keys to process session {sid}.",
+            ),
         )
         _request_heartbeat_wake("exec:send-keys")
         warning_text = f"\nWarnings:\n- " + "\n- ".join(warnings) if warnings else ""
@@ -1096,6 +1203,16 @@ def process_session(
             step_title="Process submitted",
             done=False,
             important=False,
+            extra_metadata=_tool_step_extra_metadata(
+                tool_name="process",
+                step_title="Process submitted",
+                step_phase="running",
+                step_id=sid,
+                session_id=sid,
+                done=False,
+                important=False,
+                content=f"Submitted process session {sid}.",
+            ),
         )
         _request_heartbeat_wake("exec:submit")
         return _ret("tool.process.output", f"Submitted session {sid} (sent CR).")
@@ -1114,6 +1231,16 @@ def process_session(
             step_title="Process paste",
             done=False,
             important=False,
+            extra_metadata=_tool_step_extra_metadata(
+                tool_name="process",
+                step_title="Process paste",
+                step_phase="running",
+                step_id=sid,
+                session_id=sid,
+                done=False,
+                important=False,
+                content=f"Pasted input to process session {sid}.",
+            ),
         )
         _request_heartbeat_wake("exec:paste")
         mode = "bracketed" if bracketed else "plain"
@@ -1132,6 +1259,17 @@ def process_session(
             step_title="Process termination requested",
             done=False,
             important=True,
+            extra_metadata=_tool_step_extra_metadata(
+                tool_name="process",
+                step_title="Process termination requested",
+                step_phase="cancelled",
+                feedback_status="killed",
+                step_id=sid,
+                session_id=sid,
+                done=False,
+                important=True,
+                content=f"Termination requested for process session {sid}.",
+            ),
         )
         _request_heartbeat_wake("exec:kill")
         return _ret("tool.process.output", f"Termination requested for session {sid}.")
@@ -2170,6 +2308,43 @@ def _feedback_metadata(
         metadata["_important"] = bool(important)
     if extra:
         metadata.update(extra)
+    return normalize_outbound_metadata(metadata)
+
+
+def _tool_step_extra_metadata(
+    *,
+    event_class: str = "step_update",
+    tool_name: str,
+    step_title: str,
+    step_phase: str,
+    feedback_status: str | None = None,
+    step_kind: str = "tool",
+    step_id: str | None = None,
+    session_id: str | None = None,
+    task_id: str | None = None,
+    done: bool = False,
+    important: bool = False,
+    content: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build normalized step metadata for tool-originated feedback."""
+
+    metadata = build_step_metadata(
+        event_class=event_class,
+        step_phase=step_phase,
+        feedback_status=feedback_status,
+        step_title=step_title,
+        step_kind=step_kind,
+        step_id=step_id,
+        session_id=session_id,
+        task_id=task_id,
+        tool_name=tool_name,
+        done=done,
+        important=important,
+        content=content,
+        extra_metadata=extra_metadata,
+    )
+    metadata["_feedback_origin"] = "tool"
     return metadata
 
 
@@ -2433,6 +2608,20 @@ def spawn_subagent(
         done=False,
         important=True,
         extra_metadata={
+            **build_step_metadata(
+                step_phase="queued",
+                feedback_status="accepted",
+                step_title="Sub-agent accepted",
+                step_kind="subagent",
+                invocation_id=str(invocation_id),
+                function_call_id=str(function_call_id),
+                step_id=task_id,
+                task_id=task_id,
+                tool_name="spawn_subagent",
+                done=False,
+                important=True,
+                content="Background sub-agent task accepted.",
+            ),
             "notify_on_complete": bool(notify_on_complete),
         },
     )

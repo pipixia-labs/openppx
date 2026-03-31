@@ -686,10 +686,15 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(text.startswith("do work"))
         self.assertIn("Current time:", text)
 
+        started = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        finished = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        self.assertEqual(started.metadata.get("_tool_name"), "cron")
         self.assertEqual(outbound.channel, "local")
         self.assertEqual(outbound.chat_id, "c1")
         self.assertEqual(outbound.content, "cron answer")
+        self.assertEqual(outbound.metadata.get("_event_class"), "step_output")
+        self.assertEqual(finished.metadata.get("_step_phase"), "finished")
 
     async def test_run_cron_job_triggers_heartbeat_wake(self) -> None:
         fake_event = pytypes.SimpleNamespace(
@@ -785,14 +790,20 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(task)
         await asyncio.wait_for(task, timeout=0.5)
 
-        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
-        self.assertEqual(outbound.channel, "local")
-        self.assertEqual(outbound.chat_id, "c1")
-        self.assertEqual(outbound.content, "parent resumed notify")
-        self.assertEqual(outbound.metadata.get("_feedback_type"), "status")
-        self.assertEqual(outbound.metadata.get("_feedback_status"), "completed")
-        self.assertEqual(outbound.metadata.get("_tool_name"), "spawn_subagent")
-        self.assertEqual(outbound.metadata.get("_task_id"), "subagent-abc")
+        started = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        completed = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        result = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        self.assertEqual(started.metadata.get("_step_phase"), "running")
+        self.assertEqual(started.metadata.get("_step_kind"), "subagent")
+        self.assertEqual(completed.channel, "local")
+        self.assertEqual(completed.chat_id, "c1")
+        self.assertEqual(completed.content, "parent resumed notify")
+        self.assertEqual(completed.metadata.get("_event_class"), "step_update")
+        self.assertEqual(completed.metadata.get("_step_phase"), "finished")
+        self.assertEqual(completed.metadata.get("_tool_name"), "spawn_subagent")
+        self.assertEqual(completed.metadata.get("_task_id"), "subagent-abc")
+        self.assertEqual(result.metadata.get("_event_class"), "step_output")
+        self.assertEqual(result.content, "background done")
         self.assertEqual(len(captured_calls), 2)
         self.assertEqual(captured_calls[0]["session_id"], "subagent:subagent-abc")
         self.assertEqual(captured_calls[1]["session_id"], "parent-session")
@@ -831,6 +842,8 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(task)
         await asyncio.wait_for(task, timeout=0.5)
 
+        running = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        self.assertEqual(running.metadata.get("_step_phase"), "running")
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 

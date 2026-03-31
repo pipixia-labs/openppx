@@ -8,6 +8,7 @@ from typing import Callable
 
 from ..bus.events import OutboundMessage
 from ..bus.queue import MessageBus
+from ..runtime.step_events import classify_outbound_message
 from .base import BaseChannel
 
 
@@ -95,8 +96,19 @@ def _json_payload(msg: OutboundMessage) -> str:
 
 
 def _render_local_message(msg: OutboundMessage) -> str:
-    metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
-    feedback_type = str(metadata.get("_feedback_type", "")).strip().lower()
+    original_metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
+    normalized = classify_outbound_message(msg.content, msg.metadata)
+    metadata = normalized.metadata
+    has_explicit_step_identity = bool(
+        original_metadata.get("_event_class")
+        or original_metadata.get("_invocation_id")
+        or original_metadata.get("_step_id")
+        or original_metadata.get("_function_call_id")
+    )
+    if normalized.event_class in {"step_update", "step_output"} and has_explicit_step_identity:
+        return _render_step_event_message(msg.content, metadata)
+
+    feedback_type = str(original_metadata.get("_feedback_type", "")).strip().lower()
     if feedback_type:
         return _render_feedback_message(msg.content, metadata)
 
@@ -111,6 +123,33 @@ def _render_local_message(msg: OutboundMessage) -> str:
         return f"[file] {file_name}" if not caption else f"[file] {file_name}\n{caption}"
 
     return msg.content or "[empty message]"
+
+
+def _render_step_event_message(content: str, metadata: dict[str, object]) -> str:
+    event_class = str(metadata.get("_event_class", "")).strip().lower()
+    step_phase = str(metadata.get("_step_phase", "")).strip().lower()
+    step_title = str(metadata.get("_step_title", "")).strip() or str(metadata.get("_tool_name", "")).strip() or "Step"
+    step_kind = str(metadata.get("_step_kind", "")).strip()
+    step_id = str(metadata.get("_step_id", "")).strip()
+    invocation_id = str(metadata.get("_invocation_id", "")).strip()
+
+    suffix_parts = []
+    if step_kind:
+        suffix_parts.append(step_kind)
+    if step_id:
+        suffix_parts.append(f"id={step_id}")
+    if invocation_id:
+        suffix_parts.append(f"invocation={invocation_id}")
+    suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+
+    if event_class == "step_output":
+        body = (content or "").rstrip() or "(no output)"
+        indented = "\n".join(f"    {line}" if line else "    " for line in body.splitlines())
+        return f"[step-output] {step_title}{suffix}\n{indented}"
+
+    prefix = f"[step:{step_phase or 'update'}]"
+    summary = (content or "").strip()
+    return f"{prefix} {step_title}{suffix}\n{summary}" if summary else f"{prefix} {step_title}{suffix}"
 
 
 def _render_feedback_message(content: str, metadata: dict[str, object]) -> str:

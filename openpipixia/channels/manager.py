@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from ..bus.queue import MessageBus
+from ..runtime.step_events import classify_outbound_message
 from .base import BaseChannel
 from .polling_utils import cancel_background_task
 
@@ -49,10 +50,11 @@ class ChannelManager:
                 logger.warning("Dropping outbound message: unknown channel '%s'", msg.channel)
                 continue
             try:
-                metadata = msg.metadata if isinstance(msg.metadata, dict) else {}
-                if metadata.get("_stream_delta") or metadata.get("_stream_end"):
-                    await channel.send_delta(msg.chat_id, msg.content, metadata)
-                elif metadata.get("_streamed"):
+                normalized = classify_outbound_message(msg.content, msg.metadata)
+                msg.metadata = normalized.metadata
+                if normalized.is_stream:
+                    await channel.send_delta(msg.chat_id, msg.content, normalized.metadata)
+                elif normalized.metadata.get("_streamed"):
                     continue
                 else:
                     await channel.send(msg)

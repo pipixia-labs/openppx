@@ -10,6 +10,7 @@ from google.adk.runners import Runner
 
 from .memory_service import create_memory_service
 from .session_service import create_session_service
+from .step_events import OpenPpxStepEventPlugin
 
 
 def _parse_enabled(raw: str | None, *, default: bool) -> bool:
@@ -110,6 +111,7 @@ def create_runner(
         root_agent=agent,
         resumability_config=ResumabilityConfig(is_resumable=True),
         events_compaction_config=_build_events_compaction_config(),
+        plugins=[OpenPpxStepEventPlugin()],
     )
     runner = Runner(
         app=app,
