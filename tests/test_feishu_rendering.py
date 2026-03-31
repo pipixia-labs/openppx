@@ -80,6 +80,9 @@ class FeishuRenderingTests(unittest.TestCase):
                 "_step_title": "write_file",
                 "_step_phase": "finished",
                 "_step_kind": "tool",
+                "_step_update_kind": "lifecycle",
+                "_step_order": 1,
+                "_event_seq": 2,
                 "_task_id": "task-1",
             },
         )
@@ -88,7 +91,10 @@ class FeishuRenderingTests(unittest.TestCase):
         fields = card["elements"][0]["fields"]
         self.assertIn("finished", fields[0]["text"]["content"])
         self.assertIn("tool", fields[1]["text"]["content"])
-        self.assertIn("task-1", fields[2]["text"]["content"])
+        self.assertIn("lifecycle", fields[2]["text"]["content"])
+        self.assertIn("1", fields[3]["text"]["content"])
+        self.assertIn("2", fields[4]["text"]["content"])
+        self.assertIn("task-1", fields[5]["text"]["content"])
 
     def test_send_sync_uses_step_cards_for_step_events(self) -> None:
         channel = FeishuChannel(bus=MessageBus(), app_id="app-id", app_secret="app-secret")

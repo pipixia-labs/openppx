@@ -321,8 +321,11 @@ def _build_step_card(content: str, metadata: dict[str, Any]) -> dict[str, Any]:
     step_title = str(metadata.get("_step_title", "")).strip() or str(metadata.get("_tool_name", "")).strip() or "Step"
     step_phase = str(metadata.get("_step_phase", "")).strip() or "update"
     step_kind = str(metadata.get("_step_kind", "")).strip() or "system"
+    update_kind = str(metadata.get("_step_update_kind", "")).strip() or "status"
     task_id = str(metadata.get("_task_id", "")).strip()
     step_id = str(metadata.get("_step_id", "")).strip()
+    event_seq = str(metadata.get("_event_seq", "")).strip()
+    step_order = str(metadata.get("_step_order", "")).strip()
     event_class = str(metadata.get("_event_class", "")).strip() or "step_update"
 
     template = {
@@ -338,7 +341,12 @@ def _build_step_card(content: str, metadata: dict[str, Any]) -> dict[str, Any]:
     fields = [
         {"is_short": True, "text": {"tag": "lark_md", "content": f"**Status**\n`{step_phase}`"}},
         {"is_short": True, "text": {"tag": "lark_md", "content": f"**Kind**\n`{step_kind}`"}},
+        {"is_short": True, "text": {"tag": "lark_md", "content": f"**Update**\n`{update_kind}`"}},
     ]
+    if step_order:
+        fields.append({"is_short": True, "text": {"tag": "lark_md", "content": f"**Order**\n`{step_order}`"}})
+    if event_seq:
+        fields.append({"is_short": True, "text": {"tag": "lark_md", "content": f"**Event**\n`{event_seq}`"}})
     if task_id:
         fields.append({"is_short": False, "text": {"tag": "lark_md", "content": f"**Task**\n`{task_id}`"}})
     elif step_id:

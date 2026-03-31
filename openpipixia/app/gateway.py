@@ -290,6 +290,7 @@ class Gateway:
                             metadata={
                                 **build_step_metadata(
                                     step_phase="finished",
+                                    step_update_kind="result",
                                     step_title="Heartbeat OK",
                                     step_kind="runtime",
                                     step_id=heartbeat_step_id,
@@ -348,6 +349,7 @@ class Gateway:
                     metadata={
                         **build_step_metadata(
                             step_phase="finished",
+                            step_update_kind="result",
                             step_title="Heartbeat alert",
                             step_kind="runtime",
                             step_id=heartbeat_step_id,
@@ -471,6 +473,7 @@ class Gateway:
                 metadata={
                     **build_step_metadata(
                         step_phase="started",
+                        step_update_kind="lifecycle",
                         step_title=f"Cron: {job.name}",
                         step_kind="runtime",
                         step_id=cron_step_id,
@@ -504,6 +507,7 @@ class Gateway:
                         **build_step_metadata(
                             event_class="step_output",
                             step_phase="finished",
+                            step_update_kind="result",
                             step_title=f"Cron result: {job.name}",
                             step_kind="runtime",
                             step_id=cron_step_id,
@@ -525,6 +529,7 @@ class Gateway:
                 metadata={
                     **build_step_metadata(
                         step_phase="finished",
+                        step_update_kind="lifecycle",
                         step_title=f"Cron: {job.name}",
                         step_kind="runtime",
                         step_id=cron_step_id,
@@ -660,6 +665,7 @@ class Gateway:
                     metadata={
                         **build_step_metadata(
                             step_phase="running",
+                            step_update_kind="progress",
                             step_title="Sub-agent running",
                             step_kind="subagent",
                             invocation_id=request.invocation_id,
@@ -772,6 +778,7 @@ class Gateway:
         base_metadata = {
             **build_step_metadata(
                 step_phase="finished" if completed else "failed",
+                step_update_kind="lifecycle",
                 step_title="Sub-agent completed" if completed else "Sub-agent failed",
                 step_kind="subagent",
                 invocation_id=request.invocation_id,
@@ -805,6 +812,7 @@ class Gateway:
                             **build_step_metadata(
                                 event_class="step_output",
                                 step_phase="finished",
+                                step_update_kind="result",
                                 step_title="Sub-agent result",
                                 step_kind="subagent",
                                 invocation_id=request.invocation_id,

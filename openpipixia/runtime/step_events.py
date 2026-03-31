@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,10 @@ from .tool_context import get_route
 logger = logging.getLogger(__name__)
 
 _STEP_EVENT_PUBLISHER = None
+_ORDERING_LOCK = threading.Lock()
+_EVENT_SEQ_BY_SCOPE: dict[str, int] = {}
+_STEP_ORDER_BY_SCOPE: dict[str, int] = {}
+_KNOWN_STEPS_BY_SCOPE: dict[str, set[str]] = {}
 
 
 def configure_step_event_publisher(publisher) -> None:
@@ -69,6 +74,79 @@ def _legacy_feedback_phase(status: str, *, done: bool) -> str:
     return "running" if normalized else ""
 
 
+def _infer_step_update_kind(
+    *,
+    event_class: str,
+    step_phase: str,
+    current_value: Any,
+) -> str:
+    explicit = _clean_str(current_value).lower()
+    if explicit:
+        return explicit
+    if event_class == "step_output":
+        return "output"
+    if step_phase in {"queued", "started", "finished", "failed", "cancelled"}:
+        return "lifecycle"
+    if step_phase in {"running", "waiting"}:
+        return "progress"
+    return "status"
+
+
+def _resolve_ordering_scope(metadata: dict[str, Any]) -> str:
+    invocation_id = _clean_str(metadata.get("_invocation_id"))
+    if invocation_id:
+        return f"invocation:{invocation_id}"
+    step_id = _clean_str(metadata.get("_step_id"))
+    if step_id:
+        return f"step:{step_id}"
+    session_id = _clean_str(metadata.get("_session_id"))
+    if session_id:
+        return f"session:{session_id}"
+    task_id = _clean_str(metadata.get("_task_id"))
+    if task_id:
+        return f"task:{task_id}"
+    channel, chat_id = get_route()
+    if channel and chat_id:
+        return f"route:{channel}:{chat_id}"
+    tool_name = _clean_str(metadata.get("_tool_name"))
+    if tool_name:
+        return f"tool:{tool_name}"
+    return ""
+
+
+def _resolve_step_key(metadata: dict[str, Any]) -> str:
+    return (
+        _clean_str(metadata.get("_step_id"))
+        or _clean_str(metadata.get("_function_call_id"))
+        or _clean_str(metadata.get("_task_id"))
+        or _clean_str(metadata.get("_session_id"))
+        or _clean_str(metadata.get("_tool_name"))
+        or _clean_str(metadata.get("_event_class"))
+        or "event"
+    )
+
+
+def _ensure_step_ordering(metadata: dict[str, Any]) -> None:
+    if metadata.get("_event_class") not in {"step_update", "step_output"}:
+        return
+    scope = _resolve_ordering_scope(metadata)
+    if not scope:
+        return
+    with _ORDERING_LOCK:
+        if metadata.get("_event_seq") is None:
+            next_event_seq = _EVENT_SEQ_BY_SCOPE.get(scope, 0) + 1
+            _EVENT_SEQ_BY_SCOPE[scope] = next_event_seq
+            metadata["_event_seq"] = next_event_seq
+
+        if metadata.get("_step_order") is None:
+            known_steps = _KNOWN_STEPS_BY_SCOPE.setdefault(scope, set())
+            step_key = _resolve_step_key(metadata)
+            if step_key not in known_steps:
+                known_steps.add(step_key)
+                _STEP_ORDER_BY_SCOPE[scope] = _STEP_ORDER_BY_SCOPE.get(scope, 0) + 1
+            metadata["_step_order"] = _STEP_ORDER_BY_SCOPE.get(scope, 1)
+
+
 def normalize_outbound_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     """Return a normalized metadata dict for channel consumption."""
 
@@ -119,8 +197,14 @@ def normalize_outbound_metadata(metadata: dict[str, Any] | None) -> dict[str, An
             )
             if step_id:
                 normalized["_step_id"] = step_id
+        normalized["_step_update_kind"] = _infer_step_update_kind(
+            event_class=event_class,
+            step_phase=_clean_str(normalized.get("_step_phase")).lower(),
+            current_value=normalized.get("_step_update_kind"),
+        )
         normalized["_done"] = done
         normalized["_important"] = _bool(normalized.get("_important"))
+        _ensure_step_ordering(normalized)
     elif event_class:
         normalized["_done"] = done
         normalized["_important"] = _bool(normalized.get("_important"))
@@ -140,7 +224,7 @@ def build_step_metadata(
     step_id: str | None = None,
     step_order: int | None = None,
     event_seq: int | None = None,
-    step_update_kind: str = "status",
+    step_update_kind: str | None = None,
     feedback_status: str | None = None,
     tool_name: str | None = None,
     task_id: str | None = None,
@@ -315,6 +399,7 @@ class OpenPpxStepEventPlugin(BasePlugin):
             function_call_id=function_call_id,
             tool_name=tool_name,
             step_phase="started",
+            step_update_kind="lifecycle",
             content=f"Started `{tool_name}`",
         )
         return None
@@ -337,6 +422,7 @@ class OpenPpxStepEventPlugin(BasePlugin):
             function_call_id=function_call_id,
             tool_name=tool_name,
             step_phase="finished",
+            step_update_kind="lifecycle",
             content=f"Finished `{tool_name}`",
             done=True,
         )
@@ -360,6 +446,7 @@ class OpenPpxStepEventPlugin(BasePlugin):
             function_call_id=function_call_id,
             tool_name=tool_name,
             step_phase="failed",
+            step_update_kind="lifecycle",
             content=f"`{tool_name}` failed: {type(error).__name__}",
             done=True,
             important=True,
@@ -386,6 +473,6 @@ class OpenPpxStepEventPlugin(BasePlugin):
                 tool_name=tool_name,
                 step_phase="waiting",
                 content=f"`{tool_name}` is running in the background",
-                step_update_kind="status",
+                step_update_kind="progress",
             )
         return None

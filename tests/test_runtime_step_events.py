@@ -32,6 +32,33 @@ class StepEventNormalizationTests(unittest.TestCase):
         self.assertEqual(metadata["_step_kind"], "tool")
         self.assertEqual(metadata["_step_id"], "fc_1")
         self.assertEqual(metadata["_step_title"], "write_file")
+        self.assertEqual(metadata["_step_update_kind"], "lifecycle")
+
+    def test_normalize_step_events_assigns_runtime_ordering(self) -> None:
+        first = normalize_outbound_metadata(
+            {
+                "_event_class": "step_update",
+                "_step_phase": "running",
+                "_step_title": "process",
+                "_step_id": "session-1",
+                "_session_id": "session-1",
+            }
+        )
+        second = normalize_outbound_metadata(
+            {
+                "_event_class": "step_output",
+                "_step_phase": "running",
+                "_step_title": "process",
+                "_step_id": "session-1",
+                "_session_id": "session-1",
+            }
+        )
+
+        self.assertEqual(first["_step_update_kind"], "progress")
+        self.assertEqual(second["_step_update_kind"], "output")
+        self.assertEqual(first["_step_order"], 1)
+        self.assertEqual(second["_step_order"], 1)
+        self.assertEqual(first["_event_seq"] + 1, second["_event_seq"])
 
     def test_classify_stream_delta(self) -> None:
         normalized = classify_outbound_message("hello", {"_stream_delta": True})
@@ -67,6 +94,7 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(msg.metadata["_event_class"], "step_update")
         self.assertEqual(msg.metadata["_step_phase"], "started")
         self.assertEqual(msg.metadata["_function_call_id"], "fc_1")
+        self.assertEqual(msg.metadata["_step_update_kind"], "lifecycle")
 
     async def test_on_event_callback_marks_long_running_tool_waiting(self) -> None:
         published = []

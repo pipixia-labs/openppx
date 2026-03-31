@@ -690,10 +690,12 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
         outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
         finished = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
         self.assertEqual(started.metadata.get("_tool_name"), "cron")
+        self.assertEqual(started.metadata.get("_step_update_kind"), "lifecycle")
         self.assertEqual(outbound.channel, "local")
         self.assertEqual(outbound.chat_id, "c1")
         self.assertEqual(outbound.content, "cron answer")
         self.assertEqual(outbound.metadata.get("_event_class"), "step_output")
+        self.assertEqual(outbound.metadata.get("_step_update_kind"), "result")
         self.assertEqual(finished.metadata.get("_step_phase"), "finished")
 
     async def test_run_cron_job_triggers_heartbeat_wake(self) -> None:
