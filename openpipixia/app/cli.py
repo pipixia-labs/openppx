@@ -3623,6 +3623,14 @@ def _should_require_agent_config_for_gateway(args: argparse.Namespace) -> bool:
     return getattr(args, "gateway_action", None) == "run"
 
 
+def _should_bootstrap_single_agent_env(args: argparse.Namespace) -> bool:
+    """Return true when startup should hydrate one explicit config into process env."""
+
+    if args.command in {"install", "init", "client-api"}:
+        return False
+    return True
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="ppx",
@@ -3731,6 +3739,14 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Emit machine-readable JSON for `gateway status`.",
     )
+    client_api_parser = subparsers.add_parser(
+        "client-api",
+        help="Run the local HTTP + SSE client API service.",
+    )
+    client_api_subparsers = client_api_parser.add_subparsers(dest="client_api_command", required=True)
+    client_api_serve_parser = client_api_subparsers.add_parser("serve", help="Start the local client API server.")
+    client_api_serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1).")
+    client_api_serve_parser.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765).")
     provider_parser = subparsers.add_parser("provider", help="Manage runtime LLM providers.")
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command", required=True)
     provider_list_parser = provider_subparsers.add_parser("list", help="List providers available to ppx.")
@@ -3953,7 +3969,7 @@ def main(argv: list[str] | None = None) -> None:
                     f"ppx --config-path {str(_agent_config_path(enabled_agents[0]))} gateway run"
                 )
                 raise SystemExit(1)
-    if args.command not in {"install", "init"}:
+    if _should_bootstrap_single_agent_env(args):
         if config_path:
             bootstrap_env_from_config(Path(config_path).expanduser())
         else:
@@ -3978,6 +3994,15 @@ def main(argv: list[str] | None = None) -> None:
             code = _cmd_gateway_service_install(force=args.force, channels=args.channels, enable=args.enable)
         elif args.gateway_service_command == "status":
             code = _cmd_gateway_service_status(output_json=args.output_json)
+        else:
+            parser.print_help()
+            code = 2
+    elif args.command == "client-api":
+        if args.client_api_command == "serve":
+            from ..runtime.client_api_service import serve_client_api
+
+            serve_client_api(host=args.host, port=args.port)
+            code = 0
         else:
             parser.print_help()
             code = 2
