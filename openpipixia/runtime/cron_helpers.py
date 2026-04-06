@@ -9,7 +9,7 @@ from typing import Any
 
 def cron_store_path(workspace_root: Path) -> Path:
     """Return the canonical cron store file under a workspace root."""
-    return workspace_root / ".openpipixia" / "cron_jobs.json"
+    return workspace_root / ".openppx" / "cron_jobs.json"
 
 
 def format_schedule(schedule: Any) -> str:

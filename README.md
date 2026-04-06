@@ -215,7 +215,7 @@ Background runtime/log files:
 - `~/.openppx/log/gateway.debug.log`
 - `~/.openppx/token_usage.db` (LLM token usage events)
 
-Workspace-level runtime state lives under `<workspace>/.openpipixia/`
+Workspace-level runtime state lives under `<workspace>/.openppx/`
 (for example cron and heartbeat runtime snapshots).
 
 ## 🧰 Development

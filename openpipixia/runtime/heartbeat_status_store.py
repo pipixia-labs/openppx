@@ -10,7 +10,7 @@ from typing import Any
 def heartbeat_status_path(workspace: Path) -> Path:
     """Return the heartbeat status snapshot path for a workspace."""
 
-    return workspace / ".openpipixia" / "heartbeat_status.json"
+    return workspace / ".openppx" / "heartbeat_status.json"
 
 
 def read_heartbeat_status_snapshot(workspace: Path) -> dict[str, Any] | None:

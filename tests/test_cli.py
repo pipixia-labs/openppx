@@ -1172,7 +1172,7 @@ class CLITests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            snapshot_path = workspace / ".openpipixia" / "heartbeat_status.json"
+            snapshot_path = workspace / ".openppx" / "heartbeat_status.json"
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot = {"running": True, "recent_reason_counts": {"exec": 1}}
             snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -1761,7 +1761,7 @@ class CLITests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
-            snapshot_path = workspace / ".openpipixia" / "heartbeat_status.json"
+            snapshot_path = workspace / ".openppx" / "heartbeat_status.json"
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
             snapshot_path.write_text(
                 json.dumps({"last_status": "ran", "last_reason": "exec:foreground", "recent_reason_counts": {"exec": 2}}),
@@ -1993,7 +1993,7 @@ class CLITests(unittest.TestCase):
         from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
-            log_dir = Path(tmp) / ".openpipixia"
+            log_dir = Path(tmp) / ".openppx"
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path = log_dir / "subagents.log"
             log_path.write_text(
@@ -2607,7 +2607,7 @@ class CLITests(unittest.TestCase):
             self.assertEqual(code, 0)
             out = mocked_info.call_args[0][0]
             self.assertIn("Added job 'demo'", out)
-            store = Path(tmp) / ".openpipixia" / "cron_jobs.json"
+            store = Path(tmp) / ".openppx" / "cron_jobs.json"
             self.assertTrue(store.exists())
 
     def test_cmd_cron_run_reports_no_callback_in_plain_cli_process(self) -> None:
@@ -2742,7 +2742,7 @@ class CLITests(unittest.TestCase):
                 "last_delivery": {"kind": "alert"},
                 "recent_reason_counts": {"cron": 2, "exec": 1},
             }
-            store = Path(tmp) / ".openpipixia" / "heartbeat_status.json"
+            store = Path(tmp) / ".openppx" / "heartbeat_status.json"
             store.parent.mkdir(parents=True, exist_ok=True)
             store.write_text(json.dumps(snapshot), encoding="utf-8")
             policy = pytypes.SimpleNamespace(workspace_root=Path(tmp))

@@ -3240,7 +3240,7 @@ def _append_subagent_record(record: dict[str, Any]) -> Path:
     The record is written only when ``spawn_subagent`` successfully dispatches
     the task. The log is used by CLI introspection (`ppx spawn`).
     """
-    log_path = _workspace() / ".openpipixia" / "subagents.log"
+    log_path = _workspace() / ".openppx" / "subagents.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     ts = dt.datetime.now().isoformat(timespec="seconds")
     line = json.dumps({"timestamp": ts, **record}, ensure_ascii=False)

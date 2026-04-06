@@ -27,7 +27,7 @@ class HeartbeatStatusStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
             path = heartbeat_status_path(workspace)
-        self.assertEqual(path, workspace / ".openpipixia" / "heartbeat_status.json")
+        self.assertEqual(path, workspace / ".openppx" / "heartbeat_status.json")
 
     def test_read_returns_none_when_payload_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

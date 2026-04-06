@@ -244,7 +244,7 @@ scripts/whatsapp_bridge_e2e.sh smoke
 
 `openpipixia` 的 cron 是进程内调度器，不写系统 crontab。只有网关运行时任务才会执行。
 
-- 存储文件：`OPENPPX_WORKSPACE/.openpipixia/cron_jobs.json`
+- 存储文件：`OPENPPX_WORKSPACE/.openppx/cron_jobs.json`
 - 支持调度：`every`、`cron`（可配 `tz`）、`at`
 
 常用命令：

@@ -763,7 +763,7 @@ class ToolsTests(unittest.TestCase):
             with route_context("telegram", "u2"):
                 create = cron(action="add", message="remind me", every_seconds=30)
             self.assertIn("Created job", create)
-            store_path = Path(tmp) / ".openpipixia" / "cron_jobs.json"
+            store_path = Path(tmp) / ".openppx" / "cron_jobs.json"
             self.assertTrue(store_path.exists())
             payload = json.loads(store_path.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("version"), 3)
@@ -1955,7 +1955,7 @@ class ToolsTests(unittest.TestCase):
                 out = spawn_subagent(prompt="summarize logs", tool_context=ctx)
 
             self.assertEqual(out.get("status"), "pending")
-            log_path = Path(tmp) / ".openpipixia" / "subagents.log"
+            log_path = Path(tmp) / ".openppx" / "subagents.log"
             self.assertTrue(log_path.exists())
             record = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
             self.assertEqual(record["status"], "pending")

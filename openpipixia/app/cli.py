@@ -405,7 +405,7 @@ def _cmd_mcps(*, agent: str | None = None) -> int:
 
 def _subagent_log_path() -> Path:
     """Return JSONL log path that records accepted `spawn_subagent` tasks."""
-    return load_security_policy().workspace_root / ".openpipixia" / "subagents.log"
+    return load_security_policy().workspace_root / ".openppx" / "subagents.log"
 
 
 def _read_subagent_records(*, limit: int = 50) -> list[dict[str, Any]]:

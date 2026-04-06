@@ -208,7 +208,7 @@ def _resolve_artifact_root() -> str:
         return os.path.realpath(os.path.abspath(os.path.expanduser(configured)))
     workspace = os.getenv("OPENPPX_WORKSPACE", "").strip()
     base = workspace or os.getcwd()
-    return os.path.realpath(os.path.abspath(os.path.join(base, ".openpipixia", "browser_artifacts")))
+    return os.path.realpath(os.path.abspath(os.path.join(base, ".openppx", "browser_artifacts")))
 
 
 def resolve_browser_artifact_path(out_path: str | None, *, default_filename: str) -> str:
