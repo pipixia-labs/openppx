@@ -4,20 +4,42 @@
 
 支持三种配置来源：
 
-- 基础配置（推荐）：`~/.openpipixia/config.json`
-- 高级运行配置：`~/.openpipixia/runtime.json`
+- 基础配置（推荐）：`~/.openpipixia/<agent_name>/config.json`
+- 高级运行配置：`~/.openpipixia/<agent_name>/runtime.json`
 - 环境变量（在未配置时作为回退）
 
 优先级规则：
 
-- `config.json` / `runtime.json` 中已配置的字段会覆盖同名环境变量
-- 当 `config.json` 不存在，或文件内容为空对象 `{}` 时，直接使用环境变量
+- 每个 Agent 的 `config.json` / `runtime.json` 中已配置的字段会覆盖同名环境变量
+- 当对应 Agent 的 `config.json` 不存在，或文件内容为空对象 `{}` 时，直接使用环境变量
 
-建议日常只维护 `config.json`，将性能/运行时调优项放在 `runtime.json`，环境变量用于无配置回退或临时排查。
+建议日常只维护当前 Agent 的 `config.json`，将性能/运行时调优项放在对应的 `runtime.json`，环境变量用于无配置回退或临时排查。
+
+## Agent 创建与目录布局
+
+推荐先用 CLI 创建 Agent：
+
+```bash
+ppx create --name "assistant-main"
+ppx create --name "operator-main" --role operator
+```
+
+创建后会得到类似目录结构：
+
+- `~/.openpipixia/assistant-main/config.json`
+- `~/.openpipixia/assistant-main/runtime.json`
+- `~/.openpipixia/global_config.json`
+
+说明：
+
+- `agent_name` 取自 `ppx create --name`，会自动去掉特殊字符，并把空格替换成 `-`
+- 新 Agent 默认会被写入并启用到 `global_config.json`
+- 如果运行 gateway，建议显式传入对应 Agent 的 `--config-path`
+- 可以用 `ppx list` 查看已有 Agent、角色、workspace 和启用状态
 
 ## `config.json` 关键字段
 
-- `agent.workspace` / `agent.builtinSkillsDir`
+- `agent.name / agent.role / agent.permissions / agent.workspace / agent.builtinSkillsDir`
 - `providers.<provider>.enabled / apiKey / model / apiBase / extraHeaders`
 - `multimodalProviders.<alias>.enabled / provider / apiKey / model / apiBase / extraHeaders`
 - `gui.groundingProvider / gui.plannerProvider / gui.builtinGUIToolsEnabled`（绑定到 `multimodalProviders` 名称）
@@ -28,6 +50,16 @@
 - `debug`
 
 Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true”。
+
+### `agent.role` 与默认权限
+
+当前内置三种角色：
+
+- `Assistant`：低权限，默认单 workspace、文件只读、不可执行 shell、不可访问网络
+- `Operator`：执行型，默认单 workspace 读写、受限 shell、受限网络
+- `Manager`：高权限，允许更宽的执行与网络能力
+
+第一版实现会把角色默认权限同步映射到现有 `security.*` 和运行时环境变量上。
 
 ### Channel 配置示例
 

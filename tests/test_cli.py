@@ -100,63 +100,219 @@ class CLITests(unittest.TestCase):
                 mocked_install.assert_called_once_with(force=True)
                 mocked_bootstrap.assert_not_called()
 
-    def test_init_mode_dispatch(self) -> None:
+    def test_create_mode_dispatch(self) -> None:
         from openpipixia import cli
 
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
-            with patch.object(cli, "_cmd_init", return_value=0) as mocked_init:
+            with patch.object(cli, "_cmd_create", return_value=0) as mocked_create:
                 with self.assertRaises(SystemExit) as ctx:
-                    cli.main(["init", "--force"])
+                    cli.main(["create", "--name", "demo", "--role", "manager", "--workspace", "/tmp/demo"])
                 self.assertEqual(ctx.exception.code, 0)
-                mocked_init.assert_called_once_with(force=True)
+                mocked_create.assert_called_once_with(name="demo", role="manager", workspace="/tmp/demo")
                 mocked_bootstrap.assert_not_called()
 
-    def test_cmd_init_creates_three_agent_configs_and_global_config(self) -> None:
+    def test_cmd_create_creates_one_agent_config_and_enables_it(self) -> None:
         from openpipixia import cli
 
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp) / ".openpipixia"
             with patch.object(cli, "get_data_dir", return_value=data_dir):
                 with patch("builtins.print") as mocked_info:
-                    code = cli._cmd_init(force=True)
+                    code = cli._cmd_create(name="Demo Agent", role="assistant", workspace="")
 
             self.assertEqual(code, 0)
-            agent_names = list(cli._INIT_DEFAULT_AGENT_NAMES)
-            for agent_name in agent_names:
-                config_path = data_dir / agent_name / "config.json"
-                runtime_path = data_dir / agent_name / "runtime.json"
-                self.assertTrue(config_path.exists())
-                self.assertTrue(runtime_path.exists())
-                cfg = json.loads(config_path.read_text(encoding="utf-8"))
-                self.assertEqual(cfg["agent"]["workspace"], str(data_dir / agent_name / "workspace"))
-                self.assertIn("openai_mm", cfg["multimodalProviders"])
-                self.assertIn("google_mm", cfg["multimodalProviders"])
-                self.assertIn("qwen_mm", cfg["multimodalProviders"])
-                self.assertFalse(cfg["multimodalProviders"]["openai_mm"]["enabled"])
-                self.assertFalse(cfg["multimodalProviders"]["google_mm"]["enabled"])
-                self.assertFalse(cfg["multimodalProviders"]["qwen_mm"]["enabled"])
-                self.assertEqual(cfg["gui"]["groundingProvider"], "openai_mm")
-                self.assertEqual(cfg["gui"]["plannerProvider"], "openai_mm")
-                workspace = data_dir / agent_name / "workspace"
-                for bootstrap_name in cli._INIT_BOOTSTRAP_TEMPLATES:
-                    self.assertTrue((workspace / bootstrap_name).exists())
-                self.assertTrue((workspace / "memory" / "MEMORY.md").exists())
-                self.assertTrue((workspace / "memory" / "HISTORY.md").exists())
+            agent_name = "Demo-Agent"
+            config_path = data_dir / agent_name / "config.json"
+            runtime_path = data_dir / agent_name / "runtime.json"
+            self.assertTrue(config_path.exists())
+            self.assertTrue(runtime_path.exists())
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(cfg["agent"]["name"], agent_name)
+            self.assertEqual(cfg["agent"]["role"], "Assistant")
+            self.assertEqual(cfg["agent"]["permissions"]["filesystemAccess"], "read_only")
+            self.assertTrue(cfg["security"]["restrictToWorkspace"])
+            self.assertFalse(cfg["security"]["allowExec"])
+            self.assertFalse(cfg["security"]["allowNetwork"])
+            self.assertIn("openai_mm", cfg["multimodalProviders"])
+            self.assertIn("google_mm", cfg["multimodalProviders"])
+            self.assertIn("qwen_mm", cfg["multimodalProviders"])
+            workspace = Path(cfg["agent"]["workspace"])
+            self.assertTrue(workspace.exists())
+            self.assertIn(tempfile.gettempdir(), str(workspace))
+            for bootstrap_name in cli._INIT_BOOTSTRAP_TEMPLATES:
+                self.assertTrue((workspace / bootstrap_name).exists())
+            self.assertTrue((workspace / "memory" / "MEMORY.md").exists())
+            self.assertTrue((workspace / "memory" / "HISTORY.md").exists())
 
             global_cfg_path = data_dir / "global_config.json"
             self.assertTrue(global_cfg_path.exists())
             global_cfg = json.loads(global_cfg_path.read_text(encoding="utf-8"))
-            self.assertEqual(global_cfg["agents"][0]["name"], agent_names[0])
+            self.assertEqual(global_cfg["agents"][0]["name"], agent_name)
             self.assertTrue(bool(global_cfg["agents"][0]["enabled"]))
-            self.assertFalse(bool(global_cfg["agents"][1]["enabled"]))
-            self.assertFalse(bool(global_cfg["agents"][2]["enabled"]))
 
             lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
-            self.assertTrue(any("Initialized multi-agent config: agents=3" in line for line in lines))
-            self.assertTrue(any("You can edit global_config.json" in line for line in lines))
-            self.assertTrue(any("Bootstrap file purposes:" in line for line in lines))
-            self.assertTrue(any("HEARTBEAT.md" in line for line in lines))
-            self.assertTrue(any("skills/" in line for line in lines))
+            self.assertTrue(any("Created agent: Demo-Agent" in line for line in lines))
+            self.assertTrue(any("Agent enabled in global_config.json: Demo-Agent" in line for line in lines))
+
+    def test_cmd_create_rejects_duplicate_agent_name(self) -> None:
+        from openpipixia import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openpipixia"
+            agent_dir = data_dir / "Demo-Agent"
+            agent_dir.mkdir(parents=True)
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_create(name="Demo Agent", role="assistant", workspace="")
+
+        self.assertEqual(code, 1)
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("already exists" in line for line in lines))
+
+    def test_list_mode_dispatch(self) -> None:
+        from openpipixia import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_list", return_value=0) as mocked_list:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["list", "--json"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_list.assert_called_once_with(output_json=True)
+                mocked_bootstrap.assert_called_once()
+
+    def test_enable_mode_dispatch(self) -> None:
+        from openpipixia import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_enable_disable", return_value=0) as mocked_toggle:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["enable", "demo-agent"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_toggle.assert_called_once_with(name="demo-agent", enabled=True)
+                mocked_bootstrap.assert_called_once()
+
+    def test_disable_mode_dispatch(self) -> None:
+        from openpipixia import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_enable_disable", return_value=0) as mocked_toggle:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["disable", "demo-agent"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_toggle.assert_called_once_with(name="demo-agent", enabled=False)
+                mocked_bootstrap.assert_called_once()
+
+    def test_delete_mode_dispatch(self) -> None:
+        from openpipixia import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_delete", return_value=0) as mocked_delete:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(["delete", "demo-agent"])
+                self.assertEqual(ctx.exception.code, 0)
+                mocked_delete.assert_called_once_with(name="demo-agent")
+                mocked_bootstrap.assert_called_once()
+
+    def test_cmd_list_shows_known_agents(self) -> None:
+        from openpipixia import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openpipixia"
+            agent_dir = data_dir / "demo-agent"
+            agent_dir.mkdir(parents=True)
+            cfg = cli.default_config()
+            cfg["agent"]["name"] = "demo-agent"
+            cfg["agent"]["role"] = "Operator"
+            cfg["agent"]["workspace"] = "/tmp/demo-agent"
+            cli.save_config(cfg, agent_dir / "config.json")
+            (data_dir / "global_config.json").write_text(
+                json.dumps({"agents": [{"name": "demo-agent", "enabled": True}]}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_list(output_json=False)
+
+        self.assertEqual(code, 0)
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("Agents:" in line for line in lines))
+        self.assertTrue(any("demo-agent [enabled] role=Operator workspace=/tmp/demo-agent" in line for line in lines))
+
+    def test_cmd_disable_updates_global_config(self) -> None:
+        from openpipixia import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openpipixia"
+            agent_dir = data_dir / "demo-agent"
+            agent_dir.mkdir(parents=True)
+            cli.save_config(cli.default_config(), agent_dir / "config.json")
+            (data_dir / "global_config.json").write_text(
+                json.dumps({"agents": [{"name": "demo-agent", "enabled": True}]}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_enable_disable(name="demo-agent", enabled=False)
+
+            self.assertEqual(code, 0)
+            payload = json.loads((data_dir / "global_config.json").read_text(encoding="utf-8"))
+            self.assertFalse(bool(payload["agents"][0]["enabled"]))
+            lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+            self.assertTrue(any("Disabled agent: demo-agent" in line for line in lines))
+
+    def test_cmd_enable_rejects_missing_agent_config(self) -> None:
+        from openpipixia import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openpipixia"
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_enable_disable(name="missing-agent", enabled=True)
+
+        self.assertEqual(code, 1)
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("config not found" in line for line in lines))
+
+    def test_cmd_delete_removes_agent_dir_and_global_config_entry(self) -> None:
+        from openpipixia import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openpipixia"
+            agent_dir = data_dir / "demo-agent"
+            agent_dir.mkdir(parents=True)
+            cli.save_config(cli.default_config(), agent_dir / "config.json")
+            (agent_dir / "runtime.json").write_text("{}\n", encoding="utf-8")
+            (data_dir / "global_config.json").write_text(
+                json.dumps(
+                    {"agents": [{"name": "demo-agent", "enabled": True}, {"name": "other-agent", "enabled": False}]},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_delete(name="demo-agent")
+            self.assertEqual(code, 0)
+            self.assertFalse(agent_dir.exists())
+            payload = json.loads((data_dir / "global_config.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["agents"], [{"name": "other-agent", "enabled": False}])
+            lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+            self.assertTrue(any("Deleted agent: demo-agent" in line for line in lines))
+
+    def test_cmd_delete_rejects_missing_agent_config(self) -> None:
+        from openpipixia import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / ".openpipixia"
+            with patch.object(cli, "get_data_dir", return_value=data_dir):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_delete(name="missing-agent")
+
+        self.assertEqual(code, 1)
+        lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
+        self.assertTrue(any("config not found" in line for line in lines))
 
     def test_gateway_service_install_mode_dispatch(self) -> None:
         from openpipixia import cli

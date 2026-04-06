@@ -26,8 +26,11 @@ from openpipixia.tooling.registry import (
     configure_heartbeat_waker,
     configure_subagent_dispatcher,
     cron,
+    message,
     edit_file,
     exec_command,
+    glob,
+    grep,
     list_dir,
     message,
     message_file,
@@ -63,6 +66,49 @@ class ToolsTests(unittest.TestCase):
             self.assertIn("Successfully edited", edited)
             self.assertEqual(read_file("tmp/demo.txt"), "hello adk")
 
+    def test_file_write_tools_are_blocked_when_filesystem_is_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_FILESYSTEM_ACCESS"] = "read_only"
+
+            out = write_file("tmp/demo.txt", "hello world")
+            self.assertIn("filesystem write is disabled by security policy", out)
+
+            path = Path(tmp) / "tmp" / "demo.txt"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("hello world", encoding="utf-8")
+            edited = edit_file("tmp/demo.txt", "world", "adk")
+            self.assertIn("filesystem write is disabled by security policy", edited)
+
+    def test_high_risk_tools_are_blocked_without_access(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_HIGH_RISK_ACTION_ACCESS"] = "false"
+
+            self.assertIn("high-risk action 'message.send' is disabled", message("hello"))
+            self.assertIn("high-risk action 'cron.add' is disabled", cron(action="add", message="say hi", every_seconds=60))
+
+    def test_high_risk_tools_require_approval_in_conditional_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_HIGH_RISK_ACTION_ACCESS"] = "conditional"
+
+            self.assertIn("approval required", message("hello"))
+
+    def test_spawn_subagent_respects_delegation_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            os.environ["OPENPIPIXIA_CAN_DELEGATE"] = "0"
+            ctx = pytypes.SimpleNamespace(
+                user_id="user-1",
+                session=pytypes.SimpleNamespace(id="session-1"),
+                invocation_id="inv-1",
+                function_call_id="fc-1",
+            )
+            out = spawn_subagent(prompt="run task", tool_context=ctx)
+            self.assertEqual(out["status"], "error")
+            self.assertIn("delegation is disabled", out["error"])
+
     def test_read_file_supports_file_path_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
@@ -84,6 +130,19 @@ class ToolsTests(unittest.TestCase):
 
             bad = read_file(path="tmp/lines.txt", offset=0)
             self.assertIn("Error: offset must be a positive integer.", bad)
+
+    def test_read_file_optionally_shows_line_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            write_file("tmp/lines.txt", "alpha\nbeta\ngamma\ndelta\n")
+
+            numbered = read_file(path="tmp/lines.txt", offset=2, limit=2, show_line_numbers=True)
+            plain = read_file(path="tmp/lines.txt", offset=2, limit=2, show_line_numbers=False)
+
+            self.assertIn("2| beta\n3| gamma\n", numbered)
+            self.assertIn("[Showing lines 2-3. Use offset=4 to continue.]", numbered)
+            self.assertIn("beta\ngamma\n", plain)
+            self.assertNotIn("2| beta", plain)
 
     def test_read_file_limit_appends_continuation_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,9 +176,74 @@ class ToolsTests(unittest.TestCase):
             self.assertIn("[D] a", listing)
             self.assertIn("[F] b.txt", listing)
 
+    def test_list_dir_supports_recursive_and_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            Path(tmp, "a").mkdir()
+            Path(tmp, "a", "nested.txt").write_text("x", encoding="utf-8")
+            Path(tmp, "b.txt").write_text("x", encoding="utf-8")
+
+            listing = list_dir(".", recursive=True, max_entries=2)
+            self.assertIn("a/", listing)
+            self.assertIn("a/nested.txt", listing)
+            self.assertIn("truncated", listing)
+
+    def test_glob_finds_matching_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            Path(tmp, "src").mkdir()
+            Path(tmp, "src", "main.py").write_text("print('x')", encoding="utf-8")
+            Path(tmp, "src", "util.txt").write_text("demo", encoding="utf-8")
+
+            output = glob("*.py", path="src")
+            self.assertIn("src/main.py", output)
+            self.assertNotIn("util.txt", output)
+
+    def test_grep_supports_content_mode_with_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            Path(tmp, "src").mkdir()
+            Path(tmp, "src", "main.py").write_text("one\ntwo target\nthree\n", encoding="utf-8")
+
+            output = grep(
+                "target",
+                path="src",
+                output_mode="content",
+                context_before=1,
+                context_after=1,
+            )
+            self.assertIn("src/main.py:2", output)
+            self.assertIn("  1| one", output)
+            self.assertIn("> 2| two target", output)
+            self.assertIn("  3| three", output)
+
+    def test_edit_file_supports_trimmed_line_matching(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPIPIXIA_WORKSPACE"] = tmp
+            write_file("tmp/demo.txt", "alpha\n  beta  \ngamma\n")
+
+            edited = edit_file("tmp/demo.txt", "beta", "delta")
+            self.assertIn("Successfully edited", edited)
+            self.assertIn("delta", read_file("tmp/demo.txt"))
+
     def test_exec_tool(self) -> None:
         result = exec_command("echo hello")
         self.assertIn("hello", result)
+
+    def test_exec_tool_wraps_command_with_sandbox(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run(*args, **kwargs):
+            captured["argv"] = args[0]
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with patch("openpipixia.tooling.registry.subprocess.run", side_effect=_fake_run):
+            out = exec_command("echo hello", sandbox="bwrap")
+
+        argv = captured.get("argv")
+        self.assertIsInstance(argv, list)
+        self.assertIn("bwrap", " ".join(str(part) for part in argv))
+        self.assertIn("ok", out)
 
     def test_computer_use_tool_calls_executor(self) -> None:
         payload = {"ok": True, "arguments": {"action": "wait", "time": 1}}
@@ -1661,6 +1785,80 @@ class ToolsTests(unittest.TestCase):
         payload = json.loads(web_fetch("file:///tmp/test.txt"))
         self.assertIn("error", payload)
 
+    def test_web_fetch_blocks_private_hosts_by_default(self) -> None:
+        payload = json.loads(web_fetch("http://127.0.0.1:8080"))
+        self.assertIn("error", payload)
+        self.assertIn("blocked", payload["error"].lower())
+
+    def test_web_fetch_blocks_private_redirect_target(self) -> None:
+        class _FakeResponse(BytesIO):
+            status = 200
+            headers = {"Content-Type": "text/html"}
+            url = "http://127.0.0.1:8080/private"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch(
+            "openpipixia.tooling.registry.urlopen",
+            side_effect=[URLError("fallback"), _FakeResponse(b"<html>redirected</html>")],
+        ):
+            payload = json.loads(web_fetch("https://example.com"))
+
+        self.assertIn("error", payload)
+        self.assertIn("blocked", payload["error"].lower())
+
+    def test_web_fetch_prefers_jina_reader_payload(self) -> None:
+        class _FakeResponse(BytesIO):
+            status = 200
+            headers = {"Content-Type": "application/json"}
+            url = "https://r.jina.ai/https://example.com"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        payload = {
+            "data": {
+                "url": "https://example.com/final",
+                "title": "Example",
+                "content": "Hello from Jina",
+            }
+        }
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_FakeResponse(json.dumps(payload).encode("utf-8"))):
+            result = json.loads(web_fetch("https://example.com"))
+
+        self.assertEqual(result["extractor"], "jina")
+        self.assertTrue(result["untrusted"])
+        self.assertIn("Hello from Jina", result["text"])
+
+    def test_web_fetch_detects_image_payload(self) -> None:
+        class _FakeImageResponse(BytesIO):
+            status = 200
+            headers = {"Content-Type": "image/png"}
+            url = "https://example.com/image.png"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch(
+            "openpipixia.tooling.registry.urlopen",
+            side_effect=[URLError("fallback"), _FakeImageResponse(b"\x89PNG\r\n")],
+        ):
+            result = json.loads(web_fetch("https://example.com/image.png"))
+
+        self.assertEqual(result["extractor"], "image")
+        self.assertEqual(result["mimeType"], "image/png")
+        self.assertTrue(result["untrusted"])
+
     def test_web_tools_respect_security_network_flag(self) -> None:
         os.environ["OPENPIPIXIA_ALLOW_NETWORK"] = "0"
         search_out = web_search("adk")
@@ -1679,6 +1877,31 @@ class ToolsTests(unittest.TestCase):
         os.environ["OPENPIPIXIA_WEB_SEARCH_PROVIDER"] = "dummy"
         out = web_search("adk")
         self.assertIn("not supported", out.lower())
+
+    def test_web_search_falls_back_to_duckduckgo_when_brave_key_missing(self) -> None:
+        os.environ["OPENPIPIXIA_WEB_ENABLED"] = "1"
+        os.environ["OPENPIPIXIA_WEB_SEARCH_ENABLED"] = "1"
+        os.environ["OPENPIPIXIA_WEB_SEARCH_PROVIDER"] = "brave"
+        os.environ.pop("BRAVE_API_KEY", None)
+        html_body = (
+            '<a class="result__a" href="https://example.com">Example Title</a>'
+            '<div class="result__snippet">Example snippet</div>'
+        )
+
+        class _FakeResponse(BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch("openpipixia.tooling.registry.urlopen", return_value=_FakeResponse(html_body.encode("utf-8"))):
+            out = web_search("adk")
+
+        self.assertIn("Example Title", out)
+        self.assertIn("https://example.com", out)
 
     def test_spawn_subagent_requires_dispatcher(self) -> None:
         ctx = pytypes.SimpleNamespace(

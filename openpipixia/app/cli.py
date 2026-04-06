@@ -13,6 +13,7 @@ import socket
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from urllib.parse import urlparse
 from loguru import logger
 
 from ..core.config import (
+    apply_agent_role_defaults,
     bootstrap_env_from_config,
     default_config,
     default_runtime_config,
@@ -31,6 +33,7 @@ from ..core.config import (
     get_runtime_config_path,
     load_config,
     load_runtime_config,
+    normalize_agent_role,
     save_config,
     save_runtime_config,
 )
@@ -435,6 +438,105 @@ def _cmd_spawn(*, agent: str | None = None) -> int:
         print_agent_output_sections=_print_agent_output_sections,
         read_subagent_records=lambda limit: _read_subagent_records(limit=limit),
     )
+
+
+def _cmd_list(*, output_json: bool) -> int:
+    """List known agents with role, workspace, and enablement state."""
+    entries = _load_global_config_entries()
+    enabled_names = {entry["name"] for entry in entries if bool(entry.get("enabled"))}
+    data_dir = get_data_dir()
+    discovered_names: list[str] = []
+    if data_dir.exists():
+        for child in sorted(data_dir.iterdir(), key=lambda item: item.name.lower()):
+            if not child.is_dir() or child.name.startswith(".") or child.name == "skills":
+                continue
+            if (child / "config.json").exists():
+                discovered_names.append(child.name)
+
+    ordered_names: list[str] = []
+    seen: set[str] = set()
+    for name in [*discovered_names, *[entry["name"] for entry in entries]]:
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered_names.append(name)
+
+    payload: list[dict[str, Any]] = []
+    for agent_name in ordered_names:
+        config_path = _agent_config_path(agent_name)
+        role = ""
+        workspace = ""
+        if config_path.exists():
+            cfg = load_config(config_path=config_path)
+            role = str(cfg.get("agent", {}).get("role", "")).strip()
+            workspace = str(cfg.get("agent", {}).get("workspace", "")).strip()
+        payload.append(
+            {
+                "name": agent_name,
+                "enabled": agent_name in enabled_names,
+                "role": role,
+                "workspace": workspace,
+                "configPath": str(config_path),
+            }
+        )
+
+    if output_json:
+        _stdout_line(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if not payload:
+        _stdout_line("No agents found.")
+        return 0
+
+    _stdout_line("Agents:")
+    for item in payload:
+        enabled_label = "enabled" if item["enabled"] else "disabled"
+        role_label = item["role"] or "unknown"
+        workspace_label = item["workspace"] or "(unset)"
+        _stdout_line(f"- {item['name']} [{enabled_label}] role={role_label} workspace={workspace_label}")
+    return 0
+
+
+def _cmd_enable_disable(*, name: str, enabled: bool) -> int:
+    """Enable or disable one known agent in global_config.json."""
+    normalized_name = _normalize_agent_name(name)
+    if not normalized_name:
+        _stdout_line("Error: agent name is empty.")
+        return 2
+
+    config_path = _agent_config_path(normalized_name)
+    if not config_path.exists():
+        _stdout_line(f"Error: agent '{normalized_name}' config not found: {config_path}")
+        return 1
+
+    global_config_path, existed = _set_global_agent_enabled(agent_name=normalized_name, enabled=enabled)
+    action = "Enabled" if enabled else "Disabled"
+    _stdout_line(f"{action} agent: {normalized_name}")
+    _stdout_line(f"Global config updated: {global_config_path}")
+    if not existed:
+        _stdout_line(f"Agent '{normalized_name}' was added to global_config.json.")
+    return 0
+
+
+def _cmd_delete(*, name: str) -> int:
+    """Delete one agent config directory and remove it from global_config.json."""
+    normalized_name = _normalize_agent_name(name)
+    if not normalized_name:
+        _stdout_line("Error: agent name is empty.")
+        return 2
+
+    agent_dir = get_data_dir() / normalized_name
+    config_path = agent_dir / "config.json"
+    if not config_path.exists():
+        _stdout_line(f"Error: agent '{normalized_name}' config not found: {config_path}")
+        return 1
+
+    shutil.rmtree(agent_dir)
+    global_config_path = _remove_global_agent_entry(normalized_name)
+    _stdout_line(f"Deleted agent: {normalized_name}")
+    _stdout_line(f"Removed directory: {agent_dir}")
+    _stdout_line(f"Global config updated: {global_config_path}")
+    return 0
 
 
 def _check_openai_codex_oauth() -> tuple[bool, str]:
@@ -2037,6 +2139,18 @@ class InstallInitResult:
     runtime_state: str
 
 
+@dataclass(frozen=True)
+class CreateAgentResult:
+    """Resolved side effects after creating one agent."""
+
+    agent_name: str
+    role: str
+    config_path: Path
+    runtime_config_path: Path
+    workspace: Path
+    global_config_path: Path
+
+
 def _run_install_init_setup(*, force: bool) -> InstallInitResult:
     """Create/refresh config + runtime config + workspace and return summary."""
     config_path = get_config_path()
@@ -2185,6 +2299,178 @@ def _init_workspace_support_files(*, workspace: Path, force: bool) -> None:
     memory_dir.mkdir(parents=True, exist_ok=True)
     for name, content in _INIT_MEMORY_FILES.items():
         _write_text_if_missing(path=memory_dir / name, content=content, force=force)
+
+
+def _load_global_config_entries() -> list[dict[str, Any]]:
+    """Load normalized global agent entries from global_config.json."""
+    path = _global_config_path()
+    if not path.exists():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(raw, dict):
+        return []
+
+    agents_raw = raw.get("agents")
+    entries: list[Any] = []
+    if isinstance(agents_raw, list):
+        entries = agents_raw
+    elif isinstance(agents_raw, dict) and isinstance(agents_raw.get("list"), list):
+        entries = agents_raw.get("list", [])
+
+    normalized_entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in entries:
+        name = ""
+        enabled = True
+        if isinstance(item, str):
+            name = _normalize_agent_name(item)
+        elif isinstance(item, dict):
+            name = _normalize_agent_name(item.get("name") or item.get("id"))
+            enabled = is_enabled(item.get("enabled"), default=True)
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        normalized_entries.append({"name": name, "enabled": enabled})
+    return normalized_entries
+
+
+def _save_global_config_entries(entries: list[dict[str, Any]]) -> Path:
+    """Persist global agent entries into global_config.json."""
+    path = _global_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"agents": entries}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _ensure_global_agent_enabled(agent_name: str) -> Path:
+    """Ensure one agent exists in global_config.json and is enabled."""
+    entries = _load_global_config_entries()
+    for entry in entries:
+        if entry["name"] == agent_name:
+            entry["enabled"] = True
+            return _save_global_config_entries(entries)
+    entries.append({"name": agent_name, "enabled": True})
+    return _save_global_config_entries(entries)
+
+
+def _set_global_agent_enabled(*, agent_name: str, enabled: bool) -> tuple[Path, bool]:
+    """Set one agent enablement flag in global_config.json.
+
+    Returns the saved global config path and whether the target agent existed
+    before the update.
+    """
+    normalized_name = _normalize_agent_name(agent_name)
+    entries = _load_global_config_entries()
+    found = False
+    for entry in entries:
+        if entry["name"] != normalized_name:
+            continue
+        entry["enabled"] = enabled
+        found = True
+        break
+    if not found:
+        entries.append({"name": normalized_name, "enabled": enabled})
+    return _save_global_config_entries(entries), found
+
+
+def _remove_global_agent_entry(agent_name: str) -> Path:
+    """Remove one agent entry from global_config.json and persist the result."""
+    normalized_name = _normalize_agent_name(agent_name)
+    entries = [entry for entry in _load_global_config_entries() if entry["name"] != normalized_name]
+    return _save_global_config_entries(entries)
+
+
+def _default_agent_workspace(agent_name: str) -> Path:
+    """Create and return the default tmp workspace for one new agent."""
+    return Path(tempfile.mkdtemp(prefix=f"openpipixia-{agent_name}-")).resolve()
+
+
+def _run_create_agent_setup(*, name: str, role: str, workspace: str | None) -> CreateAgentResult:
+    """Create one role-based agent config/runtime/workspace set."""
+    normalized_name = _normalize_agent_name(name)
+    if not normalized_name:
+        raise ValueError("agent name is empty after normalization")
+
+    agent_dir = get_data_dir() / normalized_name
+    if agent_dir.exists():
+        raise FileExistsError(f"agent '{normalized_name}' already exists: {agent_dir}")
+
+    role_name = normalize_agent_role(role)
+    workspace_path = (
+        Path(str(workspace).strip()).expanduser().resolve(strict=False)
+        if str(workspace or "").strip()
+        else _default_agent_workspace(normalized_name)
+    )
+
+    config = default_config()
+    config["agent"]["name"] = normalized_name
+    config["agent"]["workspace"] = str(workspace_path)
+    apply_agent_role_defaults(config, role=role_name)
+
+    config_path = _agent_config_path(normalized_name)
+    runtime_config_path = config_path.with_name("runtime.json")
+    saved_to = save_config(config, config_path=config_path)
+    runtime_saved_to = save_runtime_config(default_runtime_config(), runtime_config_path=runtime_config_path)
+
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    _init_workspace_support_files(workspace=workspace_path, force=False)
+    global_config_path = _ensure_global_agent_enabled(normalized_name)
+    return CreateAgentResult(
+        agent_name=normalized_name,
+        role=role_name,
+        config_path=saved_to,
+        runtime_config_path=runtime_saved_to,
+        workspace=workspace_path,
+        global_config_path=global_config_path,
+    )
+
+
+def _cmd_create(*, name: str, role: str, workspace: str | None) -> int:
+    """Create one role-based agent and enable it in global_config.json."""
+    try:
+        result = _run_create_agent_setup(name=name, role=role, workspace=workspace)
+    except ValueError as exc:
+        _stdout_line(f"Error: {exc}")
+        return 2
+    except FileExistsError as exc:
+        _stdout_line(f"Error: {exc}")
+        return 1
+
+    _stdout_line(f"Created agent: {result.agent_name}")
+    _stdout_line(f"Role: {result.role}")
+    _stdout_line(f"Config created: {result.config_path}")
+    _stdout_line(f"Runtime config created: {result.runtime_config_path}")
+    _stdout_line(f"Workspace ready: {result.workspace}")
+    _stdout_line(f"Global config updated: {result.global_config_path}")
+    _stdout_line(f"Agent enabled in global_config.json: {result.agent_name}")
+    cfg = load_config(config_path=result.config_path)
+    permissions = cfg.get("agent", {}).get("permissions", {})
+    if isinstance(permissions, dict):
+        _stdout_line("Permission summary:")
+        _stdout_line(
+            "  "
+            + ", ".join(
+                [
+                    f"filesystem={permissions.get('filesystemAccess', '')}",
+                    f"shell={permissions.get('shellExec', '')}",
+                    f"network={permissions.get('networkAccess', '')}",
+                    f"delegate={permissions.get('canDelegate', False)}",
+                    f"high_risk={permissions.get('highRiskActionAccess', '')}",
+                ]
+            )
+        )
+    _stdout_line("Next steps:")
+    _stdout_line("1. Edit the per-agent config/runtime/workspace files as needed.")
+    _stdout_line("2. ppx doctor  # validate current runtime config")
+    _stdout_line(
+        "3. ppx --config-path "
+        f"{result.config_path} "
+        "gateway run --channels local --interactive-local"
+    )
+    return 0
 
 
 def _write_init_global_config() -> Path:
@@ -3626,7 +3912,7 @@ def _should_require_agent_config_for_gateway(args: argparse.Namespace) -> bool:
 def _should_bootstrap_single_agent_env(args: argparse.Namespace) -> bool:
     """Return true when startup should hydrate one explicit config into process env."""
 
-    if args.command in {"install", "init", "client-api"}:
+    if args.command in {"install", "create", "client-api"}:
         return False
     return True
 
@@ -3662,15 +3948,35 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Reset config to defaults before running checks.",
     )
-    init_parser = subparsers.add_parser(
-        "init",
-        help="Initialize default multi-agent layout (3 agents + global_config).",
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Create one agent config with role-based defaults.",
     )
-    init_parser.add_argument(
-        "--force",
+    create_parser.add_argument("--name", required=True, help="Agent name. Special characters become '-'.")
+    create_parser.add_argument(
+        "--role",
+        default="assistant",
+        choices=["assistant", "operator", "manager"],
+        help="Agent role. Defaults to assistant.",
+    )
+    create_parser.add_argument(
+        "--workspace",
+        default="",
+        help="Optional workspace path. Defaults to a new directory under the system tmp directory.",
+    )
+    list_parser = subparsers.add_parser("list", help="List known agents and their current status.")
+    list_parser.add_argument(
+        "--json",
+        dest="output_json",
         action="store_true",
-        help="Reset config to defaults before initialization.",
+        help="Emit the agent list as JSON.",
     )
+    enable_parser = subparsers.add_parser("enable", help="Enable one agent in global_config.json.")
+    enable_parser.add_argument("name", help="Agent name.")
+    disable_parser = subparsers.add_parser("disable", help="Disable one agent in global_config.json.")
+    disable_parser.add_argument("name", help="Agent name.")
+    delete_parser = subparsers.add_parser("delete", help="Delete one agent and remove it from global_config.json.")
+    delete_parser.add_argument("name", help="Agent name.")
     skills_parser = subparsers.add_parser("skills", help="List discovered skills as JSON.")
     skills_parser.add_argument("--agent", default=None, help="Optional agent id.")
     mcps_parser = subparsers.add_parser("mcps", help="List connected MCP servers and their available APIs.")
@@ -4036,7 +4342,11 @@ def main(argv: list[str] | None = None) -> None:
 
         handlers: dict[str, Callable[[], int]] = {
             "install": lambda: _cmd_install(force=args.force),
-            "init": lambda: _cmd_init(force=args.force),
+            "create": lambda: _cmd_create(name=args.name, role=args.role, workspace=args.workspace),
+            "list": lambda: _cmd_list(output_json=args.output_json),
+            "enable": lambda: _cmd_enable_disable(name=args.name, enabled=True),
+            "disable": lambda: _cmd_enable_disable(name=args.name, enabled=False),
+            "delete": lambda: _cmd_delete(name=args.name),
             "skills": lambda: _cmd_skills(agent=getattr(args, "agent", None)),
             "mcps": lambda: _cmd_mcps(agent=getattr(args, "agent", None)),
             "spawn": lambda: _cmd_spawn(agent=getattr(args, "agent", None)),

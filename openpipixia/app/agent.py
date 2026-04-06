@@ -24,6 +24,8 @@ from ..tooling.registry import (
     cron,
     edit_file,
     exec_command,
+    glob,
+    grep,
     list_dir,
     message_file,
     message,
@@ -55,6 +57,26 @@ async def _after_agent_memory_callback(callback_context: Any) -> None:
 def _gui_builtin_tools_enabled() -> bool:
     """Return whether legacy builtin GUI tools should be exposed."""
     return env_enabled(_GUI_BUILTIN_TOOLS_ENABLED_ENV, default=True)
+
+
+def _agent_role() -> str:
+    """Return the current agent role from environment."""
+    return os.getenv("OPENPIPIXIA_AGENT_ROLE", "").strip()
+
+
+def _can_delegate() -> bool:
+    """Return whether the current agent may delegate to sub-agents."""
+    return env_enabled("OPENPIPIXIA_CAN_DELEGATE", default=True)
+
+
+def _tool_name(tool: Any) -> str:
+    """Return a stable tool name for filtering/debug output."""
+    if hasattr(tool, "name") and isinstance(getattr(tool, "name"), str):
+        return getattr(tool, "name")
+    if hasattr(tool, "func"):
+        func = getattr(tool, "func")
+        return getattr(func, "__name__", str(tool))
+    return getattr(tool, "__name__", str(tool))
 
 
 def _build_instruction() -> str:
@@ -97,7 +119,7 @@ Rules:
 - Use `message_image(path=..., caption=...)` when a local image file should be delivered to the current channel.
 - Use `message_file(path=..., caption=...)` when a local file should be delivered to the current channel.
 - Use `spawn_subagent(prompt=...)` for background sub-tasks that should finish later.
-- Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `exec`, `process`, `browser`, `web_search`, `web_fetch`, `message`, `message_image`, `message_file`, `cron`, `spawn_subagent`.
+- Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `exec`, `process`, `browser`, `web_search`, `web_fetch`, `message`, `message_image`, `message_file`, `cron`, `spawn_subagent`.
 {gui_tool_guidance}- Browser routing supports `target=host|node|sandbox`; use `target=node` with `node=<id>` when a specific node proxy is required.
 - For long-running shell tasks, use `exec(background=true|yield_ms=...)` and follow-up with `process(...)`.
 - Current time is injected into each request payload (e.g. `Current request time`).
@@ -110,7 +132,7 @@ Available skills:
 
 def _build_tools() -> list[Any]:
     """Assemble builtin tools plus optional MCP toolsets from env config."""
-    tools: list[Any] = [
+    base_tools: list[Any] = [
         PreloadMemoryTool(),
         list_skills,
         read_skill,
@@ -118,6 +140,8 @@ def _build_tools() -> list[Any]:
         write_file,
         edit_file,
         list_dir,
+        glob,
+        grep,
         exec_command,
         process_session,
         browser,
@@ -127,10 +151,32 @@ def _build_tools() -> list[Any]:
         message_image,
         message_file,
         cron,
-        LongRunningFunctionTool(func=spawn_subagent),
     ]
+    if _can_delegate():
+        base_tools.append(LongRunningFunctionTool(func=spawn_subagent))
     if _gui_builtin_tools_enabled():
-        tools.extend([computer_task, computer_use])
+        base_tools.extend([computer_task, computer_use])
+
+    role = _agent_role()
+    if role == "Assistant":
+        allowed_names = {
+            "list_skills",
+            "read_skill",
+            "read_file",
+            "list_dir",
+            "glob",
+            "grep",
+        }
+        tools = [tool for tool in base_tools if _tool_name(tool) in allowed_names or isinstance(tool, PreloadMemoryTool)]
+        return tools
+
+    if role == "Operator":
+        blocked_names = {"message", "message_image", "message_file"}
+        tools = [tool for tool in base_tools if _tool_name(tool) not in blocked_names]
+        tools.extend(build_mcp_toolsets_from_env())
+        return tools
+
+    tools = list(base_tools)
     tools.extend(build_mcp_toolsets_from_env())
     return tools
 

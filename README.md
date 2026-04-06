@@ -17,7 +17,7 @@
 
 ## 🧭 Quick Start
 
-### 🛠️ 1. Set Up the Environment and Initialize
+### 🛠️ 1. Set Up the Environment and Create an Agent
 ```bash
 git clone https://github.com/pipixia-labs/openpipixia
 cd openpipixia
@@ -25,18 +25,28 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt 
 pip install .
-ppx init
-# Follow the `ppx init` output and edit the generated config files.
+ppx create --name "assistant-main"
+# Follow the `ppx create` output and edit the generated config files.
 ```
 
-`ppx init` scaffolds a default multi-agent setup:
+`ppx create` creates one role-based agent at a time. By default:
 
-- `~/.openpipixia/agent_name_1`
-- `~/.openpipixia/agent_name_2`
-- `~/.openpipixia/agent_name_3`
+- the role is `Assistant` (low-privilege)
+- the workspace is a new directory under the system temp directory
+- the new agent is added to and enabled in `~/.openpipixia/global_config.json`
+
+Example agent files:
+
+- `~/.openpipixia/assistant-main/config.json`
+- `~/.openpipixia/assistant-main/runtime.json`
 - `~/.openpipixia/global_config.json`
 
-By default, only `agent_name_1` is enabled in `global_config.json`.
+You can also create higher-privilege agents explicitly:
+
+```bash
+ppx create --name "operator-main" --role operator
+ppx create --name "manager-main" --role manager --workspace ~/work/openppx-manager
+```
 
 Each agent workspace includes bootstrap/task files and local scaffolding, including:
 
@@ -51,7 +61,7 @@ Review and edit your configuration files:
 
 - `global_config.json`
 - Each agent's config/runtime/workspace files, for example:
-  `~/.openpipixia/agent_name_1/config.json`
+  `~/.openpipixia/assistant-main/config.json`
 
 Fill in required provider keys and assign per-agent security settings.
 You can leave channel-specific keys (for example Telegram, Feishu, Weixin, or WeCom) empty at this stage.
@@ -59,7 +69,7 @@ You can leave channel-specific keys (for example Telegram, Feishu, Weixin, or We
 ### 💬 3. Try Local Interactive Mode
 
 ```bash
-ppx --config-path ~/.openpipixia/agent_name_1/config.json gateway run --channels local --interactive-local
+ppx --config-path ~/.openpipixia/assistant-main/config.json gateway run --channels local --interactive-local
 ```
 
 ### 🛰️ 4. Enable Channel Chat and Start Background Service
@@ -76,6 +86,10 @@ ppx gateway start
 
 ```bash
 ppx --help
+ppx list
+ppx enable assistant-main
+ppx disable assistant-main
+ppx delete assistant-main
 ppx gateway --help
 ppx gateway-service --help
 ppx provider --help
@@ -205,6 +219,11 @@ scripts/install_smoke.sh --with-gateway
 ## ⚡ Quick Ops
 
 ```bash
+ppx list
+ppx enable operator-main
+ppx disable assistant-main
+ppx delete assistant-main
+
 # Single-turn call
 python -m openpipixia.cli -m "Describe what you can do"
 python -m openpipixia.cli -m "Describe what you can do" --user-id local --session-id demo001

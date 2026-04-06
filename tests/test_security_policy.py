@@ -7,7 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openpipixia.core.security import PathGuard, SecurityPolicy, load_security_policy
+from openpipixia.core.security import (
+    PathGuard,
+    SecurityPolicy,
+    load_security_policy,
+    validate_network_url,
+)
 
 
 class SecurityPolicyTests(unittest.TestCase):
@@ -24,6 +29,7 @@ class SecurityPolicyTests(unittest.TestCase):
             policy = load_security_policy()
 
         self.assertFalse(policy.restrict_to_workspace)
+        self.assertEqual(policy.filesystem_access, "read_write")
         self.assertTrue(policy.allow_exec)
         self.assertTrue(policy.allow_network)
         self.assertEqual(policy.exec_allowlist, ())
@@ -50,6 +56,16 @@ class SecurityPolicyTests(unittest.TestCase):
         self.assertTrue(policy.is_exec_allowed("python"))
         self.assertFalse(policy.is_exec_allowed("git"))
 
+    def test_validate_network_url_blocks_private_hosts_by_default(self) -> None:
+        error = validate_network_url("http://127.0.0.1:8080")
+        self.assertIsInstance(error, str)
+        self.assertIn("blocked", error.lower())
+
+    def test_validate_network_url_allows_private_hosts_when_policy_disabled(self) -> None:
+        os.environ["OPENPIPIXIA_BROWSER_BLOCK_PRIVATE_NETWORKS"] = "0"
+        error = validate_network_url("http://127.0.0.1:8080")
+        self.assertIsNone(error)
+
 
 class PathGuardTests(unittest.TestCase):
     def test_path_guard_blocks_outside_workspace_when_restricted(self) -> None:
@@ -58,6 +74,7 @@ class PathGuardTests(unittest.TestCase):
             policy = SecurityPolicy(
                 workspace_root=workspace,
                 restrict_to_workspace=True,
+                filesystem_access="read_write",
                 allow_exec=True,
                 allow_network=True,
                 exec_allowlist=(),
@@ -73,6 +90,7 @@ class PathGuardTests(unittest.TestCase):
             policy = SecurityPolicy(
                 workspace_root=workspace,
                 restrict_to_workspace=True,
+                filesystem_access="read_write",
                 allow_exec=True,
                 allow_network=True,
                 exec_allowlist=(),

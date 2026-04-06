@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from openpipixia.core.config import (
+    apply_agent_role_defaults,
     apply_config_to_env,
     bootstrap_env_from_config,
     config_to_env,
@@ -73,6 +74,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["agent"]["heartbeat"]["activeHours"]["start"], "")
         self.assertEqual(cfg["agent"]["heartbeat"]["activeHours"]["end"], "")
         self.assertEqual(cfg["agent"]["heartbeat"]["activeHours"]["timezone"], "user")
+        self.assertEqual(cfg["agent"]["name"], "")
+        self.assertEqual(cfg["agent"]["role"], "")
+        self.assertEqual(cfg["agent"]["permissions"], {})
         self.assertFalse(cfg["security"]["restrictToWorkspace"])
         self.assertTrue(cfg["security"]["allowExec"])
         self.assertTrue(cfg["security"]["allowNetwork"])
@@ -167,6 +171,30 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(os.environ["OPENPIPIXIA_DEBUG"], "1")
         self.assertEqual(os.environ["OPENPIPIXIA_DEBUG_LOG_PATH"], "/tmp/openppx-debug.log")
+
+    def test_apply_agent_role_defaults_syncs_assistant_permissions(self) -> None:
+        cfg = default_config()
+        apply_agent_role_defaults(cfg, role="assistant")
+
+        self.assertEqual(cfg["agent"]["role"], "Assistant")
+        self.assertEqual(cfg["agent"]["permissions"]["filesystemAccess"], "read_only")
+        self.assertTrue(cfg["security"]["restrictToWorkspace"])
+        self.assertFalse(cfg["security"]["allowExec"])
+        self.assertFalse(cfg["security"]["allowNetwork"])
+        self.assertEqual(cfg["security"]["execAllowlist"], [])
+
+    def test_apply_agent_role_defaults_syncs_operator_permissions(self) -> None:
+        cfg = default_config()
+        apply_agent_role_defaults(cfg, role="operator")
+        env = config_to_env(cfg)
+
+        self.assertEqual(cfg["agent"]["role"], "Operator")
+        self.assertEqual(cfg["agent"]["permissions"]["filesystemAccess"], "read_write")
+        self.assertTrue(cfg["security"]["restrictToWorkspace"])
+        self.assertTrue(cfg["security"]["allowExec"])
+        self.assertTrue(cfg["security"]["allowNetwork"])
+        self.assertEqual(env["OPENPIPIXIA_AGENT_ROLE"], "Operator")
+        self.assertEqual(env["OPENPIPIXIA_FILESYSTEM_ACCESS"], "read_write")
 
     def test_default_channel_streaming_flags(self) -> None:
         cfg = default_config()

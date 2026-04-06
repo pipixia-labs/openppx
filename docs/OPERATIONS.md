@@ -95,11 +95,11 @@ ppx gateway-service status --json
 ### 常见问题
 
 - `Missing ... API key`  
-  打开 `~/.openpipixia/config.json`，给启用 provider 填 `apiKey`，再运行 `ppx doctor`。
+  打开目标 Agent 的 `~/.openpipixia/<agent_name>/config.json`，给启用 provider 填 `apiKey`，再运行 `ppx doctor`。
   如果本地环境变量已配置，也可先运行 `ppx doctor --fix` 让系统自动回填缺失项。
 
 - `channels....` 凭证字段缺失（例如 feishu/telegram/discord/dingtalk/slack/whatsapp/email/qq）  
-  在 `~/.openpipixia/config.json` 的 `channels` 段补齐对应字段，再运行 `ppx doctor`。
+  在目标 Agent 的 `~/.openpipixia/<agent_name>/config.json` 的 `channels` 段补齐对应字段，再运行 `ppx doctor`。
   如果不确定具体字段，直接看 `ppx doctor --json` 的缺失项。
 
 - `MCP server ... health check failed`  

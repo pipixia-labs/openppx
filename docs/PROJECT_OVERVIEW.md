@@ -132,8 +132,8 @@ ppx doctor --fix
 
 会生成：
 
-- `~/.openpipixia/config.json`
-- `~/.openpipixia/runtime.json`
+- `~/.openpipixia/<agent_name>/config.json`
+- `~/.openpipixia/<agent_name>/runtime.json`
 - `~/.openpipixia/workspace`
 
 ### 6.2 常用运行方式

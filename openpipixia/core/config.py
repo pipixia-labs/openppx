@@ -125,6 +125,12 @@ _CONFIG_PATH_ENV = "OPENPIPIXIA_CONFIG_FILE"
 _RUNTIME_CONFIG_PATH_ENV = "OPENPIPIXIA_RUNTIME_CONFIG_FILE"
 _DATA_DIR_ENV = "OPENPIPIXIA_DATA_DIR"
 _MEMORY_MARKDOWN_DIR_ENV = "OPENPIPIXIA_MEMORY_MARKDOWN_DIR"
+_AGENT_ROLE_CANONICAL: dict[str, str] = {
+    "assistant": "Assistant",
+    "operator": "Operator",
+    "manager": "Manager",
+}
+_FILESYSTEM_ACCESS_VALUES: frozenset[str] = frozenset({"read_only", "read_write"})
 _SHELL_DEBUG_ENV_KEYS: frozenset[str] = frozenset(
     {"OPENPIPIXIA_DEBUG", "OPENPIPIXIA_DEBUG_LOG_PATH"}
 )
@@ -160,6 +166,124 @@ def get_runtime_config_path() -> Path:
 def get_default_workspace_path() -> Path:
     """Return default workspace path used by install initialization."""
     return get_data_dir() / "workspace"
+
+
+def normalize_agent_role(value: Any, *, default: str = "Assistant") -> str:
+    """Normalize one role name into a canonical Agent role label."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+    return _AGENT_ROLE_CANONICAL.get(raw, default)
+
+
+def role_default_permissions(role: str) -> dict[str, Any]:
+    """Return the default permission profile for one canonical role."""
+    normalized = normalize_agent_role(role)
+    if normalized == "Manager":
+        return {
+            "workspaceScope": "multi_workspace",
+            "filesystemAccess": "read_write",
+            "shellExec": "full",
+            "networkAccess": "full",
+            "toolAccess": "broad",
+            "secretAccess": "limited",
+            "canDelegate": True,
+            "canApprovePrivilegeEscalation": True,
+            "highRiskActionAccess": "conditional",
+        }
+    if normalized == "Operator":
+        return {
+            "workspaceScope": "single_workspace",
+            "filesystemAccess": "read_write",
+            "shellExec": "restricted",
+            "networkAccess": "restricted",
+            "toolAccess": "task_scoped",
+            "secretAccess": "limited",
+            "canDelegate": True,
+            "canApprovePrivilegeEscalation": False,
+            "highRiskActionAccess": "false",
+        }
+    return {
+        "workspaceScope": "single_workspace",
+        "filesystemAccess": "read_only",
+        "shellExec": "none",
+        "networkAccess": "none",
+        "toolAccess": "read_only",
+        "secretAccess": "none",
+        "canDelegate": False,
+        "canApprovePrivilegeEscalation": False,
+        "highRiskActionAccess": "false",
+    }
+
+
+def apply_agent_role_defaults(config: dict[str, Any], *, role: str) -> dict[str, Any]:
+    """Apply one role profile to config and sync legacy security flags."""
+    normalized_role = normalize_agent_role(role)
+    permissions = role_default_permissions(normalized_role)
+
+    agent = config.setdefault("agent", {})
+    if not isinstance(agent, dict):
+        agent = {}
+        config["agent"] = agent
+    agent["role"] = normalized_role
+    agent["permissions"] = permissions
+
+    security = config.setdefault("security", {})
+    if not isinstance(security, dict):
+        security = {}
+        config["security"] = security
+
+    if normalized_role == "Manager":
+        security["restrictToWorkspace"] = False
+        security["allowExec"] = True
+        security["allowNetwork"] = True
+        security["execAllowlist"] = []
+    elif normalized_role == "Operator":
+        security["restrictToWorkspace"] = True
+        security["allowExec"] = True
+        security["allowNetwork"] = True
+        security["execAllowlist"] = [
+            "python",
+            "python3",
+            "bash",
+            "sh",
+            "zsh",
+            "ls",
+            "cat",
+            "rg",
+            "grep",
+            "find",
+            "sed",
+            "awk",
+            "head",
+            "tail",
+            "wc",
+            "sort",
+            "uniq",
+            "cut",
+            "tr",
+            "tee",
+            "touch",
+            "mkdir",
+            "cp",
+            "mv",
+            "pytest",
+            "git",
+        ]
+    else:
+        security["restrictToWorkspace"] = True
+        security["allowExec"] = False
+        security["allowNetwork"] = False
+        security["execAllowlist"] = []
+    return config
+
+
+def _normalize_filesystem_access(value: Any) -> str:
+    """Normalize filesystem access value into a supported policy token."""
+    raw = str(value or "").strip().lower()
+    if raw in _FILESYSTEM_ACCESS_VALUES:
+        return raw
+    return "read_write"
 
 
 def _default_runtime_env_overrides() -> dict[str, Any]:
@@ -230,6 +354,9 @@ def default_config() -> dict[str, Any]:
     """Build default config content."""
     return {
         "agent": {
+            "name": "",
+            "role": "",
+            "permissions": {},
             "workspace": str(get_default_workspace_path()),
             "builtinSkillsDir": "",
             "heartbeat": {
@@ -636,10 +763,17 @@ def _resolve_web(cfg: dict[str, Any]) -> tuple[bool, bool, str, int, str]:
     return web_enabled, search_enabled, provider, max_results, api_key
 
 
-def _resolve_security(cfg: dict[str, Any]) -> tuple[bool, bool, bool, str]:
+def _resolve_security(cfg: dict[str, Any]) -> tuple[bool, bool, bool, str, str]:
     security = cfg.get("security")
     if not isinstance(security, dict):
         security = {}
+    agent = cfg.get("agent")
+    if not isinstance(agent, dict):
+        agent = {}
+    permissions = agent.get("permissions")
+    filesystem_access = "read_write"
+    if isinstance(permissions, dict) and permissions:
+        filesystem_access = _normalize_filesystem_access(permissions.get("filesystemAccess"))
 
     restrict = is_enabled(security.get("restrictToWorkspace"), default=False)
     allow_exec = is_enabled(security.get("allowExec"), default=True)
@@ -649,7 +783,7 @@ def _resolve_security(cfg: dict[str, Any]) -> tuple[bool, bool, bool, str]:
     if not isinstance(raw_allowlist, list):
         raw_allowlist = []
     allowlist = ",".join(normalize_allowlist(raw_allowlist))
-    return restrict, allow_exec, allow_network, allowlist
+    return restrict, allow_exec, allow_network, allowlist, filesystem_access
 
 
 def _resolve_mcp_servers_json(cfg: dict[str, Any]) -> str:
@@ -843,7 +977,7 @@ def config_to_env(
     web_enabled, web_search_enabled, web_search_provider, web_search_max_results, web_search_api_key = _resolve_web(
         cfg
     )
-    restrict_workspace, allow_exec, allow_network, exec_allowlist = _resolve_security(cfg)
+    restrict_workspace, allow_exec, allow_network, exec_allowlist, filesystem_access = _resolve_security(cfg)
     mcp_servers_json = _resolve_mcp_servers_json(cfg)
     gui_multimodal_env = _resolve_gui_multimodal_env(cfg)
     gui_provider_api_env = _resolve_gui_provider_api_key_env(cfg)
@@ -857,6 +991,18 @@ def config_to_env(
         "OPENPIPIXIA_PROVIDER_ENABLED": "1" if provider_enabled else "0",
         "OPENPIPIXIA_PROVIDER_API_BASE": provider_api_base,
         "OPENPIPIXIA_PROVIDER_EXTRA_HEADERS_JSON": provider_extra_headers,
+        "OPENPIPIXIA_AGENT_NAME": str(agent.get("name", "")).strip(),
+        "OPENPIPIXIA_AGENT_ROLE": normalize_agent_role(agent.get("role", ""), default=""),
+        "OPENPIPIXIA_CAN_DELEGATE": "1"
+        if bool(_as_dict(agent.get("permissions")).get("canDelegate", False))
+        else "0",
+        "OPENPIPIXIA_CAN_APPROVE_PRIVILEGE_ESCALATION": "1"
+        if bool(_as_dict(agent.get("permissions")).get("canApprovePrivilegeEscalation", False))
+        else "0",
+        "OPENPIPIXIA_HIGH_RISK_ACTION_ACCESS": str(
+            _as_dict(agent.get("permissions")).get("highRiskActionAccess", "false")
+        ).strip()
+        or "false",
         "OPENPIPIXIA_WORKSPACE": str(agent.get("workspace", "")).strip(),
         "OPENPIPIXIA_BUILTIN_SKILLS_DIR": str(agent.get("builtinSkillsDir", "")).strip(),
         "OPENPIPIXIA_HEARTBEAT_EVERY": str(heartbeat.get("every", "30m")).strip() or "30m",
@@ -882,6 +1028,7 @@ def config_to_env(
         "OPENPIPIXIA_WEB_SEARCH_PROVIDER": web_search_provider,
         "OPENPIPIXIA_WEB_SEARCH_MAX_RESULTS": str(web_search_max_results),
         "OPENPIPIXIA_RESTRICT_TO_WORKSPACE": "1" if restrict_workspace else "0",
+        "OPENPIPIXIA_FILESYSTEM_ACCESS": filesystem_access,
         "OPENPIPIXIA_ALLOW_EXEC": "1" if allow_exec else "0",
         "OPENPIPIXIA_ALLOW_NETWORK": "1" if allow_network else "0",
         "OPENPIPIXIA_EXEC_ALLOWLIST": exec_allowlist,
