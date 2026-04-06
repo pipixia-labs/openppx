@@ -31,7 +31,7 @@ ppx create --name "assistant-main"
 
 `ppx create` creates one role-based agent at a time. By default:
 
-- the role is `Assistant` (low-privilege)
+- the role is `assistant` (low-privilege)
 - the workspace is a new directory under the system temp directory
 - the new agent is added to and enabled in `~/.openppx/global_config.json`
 
@@ -45,7 +45,7 @@ You can also create higher-privilege agents explicitly:
 
 ```bash
 ppx create --name "operator-main" --role operator
-ppx create --name "manager-main" --role manager --workspace ~/work/openppx-manager
+ppx create --name "root-main" --role root --workspace ~/work/openppx-root
 ```
 
 Each agent has a per-agent config home under `~/.openppx/<agent_name>/` that includes:
@@ -72,7 +72,7 @@ Important:
 
 - `ppx create` only creates and enables an agent. It does not automatically turn on Feishu, Telegram, or other channels.
 - Channel settings must be edited in the `config.json` of the agent that is actually enabled and running.
-- If you created new agents such as `assistant-main` / `operator-main` / `manager-main`, but only updated old agent configs like `agent_name_1`, gateway will not use those old channel settings.
+- If you created new agents such as `assistant-main` / `operator-main` / `root-main`, but only updated old agent configs like `agent_name_1`, gateway will not use those old channel settings.
 - Before troubleshooting a Feishu connection issue, first run `ppx list` and confirm which agent is enabled, then check that agent's `channels.feishu.enabled`, `appId`, and `appSecret`.
 
 ### 💬 3. Try Local Interactive Mode

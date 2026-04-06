@@ -127,9 +127,11 @@ _DATA_DIR_ENV = "OPENPPX_DATA_DIR"
 _AGENT_HOME_ENV = "OPENPPX_AGENT_HOME"
 _MEMORY_MARKDOWN_DIR_ENV = "OPENPPX_MEMORY_MARKDOWN_DIR"
 _AGENT_ROLE_CANONICAL: dict[str, str] = {
-    "assistant": "Assistant",
-    "operator": "Operator",
-    "manager": "Manager",
+    "assistant": "assistant",
+    "operator": "operator",
+    "root": "root",
+    # Keep one legacy alias so older configs/CLI calls still map cleanly.
+    "manager": "root",
 }
 _FILESYSTEM_ACCESS_VALUES: frozenset[str] = frozenset({"read_only", "read_write"})
 _SHELL_DEBUG_ENV_KEYS: frozenset[str] = frozenset(
@@ -187,7 +189,7 @@ def get_default_workspace_path() -> Path:
     return get_data_dir() / "workspace"
 
 
-def normalize_agent_role(value: Any, *, default: str = "Assistant") -> str:
+def normalize_agent_role(value: Any, *, default: str = "assistant") -> str:
     """Normalize one role name into a canonical Agent role label."""
     raw = str(value or "").strip().lower()
     if not raw:
@@ -198,7 +200,7 @@ def normalize_agent_role(value: Any, *, default: str = "Assistant") -> str:
 def role_default_permissions(role: str) -> dict[str, Any]:
     """Return the default permission profile for one canonical role."""
     normalized = normalize_agent_role(role)
-    if normalized == "Manager":
+    if normalized == "root":
         return {
             "workspaceScope": "multi_workspace",
             "filesystemAccess": "read_write",
@@ -210,7 +212,7 @@ def role_default_permissions(role: str) -> dict[str, Any]:
             "canApprovePrivilegeEscalation": True,
             "highRiskActionAccess": "conditional",
         }
-    if normalized == "Operator":
+    if normalized == "operator":
         return {
             "workspaceScope": "single_workspace",
             "filesystemAccess": "read_write",
@@ -252,12 +254,12 @@ def apply_agent_role_defaults(config: dict[str, Any], *, role: str) -> dict[str,
         security = {}
         config["security"] = security
 
-    if normalized_role == "Manager":
+    if normalized_role == "root":
         security["restrictToWorkspace"] = False
         security["allowExec"] = True
         security["allowNetwork"] = True
         security["execAllowlist"] = []
-    elif normalized_role == "Operator":
+    elif normalized_role == "operator":
         security["restrictToWorkspace"] = True
         security["allowExec"] = True
         security["allowNetwork"] = True

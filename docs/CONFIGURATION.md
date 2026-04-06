@@ -22,6 +22,7 @@
 ```bash
 ppx create --name "assistant-main"
 ppx create --name "operator-main" --role operator
+ppx create --name "root-main" --role root
 ```
 
 创建后会得到类似目录结构：
@@ -57,9 +58,9 @@ Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true
 
 当前内置三种角色：
 
-- `Assistant`：低权限，默认单 workspace、文件只读、不可执行 shell、不可访问网络
-- `Operator`：执行型，默认单 workspace 读写、受限 shell、受限网络
-- `Manager`：高权限，允许更宽的执行与网络能力
+- `assistant`：低权限，默认单 workspace、文件只读、不可执行 shell、不可访问网络
+- `operator`：执行型，默认单 workspace 读写、受限 shell、受限网络
+- `root`：高权限，允许更宽的执行与网络能力
 
 第一版实现会把角色默认权限同步映射到现有 `security.*` 和运行时环境变量上。
 

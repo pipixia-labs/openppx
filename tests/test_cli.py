@@ -106,9 +106,9 @@ class CLITests(unittest.TestCase):
         with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
             with patch.object(cli, "_cmd_create", return_value=0) as mocked_create:
                 with self.assertRaises(SystemExit) as ctx:
-                    cli.main(["create", "--name", "demo", "--role", "manager", "--workspace", "/tmp/demo"])
+                    cli.main(["create", "--name", "demo", "--role", "root", "--workspace", "/tmp/demo"])
                 self.assertEqual(ctx.exception.code, 0)
-                mocked_create.assert_called_once_with(name="demo", role="manager", workspace="/tmp/demo")
+                mocked_create.assert_called_once_with(name="demo", role="root", workspace="/tmp/demo")
                 mocked_bootstrap.assert_not_called()
 
     def test_cmd_create_creates_one_agent_config_and_enables_it(self) -> None:
@@ -128,7 +128,7 @@ class CLITests(unittest.TestCase):
             self.assertTrue(runtime_path.exists())
             cfg = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(cfg["agent"]["name"], agent_name)
-            self.assertEqual(cfg["agent"]["role"], "Assistant")
+            self.assertEqual(cfg["agent"]["role"], "assistant")
             self.assertEqual(cfg["agent"]["permissions"]["filesystemAccess"], "read_only")
             self.assertTrue(cfg["security"]["restrictToWorkspace"])
             self.assertFalse(cfg["security"]["allowExec"])
@@ -223,7 +223,7 @@ class CLITests(unittest.TestCase):
             agent_dir.mkdir(parents=True)
             cfg = cli.default_config()
             cfg["agent"]["name"] = "demo-agent"
-            cfg["agent"]["role"] = "Operator"
+            cfg["agent"]["role"] = "operator"
             cfg["agent"]["workspace"] = "/tmp/demo-agent"
             cli.save_config(cfg, agent_dir / "config.json")
             (data_dir / "global_config.json").write_text(
@@ -237,7 +237,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         lines = [call.args[0] for call in mocked_info.call_args_list if call.args]
         self.assertTrue(any("Agents:" in line for line in lines))
-        self.assertTrue(any("demo-agent [enabled] role=Operator workspace=/tmp/demo-agent" in line for line in lines))
+        self.assertTrue(any("demo-agent [enabled] role=operator workspace=/tmp/demo-agent" in line for line in lines))
 
     def test_cmd_disable_updates_global_config(self) -> None:
         from openpipixia import cli

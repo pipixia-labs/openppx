@@ -60,7 +60,7 @@ class AgentMcpTests(unittest.TestCase):
 
         with patch.dict(
             os.environ,
-            {"OPENPPX_AGENT_ROLE": "Assistant", "OPENPPX_CAN_DELEGATE": "0"},
+            {"OPENPPX_AGENT_ROLE": "assistant", "OPENPPX_CAN_DELEGATE": "0"},
             clear=False,
         ):
             with patch("openpipixia.app.agent.build_mcp_toolsets_from_env", return_value=[]):
@@ -78,7 +78,7 @@ class AgentMcpTests(unittest.TestCase):
 
         with patch.dict(
             os.environ,
-            {"OPENPPX_AGENT_ROLE": "Operator", "OPENPPX_CAN_DELEGATE": "1"},
+            {"OPENPPX_AGENT_ROLE": "operator", "OPENPPX_CAN_DELEGATE": "1"},
             clear=False,
         ):
             with patch("openpipixia.app.agent.build_mcp_toolsets_from_env", return_value=[]):

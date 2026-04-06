@@ -61,7 +61,7 @@ def _gui_builtin_tools_enabled() -> bool:
 
 def _agent_role() -> str:
     """Return the current agent role from environment."""
-    return os.getenv("OPENPPX_AGENT_ROLE", "").strip()
+    return os.getenv("OPENPPX_AGENT_ROLE", "").strip().lower()
 
 
 def _can_delegate() -> bool:
@@ -158,7 +158,7 @@ def _build_tools() -> list[Any]:
         base_tools.extend([computer_task, computer_use])
 
     role = _agent_role()
-    if role == "Assistant":
+    if role == "assistant":
         allowed_names = {
             "list_skills",
             "read_skill",
@@ -170,7 +170,7 @@ def _build_tools() -> list[Any]:
         tools = [tool for tool in base_tools if _tool_name(tool) in allowed_names or isinstance(tool, PreloadMemoryTool)]
         return tools
 
-    if role == "Operator":
+    if role == "operator":
         blocked_names = {"message", "message_image", "message_file"}
         tools = [tool for tool in base_tools if _tool_name(tool) not in blocked_names]
         tools.extend(build_mcp_toolsets_from_env())

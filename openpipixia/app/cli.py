@@ -3972,7 +3972,7 @@ def main(argv: list[str] | None = None) -> None:
     create_parser.add_argument(
         "--role",
         default="assistant",
-        choices=["assistant", "operator", "manager"],
+        choices=["assistant", "operator", "root"],
         help="Agent role. Defaults to assistant.",
     )
     create_parser.add_argument(
