@@ -1,4 +1,4 @@
-"""Tests for workspace bootstrap prompt injection."""
+"""Tests for agent bootstrap prompt injection."""
 
 from __future__ import annotations
 
@@ -52,11 +52,11 @@ class WorkspaceBootstrapTests(unittest.TestCase):
                 config=types.SimpleNamespace(system_instruction="base-system-instruction"),
             )
 
-            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": str(root)}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_AGENT_HOME": str(root)}, clear=False):
                 asyncio.run(before_model_workspace_bootstrap_callback(types.SimpleNamespace(), llm_request))
 
         system_instruction = llm_request.config.system_instruction
-        self.assertIn("Workspace Context (injected by openpipixia)", system_instruction)
+        self.assertIn("Agent Context (injected by openpipixia)", system_instruction)
         self.assertIn("## AGENTS.md", system_instruction)
         self.assertIn("## SOUL.md", system_instruction)
         self.assertIn("## TOOLS.md", system_instruction)
@@ -68,7 +68,7 @@ class WorkspaceBootstrapTests(unittest.TestCase):
         self.assertIn("name: openpipixia", system_instruction)
         self.assertIn("user prefers chinese", system_instruction)
         self.assertLess(
-            system_instruction.index("Workspace Context (injected by openpipixia)"),
+            system_instruction.index("Agent Context (injected by openpipixia)"),
             system_instruction.index("base-system-instruction"),
         )
 
@@ -78,7 +78,7 @@ class WorkspaceBootstrapTests(unittest.TestCase):
             llm_request = types.SimpleNamespace(
                 config=types.SimpleNamespace(system_instruction="base-system-instruction"),
             )
-            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": str(root)}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_AGENT_HOME": str(root)}, clear=False):
                 asyncio.run(before_model_workspace_bootstrap_callback(types.SimpleNamespace(), llm_request))
 
         self.assertEqual(llm_request.config.system_instruction, "base-system-instruction")
@@ -90,7 +90,7 @@ class WorkspaceBootstrapTests(unittest.TestCase):
             llm_request = types.SimpleNamespace(
                 config=types.SimpleNamespace(system_instruction="base-system-instruction"),
             )
-            with patch.dict(os.environ, {"OPENPIPIXIA_WORKSPACE": str(root)}, clear=False):
+            with patch.dict(os.environ, {"OPENPIPIXIA_AGENT_HOME": str(root)}, clear=False):
                 asyncio.run(
                     before_model_workspace_bootstrap_callback(
                         callback_context=types.SimpleNamespace(),
@@ -98,7 +98,7 @@ class WorkspaceBootstrapTests(unittest.TestCase):
                     )
                 )
 
-        self.assertIn("Workspace Context (injected by openpipixia)", llm_request.config.system_instruction)
+        self.assertIn("Agent Context (injected by openpipixia)", llm_request.config.system_instruction)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from typing import Any
 
 from loguru import logger
 
+from ..core.config import get_agent_home_dir
 from ..core.env_utils import env_enabled
 
 _SKILL_NAME_ALIASES: dict[str, str] = {
@@ -29,12 +30,18 @@ class SkillInfo:
 
 
 class SkillRegistry:
-    """Discover skills from workspace and bundled directories."""
+    """Discover skills from agent-home and bundled directories."""
 
-    def __init__(self, workspace: Path | None = None, builtin_skills_dir: Path | None = None):
-        cwd = Path.cwd() if workspace is None else workspace
-        self.workspace = cwd.resolve()
-        self.workspace_skills_dir = self.workspace / "skills"
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        builtin_skills_dir: Path | None = None,
+        agent_home: Path | None = None,
+    ):
+        root = agent_home or workspace or Path.cwd()
+        self.agent_home = root.resolve()
+        self.workspace = self.agent_home
+        self.workspace_skills_dir = self.agent_home / "skills"
         package_builtin_dir = Path(__file__).resolve().parent.parent / "skills"
         if builtin_skills_dir is not None:
             self.builtin_skills_dirs = [builtin_skills_dir.resolve()]
@@ -73,6 +80,7 @@ class SkillRegistry:
                 _debug_body(
                     {
                         "workspace": str(self.workspace),
+                        "agent_home": str(self.agent_home),
                         "workspace_skills_dir": str(self.workspace_skills_dir),
                         "builtin_skills_dirs": [str(p) for p in self.builtin_skills_dirs],
                         "count": len(items),
@@ -163,12 +171,10 @@ class SkillRegistry:
 
 
 def get_registry() -> SkillRegistry:
-    """Build registry from configured workspace or current directory."""
-    workspace_env = os.getenv("OPENPIPIXIA_WORKSPACE")
-    workspace = Path(workspace_env).expanduser() if workspace_env else None
+    """Build registry from configured agent home or current directory."""
     builtin_env = os.getenv("OPENPIPIXIA_BUILTIN_SKILLS_DIR")
     builtin_skills_dir = Path(builtin_env).expanduser() if builtin_env else None
-    return SkillRegistry(workspace=workspace, builtin_skills_dir=builtin_skills_dir)
+    return SkillRegistry(agent_home=get_agent_home_dir(), builtin_skills_dir=builtin_skills_dir)
 
 
 def list_skills() -> str:

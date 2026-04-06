@@ -24,17 +24,17 @@ class SkillRegistryTests(unittest.TestCase):
         names = [s.name for s in registry.list_skills()]
         self.assertIn("general", names)
 
-    def test_discovers_workspace_skills_via_env(self) -> None:
+    def test_discovers_agent_home_skills_via_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp)
-            skill_dir = workspace / "skills" / "workspace-demo"
+            agent_home = Path(tmp)
+            skill_dir = agent_home / "skills" / "workspace-demo"
             skill_dir.mkdir(parents=True, exist_ok=True)
             (skill_dir / "SKILL.md").write_text(
                 "---\nname: workspace-demo\ndescription: workspace skill\n---\n\n# Workspace Demo\n",
                 encoding="utf-8",
             )
 
-            os.environ["OPENPIPIXIA_WORKSPACE"] = str(workspace)
+            os.environ["OPENPIPIXIA_AGENT_HOME"] = str(agent_home)
             skills = json.loads(list_skills())
             names = {item["name"] for item in skills}
             self.assertIn("workspace-demo", names)
@@ -92,7 +92,7 @@ class SkillRegistryTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            os.environ["OPENPIPIXIA_WORKSPACE"] = str(workspace)
+            os.environ["OPENPIPIXIA_AGENT_HOME"] = str(workspace)
             content = read_skill("demo")
             self.assertIn("# Demo Skill", content)
 
@@ -105,7 +105,7 @@ class SkillRegistryTests(unittest.TestCase):
                 "---\nname: custom-skill\ndescription: custom builtin\n---\n\n# Custom Builtin\n",
                 encoding="utf-8",
             )
-            os.environ["OPENPIPIXIA_WORKSPACE"] = "/tmp/nonexistent-openpipixia-workspace"
+            os.environ["OPENPIPIXIA_AGENT_HOME"] = "/tmp/nonexistent-openpipixia-agent-home"
             os.environ["OPENPIPIXIA_BUILTIN_SKILLS_DIR"] = str(builtin_dir)
 
             skills = json.loads(list_skills())

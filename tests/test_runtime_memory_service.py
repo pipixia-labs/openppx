@@ -27,29 +27,31 @@ class MemoryServiceFactoryTests(unittest.TestCase):
         os.environ.pop("OPENPIPIXIA_MEMORY_ENABLED", None)
         os.environ.pop("OPENPIPIXIA_MEMORY_BACKEND", None)
         os.environ.pop("OPENPIPIXIA_WORKSPACE", None)
+        os.environ.pop("OPENPIPIXIA_AGENT_HOME", None)
 
         cfg = load_memory_config()
 
         self.assertTrue(cfg.enabled)
         self.assertEqual(cfg.backend, "markdown")
-        self.assertIn(".openpipixia/workspace/memory", cfg.markdown_dir)
+        self.assertIn(".openpipixia/memory", cfg.markdown_dir)
 
-    def test_load_memory_config_prefers_workspace_memory_dir_when_available(self) -> None:
-        os.environ["OPENPIPIXIA_WORKSPACE"] = "/tmp/openpipixia-workspace"
+    def test_load_memory_config_prefers_agent_home_memory_dir_when_available(self) -> None:
+        os.environ["OPENPIPIXIA_AGENT_HOME"] = "/tmp/openpipixia-agent-home"
         os.environ.pop("OPENPIPIXIA_MEMORY_MARKDOWN_DIR", None)
 
         cfg = load_memory_config()
 
-        self.assertEqual(cfg.markdown_dir, "/tmp/openpipixia-workspace/memory")
+        self.assertEqual(cfg.markdown_dir, "/tmp/openpipixia-agent-home/memory")
 
-    def test_load_memory_config_falls_back_to_data_dir_workspace_when_workspace_is_missing(self) -> None:
+    def test_load_memory_config_falls_back_to_data_dir_when_agent_home_is_missing(self) -> None:
         os.environ.pop("OPENPIPIXIA_WORKSPACE", None)
+        os.environ.pop("OPENPIPIXIA_AGENT_HOME", None)
         os.environ["OPENPIPIXIA_DATA_DIR"] = "/tmp/openpipixia-agent-a"
         os.environ.pop("OPENPIPIXIA_MEMORY_MARKDOWN_DIR", None)
 
         cfg = load_memory_config()
 
-        self.assertEqual(cfg.markdown_dir, "/tmp/openpipixia-agent-a/workspace/memory")
+        self.assertEqual(cfg.markdown_dir, "/tmp/openpipixia-agent-a/memory")
 
     def test_create_memory_service_can_be_disabled(self) -> None:
         service = create_memory_service(MemoryConfig(False, "in_memory", ""))

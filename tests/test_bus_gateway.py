@@ -410,10 +410,16 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
 
         req = HeartbeatRunRequest(reason="interval", prompt=DEFAULT_HEARTBEAT_PROMPT)
         with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp)
-            (workspace / "HEARTBEAT.md").write_text("\n  \n", encoding="utf-8")
+            workspace = Path(tmp) / "workspace"
+            agent_home = Path(tmp) / "agent-home"
+            workspace.mkdir(parents=True, exist_ok=True)
+            agent_home.mkdir(parents=True, exist_ok=True)
+            (agent_home / "HEARTBEAT.md").write_text("\n  \n", encoding="utf-8")
             policy = pytypes.SimpleNamespace(workspace_root=workspace)
-            with patch("openpipixia.app.gateway.load_security_policy", return_value=policy):
+            with (
+                patch("openpipixia.app.gateway.load_security_policy", return_value=policy),
+                patch.dict(os.environ, {"OPENPIPIXIA_AGENT_HOME": str(agent_home)}, clear=False),
+            ):
                 await gateway._run_heartbeat(req)
 
         self.assertFalse(called)

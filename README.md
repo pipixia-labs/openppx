@@ -48,19 +48,21 @@ ppx create --name "operator-main" --role operator
 ppx create --name "manager-main" --role manager --workspace ~/work/openppx-manager
 ```
 
-Each agent workspace includes bootstrap/task files and local scaffolding, including:
+Each agent has a per-agent config home under `~/.openpipixia/<agent_name>/` that includes:
 
 - `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`
 - `HEARTBEAT.md`
 - `skills/`
 - `memory/MEMORY.md`, `memory/HISTORY.md`
 
+The `workspace` is separate and is only for code, task outputs, temporary files, and other working artifacts.
+
 ### 🔑 2. Configure Provider Keys
 
 Review and edit your configuration files:
 
 - `global_config.json`
-- Each agent's config/runtime/workspace files, for example:
+- Each agent's config/runtime/agent-home files, for example:
   `~/.openpipixia/assistant-main/config.json`
 
 Fill in required provider keys and assign per-agent security settings.
@@ -335,4 +337,4 @@ To remove local runtime data as well:
 rm -rf ~/.openpipixia
 ```
 
-Only run this cleanup if you no longer need existing config, workspace files, logs, or local runtime records.
+Only run this cleanup if you no longer need existing config, agent-home files, workspaces, logs, or local runtime records.

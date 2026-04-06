@@ -124,6 +124,7 @@ _EXTENSIBLE_MAP_KEYS: frozenset[str] = frozenset({"env", "multimodalProviders"})
 _CONFIG_PATH_ENV = "OPENPIPIXIA_CONFIG_FILE"
 _RUNTIME_CONFIG_PATH_ENV = "OPENPIPIXIA_RUNTIME_CONFIG_FILE"
 _DATA_DIR_ENV = "OPENPIPIXIA_DATA_DIR"
+_AGENT_HOME_ENV = "OPENPIPIXIA_AGENT_HOME"
 _MEMORY_MARKDOWN_DIR_ENV = "OPENPIPIXIA_MEMORY_MARKDOWN_DIR"
 _AGENT_ROLE_CANONICAL: dict[str, str] = {
     "assistant": "Assistant",
@@ -142,6 +143,24 @@ def get_data_dir() -> Path:
     if explicit:
         return Path(explicit).expanduser()
     return Path.home() / ".openpipixia"
+
+
+def get_agent_home_dir() -> Path:
+    """Return the active per-agent config directory.
+
+    The agent home stores persistent metadata and support files such as
+    ``AGENTS.md``, ``skills/``, and ``memory/``. When a specific config file is
+    selected, its parent directory becomes the active agent home.
+    """
+    explicit = os.getenv(_AGENT_HOME_ENV, "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+
+    config_explicit = os.getenv(_CONFIG_PATH_ENV, "").strip()
+    if config_explicit:
+        return Path(config_explicit).expanduser().resolve(strict=False).parent
+
+    return get_data_dir()
 
 
 def get_config_path() -> Path:
@@ -296,7 +315,7 @@ def _default_runtime_env_overrides() -> dict[str, Any]:
     return {
         "OPENPIPIXIA_MEMORY_ENABLED": True,
         "OPENPIPIXIA_MEMORY_BACKEND": "markdown",
-        # Keep empty by default so memory path follows OPENPIPIXIA_WORKSPACE.
+        # Keep empty by default so memory path follows the active agent home.
         _MEMORY_MARKDOWN_DIR_ENV: "",
         "OPENPIPIXIA_COMPACTION_ENABLED": True,
         "OPENPIPIXIA_COMPACTION_INTERVAL": 8,
@@ -322,12 +341,12 @@ def _normalize_runtime_memory_dir_override(
     *,
     config_path: Path,
 ) -> dict[str, str]:
-    """Rewrite legacy global memory dir override to per-agent workspace.
+    """Rewrite legacy global memory dir override to per-agent memory dir.
 
     Historical runtime defaults wrote `OPENPIPIXIA_MEMORY_MARKDOWN_DIR` as the
     global `~/.openpipixia/workspace/memory`, which breaks per-agent isolation.
     During bootstrap we remap only this exact legacy value to the current
-    agent-scoped default (`<agent_data_dir>/workspace/memory`).
+    agent-scoped default (`<agent_data_dir>/memory`).
     """
     value = str(runtime_overrides.get(_MEMORY_MARKDOWN_DIR_ENV, "")).strip()
     if not value:
@@ -341,7 +360,7 @@ def _normalize_runtime_memory_dir_override(
     if current != legacy_global_default:
         return runtime_overrides
 
-    scoped_default = (config_path.parent / "workspace" / "memory").resolve(strict=False)
+    scoped_default = (config_path.parent / "memory").resolve(strict=False)
     if scoped_default == legacy_global_default:
         return runtime_overrides
 
@@ -646,6 +665,7 @@ def _activate_config_context(config_path: Path) -> None:
     os.environ[_CONFIG_PATH_ENV] = str(resolved)
     os.environ[_RUNTIME_CONFIG_PATH_ENV] = str(runtime_path)
     os.environ[_DATA_DIR_ENV] = str(data_dir)
+    os.environ[_AGENT_HOME_ENV] = str(data_dir)
 
 
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> Path:
@@ -992,6 +1012,7 @@ def config_to_env(
         "OPENPIPIXIA_PROVIDER_API_BASE": provider_api_base,
         "OPENPIPIXIA_PROVIDER_EXTRA_HEADERS_JSON": provider_extra_headers,
         "OPENPIPIXIA_AGENT_NAME": str(agent.get("name", "")).strip(),
+        "OPENPIPIXIA_AGENT_HOME": os.getenv(_AGENT_HOME_ENV, "").strip(),
         "OPENPIPIXIA_AGENT_ROLE": normalize_agent_role(agent.get("role", ""), default=""),
         "OPENPIPIXIA_CAN_DELEGATE": "1"
         if bool(_as_dict(agent.get("permissions")).get("canDelegate", False))

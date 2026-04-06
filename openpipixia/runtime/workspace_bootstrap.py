@@ -1,6 +1,6 @@
-"""Workspace bootstrap injection for ADK model requests.
+"""Agent bootstrap injection for ADK model requests.
 
-This module injects workspace bootstrap files into the model system prompt.
+This module injects per-agent bootstrap files into the model system prompt.
 Supported files follow the openclaw-style order:
 ``AGENTS.md``, ``SOUL.md``, ``TOOLS.md``, ``IDENTITY.md``, ``USER.md``.
 """
@@ -12,7 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_INJECTED_HEADER = "# Workspace Context (injected by openpipixia)"
+from ..core.config import get_agent_home_dir
+
+_INJECTED_HEADER = "# Agent Context (injected by openpipixia)"
 _BOOTSTRAP_FILENAMES: tuple[str, ...] = (
     "AGENTS.md",
     "SOUL.md",
@@ -34,11 +36,8 @@ class BootstrapSection:
 
 
 def _workspace_root() -> Path:
-    """Resolve workspace root from environment with a safe fallback."""
-    raw = os.getenv("OPENPIPIXIA_WORKSPACE", "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return Path.cwd()
+    """Resolve the active per-agent config root with a safe fallback."""
+    return get_agent_home_dir()
 
 
 def _parse_positive_int(raw: str | None, *, default: int) -> int:
@@ -79,11 +78,11 @@ def _truncate(text: str, *, limit: int) -> tuple[str, bool]:
 
 
 def load_workspace_bootstrap_sections(workspace_root: Path | None = None) -> list[BootstrapSection]:
-    """Load supported workspace files in fixed order for prompt injection.
+    """Load supported agent-home files in fixed order for prompt injection.
 
     Args:
-        workspace_root: Optional explicit workspace root. When omitted, uses
-            ``OPENPIPIXIA_WORKSPACE`` or current working directory.
+        workspace_root: Optional explicit agent-home root. When omitted, uses
+            the active per-agent config directory.
 
     Returns:
         Ordered sections loaded from existing files among
@@ -129,9 +128,9 @@ def render_workspace_bootstrap_context(sections: list[BootstrapSection], workspa
     resolved_root = workspace_root.expanduser().resolve(strict=False)
     lines: list[str] = [
         _INJECTED_HEADER,
-        f"Workspace: {resolved_root}",
+        f"Agent home: {resolved_root}",
         "",
-        "The following workspace context files are loaded:",
+        "The following agent context files are loaded:",
         "",
     ]
     for section in sections:
@@ -146,10 +145,10 @@ async def before_model_workspace_bootstrap_callback(
     callback_context: Any,
     llm_request: Any,
 ) -> None:
-    """Inject workspace bootstrap context into ``llm_request`` system instruction.
+    """Inject agent bootstrap context into ``llm_request`` system instruction.
 
     This callback mutates ``llm_request.config.system_instruction`` in-place and
-    keeps any existing system instruction after the injected workspace context.
+    keeps any existing system instruction after the injected agent context.
     """
     # The callback context is currently unused for this minimal bootstrap
     # implementation, but we keep the canonical ADK parameter name to ensure

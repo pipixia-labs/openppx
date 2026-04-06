@@ -9,7 +9,7 @@ from typing import Any
 
 from google.adk.memory import InMemoryMemoryService
 
-from ..core.config import get_data_dir
+from ..core.config import get_agent_home_dir
 from .markdown_memory_service import MarkdownMemoryService
 
 
@@ -43,13 +43,10 @@ def _parse_enabled(raw: str | None, *, default: bool) -> bool:
 def _default_markdown_dir() -> Path:
     """Resolve default markdown memory directory.
 
-    By default memory files are colocated with workspace bootstrap files so the
-    runtime consistently uses ``<workspace>/memory/{MEMORY.md,HISTORY.md}``.
+    By default memory files are colocated with agent bootstrap files so the
+    runtime consistently uses ``<agent_home>/memory/{MEMORY.md,HISTORY.md}``.
     """
-    workspace = os.getenv("OPENPIPIXIA_WORKSPACE", "").strip()
-    if workspace:
-        return Path(workspace).expanduser() / "memory"
-    return get_data_dir() / "workspace" / "memory"
+    return get_agent_home_dir() / "memory"
 
 
 def load_memory_config() -> MemoryConfig:

@@ -556,7 +556,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(
             os.environ["OPENPIPIXIA_MEMORY_MARKDOWN_DIR"],
-            str((agent_dir / "workspace" / "memory").resolve(strict=False)),
+            str((agent_dir / "memory").resolve(strict=False)),
         )
 
     def test_env_override_map_is_final_layer(self) -> None:

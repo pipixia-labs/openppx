@@ -139,10 +139,11 @@ class CLITests(unittest.TestCase):
             workspace = Path(cfg["agent"]["workspace"])
             self.assertTrue(workspace.exists())
             self.assertIn(tempfile.gettempdir(), str(workspace))
+            agent_home = data_dir / agent_name
             for bootstrap_name in cli._INIT_BOOTSTRAP_TEMPLATES:
-                self.assertTrue((workspace / bootstrap_name).exists())
-            self.assertTrue((workspace / "memory" / "MEMORY.md").exists())
-            self.assertTrue((workspace / "memory" / "HISTORY.md").exists())
+                self.assertTrue((agent_home / bootstrap_name).exists())
+            self.assertTrue((agent_home / "memory" / "MEMORY.md").exists())
+            self.assertTrue((agent_home / "memory" / "HISTORY.md").exists())
 
             global_cfg_path = data_dir / "global_config.json"
             self.assertTrue(global_cfg_path.exists())
@@ -2321,7 +2322,9 @@ class CLITests(unittest.TestCase):
             data = json.loads(config_path.read_text(encoding="utf-8"))
             workspace = Path(data["agent"]["workspace"]).expanduser()
             self.assertTrue(workspace.exists())
-            self.assertTrue((workspace / "skills").exists())
+            agent_home = config_path.parent
+            self.assertTrue((agent_home / "skills").exists())
+            self.assertTrue((agent_home / "memory" / "MEMORY.md").exists())
 
     def test_script_entrypoint_accepts_m(self) -> None:
         project_root = Path(__file__).resolve().parents[1]

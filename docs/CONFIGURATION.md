@@ -36,6 +36,8 @@ ppx create --name "operator-main" --role operator
 - 新 Agent 默认会被写入并启用到 `global_config.json`
 - 如果运行 gateway，建议显式传入对应 Agent 的 `--config-path`
 - 可以用 `ppx list` 查看已有 Agent、角色、workspace 和启用状态
+- `~/.openpipixia/<agent_name>/` 是 agent 配置目录，存放 `config.json`、`runtime.json`、`skills/`、`memory/`、`AGENTS.md` 等元信息文件
+- `agent.workspace` 只用于代码、临时文件、任务产物等工作文件
 
 ## `config.json` 关键字段
 
@@ -231,7 +233,7 @@ Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true
 | `OPENPIPIXIA_SESSION_DB_URL` | 自动生成 SQLite 路径 | 覆盖会话数据库地址 | 需要把 session 存到自定义数据库时 |
 | `OPENPIPIXIA_MEMORY_ENABLED` | `1` | 是否启用 ADK memory 写入链路 | 临时排查 memory 行为时可设为 `0` |
 | `OPENPIPIXIA_MEMORY_BACKEND` | `markdown` | 选择 memory 后端：`markdown`（默认）或 `in_memory`（调试） | 仅在本地调试临时关闭落盘时使用 `in_memory` |
-| `OPENPIPIXIA_MEMORY_MARKDOWN_DIR` | `~/.openpipixia/workspace/memory` | Markdown memory 根目录 | 需要把记忆落盘到指定目录时 |
+| `OPENPIPIXIA_MEMORY_MARKDOWN_DIR` | `~/.openpipixia/<agent_name>/memory` | Markdown memory 根目录 | 需要把记忆落盘到指定目录时 |
 | `OPENPIPIXIA_COMPACTION_ENABLED` | `1` | 是否启用 ADK events compaction | 需要原样保留完整事件流时可关掉 |
 | `OPENPIPIXIA_COMPACTION_INTERVAL` | `8` | 每隔多少事件触发一次 compaction 检查（最小为 1） | 长对话频繁撑窗口时可适当调小 |
 | `OPENPIPIXIA_COMPACTION_OVERLAP` | `1` | 相邻压缩片段保留的重叠事件数 | 希望压缩后上下文衔接更稳时可调大 |
@@ -306,7 +308,7 @@ export OPENPIPIXIA_GUI_ALLOW_DANGEROUS_KEYS=false
 ```json
 {
   "agent": {
-    "workspace": "~/.openpipixia/workspace",
+    "workspace": "/path/to/agent-workspace",
     "builtinSkillsDir": ""
   },
   "providers": {

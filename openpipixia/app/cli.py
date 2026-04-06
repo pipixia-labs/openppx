@@ -2145,6 +2145,7 @@ class CreateAgentResult:
 
     agent_name: str
     role: str
+    agent_home: Path
     config_path: Path
     runtime_config_path: Path
     workspace: Path
@@ -2178,7 +2179,6 @@ def _run_install_init_setup(*, force: bool) -> InstallInitResult:
 
     workspace = Path(str(config.get("agent", {}).get("workspace", ""))).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "skills").mkdir(parents=True, exist_ok=True)
     return InstallInitResult(
         config_path=saved_to,
         runtime_config_path=runtime_saved_to,
@@ -2211,6 +2211,7 @@ def _render_install_init_compact_with_rich(result: InstallInitResult) -> bool:
 
 def _cmd_install_init_setup(force: bool) -> int:
     result = _run_install_init_setup(force=force)
+    _init_agent_support_files(agent_home=result.config_path.parent, force=force)
     if _INSTALL_EMBEDDED_INIT_SETUP:
         if not _render_install_init_compact_with_rich(result):
             _stdout_line(f"Config {result.config_state}: {result.config_path}")
@@ -2265,7 +2266,6 @@ def _run_multi_agent_init_setup(*, force: bool) -> list[tuple[str, InstallInitRe
 
         workspace = Path(str(config.get("agent", {}).get("workspace", ""))).expanduser()
         workspace.mkdir(parents=True, exist_ok=True)
-        (workspace / "skills").mkdir(parents=True, exist_ok=True)
 
         results.append(
             (
@@ -2290,12 +2290,12 @@ def _write_text_if_missing(*, path: Path, content: str, force: bool) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _init_workspace_support_files(*, workspace: Path, force: bool) -> None:
-    """Initialize bootstrap/heartbeat/memory files under one workspace."""
+def _init_agent_support_files(*, agent_home: Path, force: bool) -> None:
+    """Initialize bootstrap, skills, and memory files under one agent home."""
     for name, content in _INIT_BOOTSTRAP_TEMPLATES.items():
-        _write_text_if_missing(path=workspace / name, content=content, force=force)
-    (workspace / "skills").mkdir(parents=True, exist_ok=True)
-    memory_dir = workspace / "memory"
+        _write_text_if_missing(path=agent_home / name, content=content, force=force)
+    (agent_home / "skills").mkdir(parents=True, exist_ok=True)
+    memory_dir = agent_home / "memory"
     memory_dir.mkdir(parents=True, exist_ok=True)
     for name, content in _INIT_MEMORY_FILES.items():
         _write_text_if_missing(path=memory_dir / name, content=content, force=force)
@@ -2412,15 +2412,17 @@ def _run_create_agent_setup(*, name: str, role: str, workspace: str | None) -> C
 
     config_path = _agent_config_path(normalized_name)
     runtime_config_path = config_path.with_name("runtime.json")
+    agent_home = config_path.parent
     saved_to = save_config(config, config_path=config_path)
     runtime_saved_to = save_runtime_config(default_runtime_config(), runtime_config_path=runtime_config_path)
 
     workspace_path.mkdir(parents=True, exist_ok=True)
-    _init_workspace_support_files(workspace=workspace_path, force=False)
+    _init_agent_support_files(agent_home=agent_home, force=False)
     global_config_path = _ensure_global_agent_enabled(normalized_name)
     return CreateAgentResult(
         agent_name=normalized_name,
         role=role_name,
+        agent_home=agent_home,
         config_path=saved_to,
         runtime_config_path=runtime_saved_to,
         workspace=workspace_path,
@@ -2441,6 +2443,7 @@ def _cmd_create(*, name: str, role: str, workspace: str | None) -> int:
 
     _stdout_line(f"Created agent: {result.agent_name}")
     _stdout_line(f"Role: {result.role}")
+    _stdout_line(f"Agent home ready: {result.agent_home}")
     _stdout_line(f"Config created: {result.config_path}")
     _stdout_line(f"Runtime config created: {result.runtime_config_path}")
     _stdout_line(f"Workspace ready: {result.workspace}")
@@ -2463,7 +2466,7 @@ def _cmd_create(*, name: str, role: str, workspace: str | None) -> int:
             )
         )
     _stdout_line("Next steps:")
-    _stdout_line("1. Edit the per-agent config/runtime/workspace files as needed.")
+    _stdout_line("1. Edit the per-agent config/runtime/agent-home files as needed.")
     _stdout_line("2. ppx doctor  # validate current runtime config")
     _stdout_line(
         "3. ppx --config-path "
@@ -2497,14 +2500,14 @@ def _cmd_init(*, force: bool) -> int:
 
     _stdout_line(f"Initialized multi-agent config: agents={len(results)}")
     for agent_name, result in results:
-        _init_workspace_support_files(workspace=result.workspace, force=force)
+        _init_agent_support_files(agent_home=result.config_path.parent, force=force)
         _stdout_line(f"[agent={agent_name}] Config {result.config_state}: {result.config_path}")
         _stdout_line(f"[agent={agent_name}] Runtime config {result.runtime_state}: {result.runtime_config_path}")
         _stdout_line(f"[agent={agent_name}] Workspace ready: {result.workspace}")
         _stdout_line(
             f"[agent={agent_name}] Bootstrap files initialized: {', '.join(sorted(_INIT_BOOTSTRAP_TEMPLATES.keys()))}"
         )
-        _stdout_line(f"[agent={agent_name}] Memory files initialized: memory/MEMORY.md, memory/HISTORY.md")
+        _stdout_line(f"[agent={agent_name}] Agent memory initialized: memory/MEMORY.md, memory/HISTORY.md")
 
     _stdout_line(f"Global config updated: {global_config_path}")
     _stdout_line(f"Enabled agent in global_config.json: {_INIT_DEFAULT_AGENT_NAMES[0]}")
@@ -2519,7 +2522,7 @@ def _cmd_init(*, force: bool) -> int:
     _stdout_line("- HEARTBEAT.md: periodic tasks to execute during heartbeat runs.")
     _stdout_line("- skills/: place per-agent local skills (each skill as <name>/SKILL.md).")
     _stdout_line("Next steps:")
-    _stdout_line("1. Configure related config files (global_config.json and per-agent config/runtime/workspace files).")
+    _stdout_line("1. Configure related config files (global_config.json and per-agent config/runtime/agent-home files).")
     _stdout_line("2. ppx doctor  # check whether current config is valid and runnable")
     _stdout_line(
         "3. ppx --config-path "
@@ -2548,7 +2551,7 @@ def _render_init_sections_with_rich(
         return False
 
     for _agent_name, result in results:
-        _init_workspace_support_files(workspace=result.workspace, force=force)
+        _init_agent_support_files(agent_home=result.config_path.parent, force=force)
 
     console = Console()
 
@@ -2558,7 +2561,7 @@ def _render_init_sections_with_rich(
     summary.add_row("Agents initialized", str(len(results)))
     summary.add_row("Global config", str(global_config_path))
     summary.add_row("Enabled by default", _INIT_DEFAULT_AGENT_NAMES[0])
-    summary.add_row("Editable", "global_config.json + each agent config/runtime/workspace files")
+    summary.add_row("Editable", "global_config.json + each agent config/runtime/agent-home files")
     console.print(Panel(summary, title="[bold]Openpipixia Init[/bold]", border_style="cyan"))
 
     detail = Table(show_header=True, box=None, pad_edge=False)
@@ -2587,7 +2590,7 @@ def _render_init_sections_with_rich(
     purpose.add_row("skills/", "Per-agent local skills (<name>/SKILL.md).")
     purpose.add_row("memory/MEMORY.md", "Long-term facts and preferences.")
     purpose.add_row("memory/HISTORY.md", "Append-only interaction transcript.")
-    console.print(Panel(purpose, title="[bold]Workspace Files[/bold]", border_style="yellow"))
+    console.print(Panel(purpose, title="[bold]Agent Home Files[/bold]", border_style="yellow"))
 
     next_steps = Table(show_header=True, box=None, pad_edge=False)
     next_steps.add_column("Step", style="bold blue", no_wrap=True)
@@ -2595,7 +2598,7 @@ def _render_init_sections_with_rich(
     next_steps.add_column("Purpose", style="cyan")
     next_steps.add_row(
         "1",
-        "Edit global_config.json + per-agent config/runtime/workspace files",
+        "Edit global_config.json + per-agent config/runtime/agent-home files",
         "Prepare your multi-agent configuration.",
     )
     next_steps.add_row(

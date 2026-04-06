@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 HEARTBEAT_TOKEN = "HEARTBEAT_OK"
 DEFAULT_HEARTBEAT_PROMPT = (
-    "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. "
+    "Read HEARTBEAT.md if it exists (agent config context). Follow it strictly. "
     "Do not infer or repeat old tasks from prior chats. "
     "If nothing needs attention, reply HEARTBEAT_OK."
 )
@@ -121,4 +121,3 @@ def strip_heartbeat_token(
             return HeartbeatStripResult(should_skip=True, text="", did_strip=True)
 
     return HeartbeatStripResult(should_skip=False, text=chosen_text, did_strip=True)
-

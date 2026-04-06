@@ -27,6 +27,7 @@ from ..runtime.step_events import build_step_metadata
 from ..runtime.step_events import configure_step_event_publisher
 from ..runtime.subagent_agent import build_restricted_subagent
 from ..runtime.tool_context import route_context
+from ..core.config import get_agent_home_dir
 from ..core.security import load_security_policy
 from ..tooling.registry import (
     SubagentSpawnRequest,
@@ -219,7 +220,8 @@ class Gateway:
     @staticmethod
     def _heartbeat_task_file_candidates(workspace: Path) -> tuple[Path, ...]:
         """Return heartbeat task file candidate paths in priority order."""
-        return (workspace / "HEARTBEAT.md", workspace / "heartbeat.md")
+        agent_home = get_agent_home_dir()
+        return (agent_home / "HEARTBEAT.md", agent_home / "heartbeat.md")
 
     def _heartbeat_task_gate(self, prompt: str) -> tuple[bool, str]:
         """Return whether heartbeat should invoke LLM under current workspace task state.
