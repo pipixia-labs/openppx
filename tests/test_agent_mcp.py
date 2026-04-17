@@ -54,13 +54,13 @@ class AgentMcpTests(unittest.TestCase):
         self.assertIn("desktop_gui_task", text)
         self.assertIn("desktop_gui_action", text)
 
-    def test_build_tools_limits_assistant_to_read_only_tools(self) -> None:
+    def test_build_tools_limits_low_to_read_only_tools(self) -> None:
         from openpipixia import agent
         from openpipixia.tooling.registry import read_file, list_dir, write_file, exec_command, web_search
 
         with patch.dict(
             os.environ,
-            {"OPENPPX_AGENT_ROLE": "assistant", "OPENPPX_CAN_DELEGATE": "0"},
+            {"OPENPPX_AGENT_PRIVILEGE_LEVEL": "low", "OPENPPX_CAN_DELEGATE": "0"},
             clear=False,
         ):
             with patch("openpipixia.app.agent.build_mcp_toolsets_from_env", return_value=[]):
@@ -72,13 +72,13 @@ class AgentMcpTests(unittest.TestCase):
         self.assertNotIn(exec_command, tools)
         self.assertNotIn(web_search, tools)
 
-    def test_build_tools_keeps_operator_exec_and_web_but_hides_message_tools(self) -> None:
+    def test_build_tools_keeps_medium_exec_and_web_but_hides_message_tools(self) -> None:
         from openpipixia import agent
         from openpipixia.tooling.registry import exec_command, web_search, message, message_file
 
         with patch.dict(
             os.environ,
-            {"OPENPPX_AGENT_ROLE": "operator", "OPENPPX_CAN_DELEGATE": "1"},
+            {"OPENPPX_AGENT_PRIVILEGE_LEVEL": "medium", "OPENPPX_CAN_DELEGATE": "1"},
             clear=False,
         ):
             with patch("openpipixia.app.agent.build_mcp_toolsets_from_env", return_value=[]):
@@ -88,6 +88,23 @@ class AgentMcpTests(unittest.TestCase):
         self.assertIn(web_search, tools)
         self.assertNotIn(message, tools)
         self.assertNotIn(message_file, tools)
+
+    def test_build_tools_keeps_high_full_tool_access(self) -> None:
+        from openpipixia import agent
+        from openpipixia.tooling.registry import exec_command, web_search, message, message_file
+
+        with patch.dict(
+            os.environ,
+            {"OPENPPX_AGENT_PRIVILEGE_LEVEL": "high", "OPENPPX_CAN_DELEGATE": "1"},
+            clear=False,
+        ):
+            with patch("openpipixia.app.agent.build_mcp_toolsets_from_env", return_value=[]):
+                tools = agent._build_tools()
+
+        self.assertIn(exec_command, tools)
+        self.assertIn(web_search, tools)
+        self.assertIn(message, tools)
+        self.assertIn(message_file, tools)
 
 
 if __name__ == "__main__":

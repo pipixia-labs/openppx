@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from openpipixia.core.config import (
-    apply_agent_role_defaults,
+    apply_agent_privilege_level_defaults,
     apply_config_to_env,
     bootstrap_env_from_config,
     config_to_env,
@@ -75,7 +75,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["agent"]["heartbeat"]["activeHours"]["end"], "")
         self.assertEqual(cfg["agent"]["heartbeat"]["activeHours"]["timezone"], "user")
         self.assertEqual(cfg["agent"]["name"], "")
-        self.assertEqual(cfg["agent"]["role"], "")
+        self.assertEqual(cfg["agent"]["privilegeLevel"], "")
         self.assertEqual(cfg["agent"]["permissions"], {})
         self.assertFalse(cfg["security"]["restrictToWorkspace"])
         self.assertTrue(cfg["security"]["allowExec"])
@@ -172,29 +172,56 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(os.environ["OPENPPX_DEBUG"], "1")
         self.assertEqual(os.environ["OPENPPX_DEBUG_LOG_PATH"], "/tmp/openppx-debug.log")
 
-    def test_apply_agent_role_defaults_syncs_assistant_permissions(self) -> None:
+    def test_apply_agent_privilege_level_defaults_syncs_low_permissions(self) -> None:
         cfg = default_config()
-        apply_agent_role_defaults(cfg, role="assistant")
+        apply_agent_privilege_level_defaults(cfg, privilege_level="low")
 
-        self.assertEqual(cfg["agent"]["role"], "assistant")
+        self.assertEqual(cfg["agent"]["privilegeLevel"], "low")
         self.assertEqual(cfg["agent"]["permissions"]["filesystemAccess"], "read_only")
         self.assertTrue(cfg["security"]["restrictToWorkspace"])
         self.assertFalse(cfg["security"]["allowExec"])
         self.assertFalse(cfg["security"]["allowNetwork"])
         self.assertEqual(cfg["security"]["execAllowlist"], [])
 
-    def test_apply_agent_role_defaults_syncs_operator_permissions(self) -> None:
+    def test_apply_agent_privilege_level_defaults_syncs_medium_permissions(self) -> None:
         cfg = default_config()
-        apply_agent_role_defaults(cfg, role="operator")
+        apply_agent_privilege_level_defaults(cfg, privilege_level="medium")
         env = config_to_env(cfg)
 
-        self.assertEqual(cfg["agent"]["role"], "operator")
+        self.assertEqual(cfg["agent"]["privilegeLevel"], "medium")
         self.assertEqual(cfg["agent"]["permissions"]["filesystemAccess"], "read_write")
         self.assertTrue(cfg["security"]["restrictToWorkspace"])
         self.assertTrue(cfg["security"]["allowExec"])
         self.assertTrue(cfg["security"]["allowNetwork"])
-        self.assertEqual(env["OPENPPX_AGENT_ROLE"], "operator")
+        self.assertEqual(env["OPENPPX_AGENT_PRIVILEGE_LEVEL"], "medium")
         self.assertEqual(env["OPENPPX_FILESYSTEM_ACCESS"], "read_write")
+
+    def test_apply_agent_privilege_level_defaults_syncs_high_permissions(self) -> None:
+        cfg = default_config()
+        apply_agent_privilege_level_defaults(cfg, privilege_level="high")
+
+        self.assertEqual(cfg["agent"]["privilegeLevel"], "high")
+        self.assertEqual(cfg["agent"]["permissions"]["filesystemAccess"], "read_write")
+        self.assertFalse(cfg["security"]["restrictToWorkspace"])
+        self.assertTrue(cfg["security"]["allowExec"])
+        self.assertTrue(cfg["security"]["allowNetwork"])
+        self.assertEqual(cfg["security"]["execAllowlist"], [])
+
+    def test_load_config_rejects_legacy_agent_role_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text('{"agent":{"role":"assistant"}}\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "agent.role"):
+                load_config(path)
+
+    def test_load_config_rejects_unknown_privilege_level(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text('{"agent":{"privilegeLevel":"assistant"}}\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "unsupported agent privilege level"):
+                load_config(path)
 
     def test_default_channel_streaming_flags(self) -> None:
         cfg = default_config()

@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from loguru import logger
 
 from ..core.config import (
-    apply_agent_role_defaults,
+    apply_agent_privilege_level_defaults,
     bootstrap_env_from_config,
     default_config,
     default_runtime_config,
@@ -33,7 +33,7 @@ from ..core.config import (
     get_runtime_config_path,
     load_config,
     load_runtime_config,
-    normalize_agent_role,
+    normalize_agent_privilege_level,
     save_config,
     save_runtime_config,
 )
@@ -441,7 +441,7 @@ def _cmd_spawn(*, agent: str | None = None) -> int:
 
 
 def _cmd_list(*, output_json: bool) -> int:
-    """List known agents with role, workspace, and enablement state."""
+    """List known agents with privilege level, workspace, and enablement state."""
     entries = _load_global_config_entries()
     enabled_names = {entry["name"] for entry in entries if bool(entry.get("enabled"))}
     data_dir = get_data_dir()
@@ -464,17 +464,17 @@ def _cmd_list(*, output_json: bool) -> int:
     payload: list[dict[str, Any]] = []
     for agent_name in ordered_names:
         config_path = _agent_config_path(agent_name)
-        role = ""
+        privilege_level = ""
         workspace = ""
         if config_path.exists():
             cfg = load_config(config_path=config_path)
-            role = str(cfg.get("agent", {}).get("role", "")).strip()
+            privilege_level = str(cfg.get("agent", {}).get("privilegeLevel", "")).strip()
             workspace = str(cfg.get("agent", {}).get("workspace", "")).strip()
         payload.append(
             {
                 "name": agent_name,
                 "enabled": agent_name in enabled_names,
-                "role": role,
+                "privilegeLevel": privilege_level,
                 "workspace": workspace,
                 "configPath": str(config_path),
             }
@@ -491,9 +491,11 @@ def _cmd_list(*, output_json: bool) -> int:
     _stdout_line("Agents:")
     for item in payload:
         enabled_label = "enabled" if item["enabled"] else "disabled"
-        role_label = item["role"] or "unknown"
+        privilege_label = item["privilegeLevel"] or "unknown"
         workspace_label = item["workspace"] or "(unset)"
-        _stdout_line(f"- {item['name']} [{enabled_label}] role={role_label} workspace={workspace_label}")
+        _stdout_line(
+            f"- {item['name']} [{enabled_label}] privilege={privilege_label} workspace={workspace_label}"
+        )
     return 0
 
 
@@ -2144,7 +2146,7 @@ class CreateAgentResult:
     """Resolved side effects after creating one agent."""
 
     agent_name: str
-    role: str
+    privilege_level: str
     agent_home: Path
     config_path: Path
     runtime_config_path: Path
@@ -2388,8 +2390,13 @@ def _default_agent_workspace(agent_name: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=f"openpipixia-{agent_name}-")).resolve()
 
 
-def _run_create_agent_setup(*, name: str, role: str, workspace: str | None) -> CreateAgentResult:
-    """Create one role-based agent config/runtime/workspace set."""
+def _run_create_agent_setup(
+    *,
+    name: str,
+    privilege_level: str,
+    workspace: str | None,
+) -> CreateAgentResult:
+    """Create one privilege-level-based agent config/runtime/workspace set."""
     normalized_name = _normalize_agent_name(name)
     if not normalized_name:
         raise ValueError("agent name is empty after normalization")
@@ -2398,7 +2405,7 @@ def _run_create_agent_setup(*, name: str, role: str, workspace: str | None) -> C
     if agent_dir.exists():
         raise FileExistsError(f"agent '{normalized_name}' already exists: {agent_dir}")
 
-    role_name = normalize_agent_role(role)
+    normalized_privilege_level = normalize_agent_privilege_level(privilege_level)
     workspace_path = (
         Path(str(workspace).strip()).expanduser().resolve(strict=False)
         if str(workspace or "").strip()
@@ -2408,7 +2415,7 @@ def _run_create_agent_setup(*, name: str, role: str, workspace: str | None) -> C
     config = default_config()
     config["agent"]["name"] = normalized_name
     config["agent"]["workspace"] = str(workspace_path)
-    apply_agent_role_defaults(config, role=role_name)
+    apply_agent_privilege_level_defaults(config, privilege_level=normalized_privilege_level)
 
     config_path = _agent_config_path(normalized_name)
     runtime_config_path = config_path.with_name("runtime.json")
@@ -2421,7 +2428,7 @@ def _run_create_agent_setup(*, name: str, role: str, workspace: str | None) -> C
     global_config_path = _ensure_global_agent_enabled(normalized_name)
     return CreateAgentResult(
         agent_name=normalized_name,
-        role=role_name,
+        privilege_level=normalized_privilege_level,
         agent_home=agent_home,
         config_path=saved_to,
         runtime_config_path=runtime_saved_to,
@@ -2430,10 +2437,14 @@ def _run_create_agent_setup(*, name: str, role: str, workspace: str | None) -> C
     )
 
 
-def _cmd_create(*, name: str, role: str, workspace: str | None) -> int:
-    """Create one role-based agent and enable it in global_config.json."""
+def _cmd_create(*, name: str, privilege_level: str, workspace: str | None) -> int:
+    """Create one privilege-level-based agent and enable it in global_config.json."""
     try:
-        result = _run_create_agent_setup(name=name, role=role, workspace=workspace)
+        result = _run_create_agent_setup(
+            name=name,
+            privilege_level=privilege_level,
+            workspace=workspace,
+        )
     except ValueError as exc:
         _stdout_line(f"Error: {exc}")
         return 2
@@ -2442,7 +2453,7 @@ def _cmd_create(*, name: str, role: str, workspace: str | None) -> int:
         return 1
 
     _stdout_line(f"Created agent: {result.agent_name}")
-    _stdout_line(f"Role: {result.role}")
+    _stdout_line(f"Privilege level: {result.privilege_level}")
     _stdout_line(f"Agent home ready: {result.agent_home}")
     _stdout_line(f"Config created: {result.config_path}")
     _stdout_line(f"Runtime config created: {result.runtime_config_path}")
@@ -3966,14 +3977,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     create_parser = subparsers.add_parser(
         "create",
-        help="Create one agent config with role-based defaults.",
+        help="Create one agent config with privilege-level defaults.",
     )
     create_parser.add_argument("--name", required=True, help="Agent name. Special characters become '-'.")
     create_parser.add_argument(
-        "--role",
-        default="assistant",
-        choices=["assistant", "operator", "root"],
-        help="Agent role. Defaults to assistant.",
+        "--privilege-level",
+        default="low",
+        choices=["low", "medium", "high", "root"],
+        help="Agent privilege level. Defaults to low.",
     )
     create_parser.add_argument(
         "--workspace",
@@ -4292,10 +4303,14 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 raise SystemExit(1)
     if _should_bootstrap_single_agent_env(args):
-        if config_path:
-            bootstrap_env_from_config(Path(config_path).expanduser())
-        else:
-            bootstrap_env_from_config()
+        try:
+            if config_path:
+                bootstrap_env_from_config(Path(config_path).expanduser())
+            else:
+                bootstrap_env_from_config()
+        except ValueError as exc:
+            _stdout_line(f"Error: {exc}")
+            raise SystemExit(2)
 
     # Global `-m/--message` is single-turn mode only when no subcommand is used.
     if args.command is None and args.message:
@@ -4358,7 +4373,11 @@ def main(argv: list[str] | None = None) -> None:
 
         handlers: dict[str, Callable[[], int]] = {
             "install": lambda: _cmd_install(force=args.force),
-            "create": lambda: _cmd_create(name=args.name, role=args.role, workspace=args.workspace),
+            "create": lambda: _cmd_create(
+                name=args.name,
+                privilege_level=args.privilege_level,
+                workspace=args.workspace,
+            ),
             "list": lambda: _cmd_list(output_json=args.output_json),
             "enable": lambda: _cmd_enable_disable(name=args.name, enabled=True),
             "disable": lambda: _cmd_enable_disable(name=args.name, enabled=False),
@@ -4381,7 +4400,11 @@ def main(argv: list[str] | None = None) -> None:
             parser.print_help()
             code = 2
         else:
-            code = handler()
+            try:
+                code = handler()
+            except ValueError as exc:
+                _stdout_line(f"Error: {exc}")
+                code = 2
 
     raise SystemExit(code)
 

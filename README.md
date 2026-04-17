@@ -25,28 +25,35 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt 
 pip install .
-ppx create --name "assistant-main"
+ppx create --name "low-main"
 # Follow the `ppx create` output and edit the generated config files.
 ```
 
-`ppx create` creates one role-based agent at a time. By default:
+`ppx create` creates one privilege-level-based agent at a time. By default:
 
-- the role is `assistant` (low-privilege)
+- the privilege level is `low`
 - the workspace is a new directory under the system temp directory
 - the new agent is added to and enabled in `~/.openppx/global_config.json`
 
 Example agent files:
 
-- `~/.openppx/assistant-main/config.json`
-- `~/.openppx/assistant-main/runtime.json`
+- `~/.openppx/low-main/config.json`
+- `~/.openppx/low-main/runtime.json`
 - `~/.openppx/global_config.json`
 
 You can also create higher-privilege agents explicitly:
 
 ```bash
-ppx create --name "operator-main" --role operator
-ppx create --name "root-main" --role root --workspace ~/work/openppx-root
+ppx create --name "medium-main" --privilege-level medium
+ppx create --name "high-main" --privilege-level high
+ppx create --name "root-main" --privilege-level root --workspace ~/work/openppx-root
 ```
+
+Breaking change:
+
+- `--role` has been removed. Use `--privilege-level`.
+- Legacy config field `agent.role` is no longer supported. Use `agent.privilegeLevel`.
+- Supported privilege levels are `low`, `medium`, `high`, and `root`.
 
 Each agent has a per-agent config home under `~/.openppx/<agent_name>/` that includes:
 
@@ -63,7 +70,7 @@ Review and edit your configuration files:
 
 - `global_config.json`
 - Each agent's config/runtime/agent-home files, for example:
-  `~/.openppx/assistant-main/config.json`
+  `~/.openppx/low-main/config.json`
 
 Fill in required provider keys and assign per-agent security settings.
 You can leave channel-specific keys (for example Telegram, Feishu, Weixin, or WeCom) empty at this stage.
@@ -72,20 +79,20 @@ Important:
 
 - `ppx create` only creates and enables an agent. It does not automatically turn on Feishu, Telegram, or other channels.
 - Channel settings must be edited in the `config.json` of the agent that is actually enabled and running.
-- If you created new agents such as `assistant-main` / `operator-main` / `root-main`, but only updated old agent configs like `agent_name_1`, gateway will not use those old channel settings.
+- If you created new agents such as `low-main` / `medium-main` / `high-main` / `root-main`, but only updated old agent configs like `agent_name_1`, gateway will not use those old channel settings.
 - Before troubleshooting a Feishu connection issue, first run `ppx list` and confirm which agent is enabled, then check that agent's `channels.feishu.enabled`, `appId`, and `appSecret`.
 
 ### 💬 3. Try Local Interactive Mode
 
 ```bash
-ppx --config-path ~/.openppx/assistant-main/config.json gateway run --channels local --interactive-local
+ppx --config-path ~/.openppx/low-main/config.json gateway run --channels local --interactive-local
 ```
 
 ### 🛰️ 4. Enable Channel Chat and Start Background Service
 
 For channel keys and secrets, see [`docs/CHANNELS.md`](./docs/CHANNELS.md). After filling in channel keys, start the background gateway for regular usage:
 
-Example for Feishu: if `assistant-main` is the agent you want to connect to Feishu, edit `~/.openppx/assistant-main/config.json` and set:
+Example for Feishu: if `low-main` is the agent you want to connect to Feishu, edit `~/.openppx/low-main/config.json` and set:
 
 ```json
 {
@@ -112,9 +119,9 @@ ppx gateway start
 ```bash
 ppx --help
 ppx list
-ppx enable assistant-main
-ppx disable assistant-main
-ppx delete assistant-main
+ppx enable low-main
+ppx disable low-main
+ppx delete low-main
 ppx gateway --help
 ppx gateway-service --help
 ppx provider --help
@@ -245,9 +252,9 @@ scripts/install_smoke.sh --with-gateway
 
 ```bash
 ppx list
-ppx enable operator-main
-ppx disable assistant-main
-ppx delete assistant-main
+ppx enable medium-main
+ppx disable low-main
+ppx delete low-main
 
 # Single-turn call
 python -m openpipixia.cli -m "Describe what you can do"

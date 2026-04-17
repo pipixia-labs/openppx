@@ -20,15 +20,16 @@
 推荐先用 CLI 创建 Agent：
 
 ```bash
-ppx create --name "assistant-main"
-ppx create --name "operator-main" --role operator
-ppx create --name "root-main" --role root
+ppx create --name "low-main"
+ppx create --name "medium-main" --privilege-level medium
+ppx create --name "high-main" --privilege-level high
+ppx create --name "root-main" --privilege-level root
 ```
 
 创建后会得到类似目录结构：
 
-- `~/.openppx/assistant-main/config.json`
-- `~/.openppx/assistant-main/runtime.json`
+- `~/.openppx/low-main/config.json`
+- `~/.openppx/low-main/runtime.json`
 - `~/.openppx/global_config.json`
 
 说明：
@@ -36,13 +37,13 @@ ppx create --name "root-main" --role root
 - `agent_name` 取自 `ppx create --name`，会自动去掉特殊字符，并把空格替换成 `-`
 - 新 Agent 默认会被写入并启用到 `global_config.json`
 - 如果运行 gateway，建议显式传入对应 Agent 的 `--config-path`
-- 可以用 `ppx list` 查看已有 Agent、角色、workspace 和启用状态
+- 可以用 `ppx list` 查看已有 Agent、权限等级、workspace 和启用状态
 - `~/.openppx/<agent_name>/` 是 agent 配置目录，存放 `config.json`、`runtime.json`、`skills/`、`memory/`、`AGENTS.md` 等元信息文件
 - `agent.workspace` 只用于代码、临时文件、任务产物等工作文件
 
 ## `config.json` 关键字段
 
-- `agent.name / agent.role / agent.permissions / agent.workspace / agent.builtinSkillsDir`
+- `agent.name / agent.privilegeLevel / agent.permissions / agent.workspace / agent.builtinSkillsDir`
 - `providers.<provider>.enabled / apiKey / model / apiBase / extraHeaders`
 - `multimodalProviders.<alias>.enabled / provider / apiKey / model / apiBase / extraHeaders`
 - `gui.groundingProvider / gui.plannerProvider / gui.builtinGUIToolsEnabled`（绑定到 `multimodalProviders` 名称）
@@ -54,15 +55,22 @@ ppx create --name "root-main" --role root
 
 Provider 选择由 `enabled` 控制，建议保持“仅一个 provider 为 true”。
 
-### `agent.role` 与默认权限
+### `agent.privilegeLevel` 与默认权限
 
-当前内置三种角色：
+当前内置四种权限等级：
 
-- `assistant`：低权限，默认单 workspace、文件只读、不可执行 shell、不可访问网络
-- `operator`：执行型，默认单 workspace 读写、受限 shell、受限网络
-- `root`：高权限，允许更宽的执行与网络能力
+- `low`：低权限，默认单 workspace、文件只读、不可执行 shell、不可访问网络
+- `medium`：执行型，默认单 workspace 读写、受限 shell、受限网络
+- `high`：当前与 `root` 权限一致，保留后续收缩空间
+- `root`：最高权限，允许最宽的执行与网络能力
 
-第一版实现会把角色默认权限同步映射到现有 `security.*` 和运行时环境变量上。
+当前实现会把权限等级默认权限同步映射到现有 `security.*` 和运行时环境变量上。
+
+不兼容变更说明：
+
+- `--role` 已移除，改为 `--privilege-level`
+- `agent.role` 已移除，改为 `agent.privilegeLevel`
+- 旧值 `assistant` / `operator` 不再兼容，会直接报错
 
 ### Channel 配置示例
 

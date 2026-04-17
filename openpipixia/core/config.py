@@ -126,9 +126,10 @@ _RUNTIME_CONFIG_PATH_ENV = "OPENPPX_RUNTIME_CONFIG_FILE"
 _DATA_DIR_ENV = "OPENPPX_DATA_DIR"
 _AGENT_HOME_ENV = "OPENPPX_AGENT_HOME"
 _MEMORY_MARKDOWN_DIR_ENV = "OPENPPX_MEMORY_MARKDOWN_DIR"
-_AGENT_ROLE_CANONICAL: dict[str, str] = {
-    "assistant": "assistant",
-    "operator": "operator",
+_AGENT_PRIVILEGE_LEVEL_CANONICAL: dict[str, str] = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
     "root": "root",
 }
 _FILESYSTEM_ACCESS_VALUES: frozenset[str] = frozenset({"read_only", "read_write"})
@@ -187,18 +188,22 @@ def get_default_workspace_path() -> Path:
     return get_data_dir() / "workspace"
 
 
-def normalize_agent_role(value: Any, *, default: str = "assistant") -> str:
-    """Normalize one role name into a canonical Agent role label."""
+def normalize_agent_privilege_level(value: Any, *, default: str = "low") -> str:
+    """Normalize one privilege level name into a canonical Agent label."""
     raw = str(value or "").strip().lower()
     if not raw:
         return default
-    return _AGENT_ROLE_CANONICAL.get(raw, default)
+    canonical = _AGENT_PRIVILEGE_LEVEL_CANONICAL.get(raw)
+    if canonical:
+        return canonical
+    choices = ", ".join(_AGENT_PRIVILEGE_LEVEL_CANONICAL)
+    raise ValueError(f"unsupported agent privilege level '{raw}'; expected one of: {choices}")
 
 
-def role_default_permissions(role: str) -> dict[str, Any]:
-    """Return the default permission profile for one canonical role."""
-    normalized = normalize_agent_role(role)
-    if normalized == "root":
+def privilege_level_default_permissions(privilege_level: str) -> dict[str, Any]:
+    """Return the default permission profile for one canonical privilege level."""
+    normalized = normalize_agent_privilege_level(privilege_level)
+    if normalized in {"high", "root"}:
         return {
             "workspaceScope": "multi_workspace",
             "filesystemAccess": "read_write",
@@ -210,7 +215,7 @@ def role_default_permissions(role: str) -> dict[str, Any]:
             "canApprovePrivilegeEscalation": True,
             "highRiskActionAccess": "conditional",
         }
-    if normalized == "operator":
+    if normalized == "medium":
         return {
             "workspaceScope": "single_workspace",
             "filesystemAccess": "read_write",
@@ -235,16 +240,16 @@ def role_default_permissions(role: str) -> dict[str, Any]:
     }
 
 
-def apply_agent_role_defaults(config: dict[str, Any], *, role: str) -> dict[str, Any]:
-    """Apply one role profile to config and sync legacy security flags."""
-    normalized_role = normalize_agent_role(role)
-    permissions = role_default_permissions(normalized_role)
+def apply_agent_privilege_level_defaults(config: dict[str, Any], *, privilege_level: str) -> dict[str, Any]:
+    """Apply one privilege-level profile to config and sync legacy security flags."""
+    normalized_privilege_level = normalize_agent_privilege_level(privilege_level)
+    permissions = privilege_level_default_permissions(normalized_privilege_level)
 
     agent = config.setdefault("agent", {})
     if not isinstance(agent, dict):
         agent = {}
         config["agent"] = agent
-    agent["role"] = normalized_role
+    agent["privilegeLevel"] = normalized_privilege_level
     agent["permissions"] = permissions
 
     security = config.setdefault("security", {})
@@ -252,12 +257,12 @@ def apply_agent_role_defaults(config: dict[str, Any], *, role: str) -> dict[str,
         security = {}
         config["security"] = security
 
-    if normalized_role == "root":
+    if normalized_privilege_level in {"high", "root"}:
         security["restrictToWorkspace"] = False
         security["allowExec"] = True
         security["allowNetwork"] = True
         security["execAllowlist"] = []
-    elif normalized_role == "operator":
+    elif normalized_privilege_level == "medium":
         security["restrictToWorkspace"] = True
         security["allowExec"] = True
         security["allowNetwork"] = True
@@ -374,7 +379,7 @@ def default_config() -> dict[str, Any]:
     return {
         "agent": {
             "name": "",
-            "role": "",
+            "privilegeLevel": "",
             "permissions": {},
             "workspace": str(get_default_workspace_path()),
             "builtinSkillsDir": "",
@@ -602,9 +607,17 @@ def _deep_merge(base: Any, override: Any, *, path: tuple[str, ...] = ()) -> Any:
 
 def normalize_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     """Normalize external config by filling missing fields with defaults."""
+    raw_agent = raw.get("agent") if isinstance(raw, dict) else None
+    if isinstance(raw_agent, dict) and "role" in raw_agent:
+        raise ValueError(
+            "agent.role has been removed; use agent.privilegeLevel with one of: low, medium, high, root"
+        )
     cfg = _deep_merge(default_config(), raw or {})
     if not isinstance(cfg, dict):
         return default_config()
+    agent = _as_dict(cfg.get("agent"))
+    agent["privilegeLevel"] = normalize_agent_privilege_level(agent.get("privilegeLevel", ""), default="")
+    cfg["agent"] = agent
     return cfg
 
 
@@ -631,7 +644,10 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     if not isinstance(data, dict):
         logger.debug("Warning: invalid config root at {}; expected JSON object", path)
         return default_config()
-    return normalize_config(data)
+    try:
+        return normalize_config(data)
+    except ValueError as exc:
+        raise ValueError(f"invalid config at {path}: {exc}") from exc
 
 
 def load_runtime_config(runtime_config_path: Path | None = None) -> dict[str, Any]:
@@ -1013,7 +1029,10 @@ def config_to_env(
         "OPENPPX_PROVIDER_EXTRA_HEADERS_JSON": provider_extra_headers,
         "OPENPPX_AGENT_NAME": str(agent.get("name", "")).strip(),
         "OPENPPX_AGENT_HOME": os.getenv(_AGENT_HOME_ENV, "").strip(),
-        "OPENPPX_AGENT_ROLE": normalize_agent_role(agent.get("role", ""), default=""),
+        "OPENPPX_AGENT_PRIVILEGE_LEVEL": normalize_agent_privilege_level(
+            agent.get("privilegeLevel", ""),
+            default="",
+        ),
         "OPENPPX_CAN_DELEGATE": "1"
         if bool(_as_dict(agent.get("permissions")).get("canDelegate", False))
         else "0",
@@ -1142,7 +1161,10 @@ def bootstrap_env_from_config(config_path: Path | None = None) -> dict[str, Any]
         return None
 
     _activate_config_context(path)
-    cfg = normalize_config(raw)
+    try:
+        cfg = normalize_config(raw)
+    except ValueError as exc:
+        raise ValueError(f"invalid config at {path}: {exc}") from exc
     runtime_path = _runtime_config_path_for_config_path(path)
     runtime_overrides = _env_overrides(load_runtime_config(runtime_config_path=runtime_path))
     legacy_overrides = _env_overrides_from_mapping(raw.get("env"))

@@ -10,6 +10,7 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import LongRunningFunctionTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
+from ..core.config import normalize_agent_privilege_level
 from ..core.env_utils import env_enabled
 from ..core.gui_mcp import resolve_gui_mcp_from_env
 from ..core.mcp_registry import build_mcp_toolsets_from_env
@@ -59,9 +60,12 @@ def _gui_builtin_tools_enabled() -> bool:
     return env_enabled(_GUI_BUILTIN_TOOLS_ENABLED_ENV, default=True)
 
 
-def _agent_role() -> str:
-    """Return the current agent role from environment."""
-    return os.getenv("OPENPPX_AGENT_ROLE", "").strip().lower()
+def _agent_privilege_level() -> str:
+    """Return the current agent privilege level from environment."""
+    raw = os.getenv("OPENPPX_AGENT_PRIVILEGE_LEVEL", "").strip().lower()
+    if not raw:
+        return ""
+    return normalize_agent_privilege_level(raw)
 
 
 def _can_delegate() -> bool:
@@ -157,8 +161,8 @@ def _build_tools() -> list[Any]:
     if _gui_builtin_tools_enabled():
         base_tools.extend([computer_task, computer_use])
 
-    role = _agent_role()
-    if role == "assistant":
+    privilege_level = _agent_privilege_level()
+    if privilege_level == "low":
         allowed_names = {
             "list_skills",
             "read_skill",
@@ -170,7 +174,7 @@ def _build_tools() -> list[Any]:
         tools = [tool for tool in base_tools if _tool_name(tool) in allowed_names or isinstance(tool, PreloadMemoryTool)]
         return tools
 
-    if role == "operator":
+    if privilege_level == "medium":
         blocked_names = {"message", "message_image", "message_file"}
         tools = [tool for tool in base_tools if _tool_name(tool) not in blocked_names]
         tools.extend(build_mcp_toolsets_from_env())
