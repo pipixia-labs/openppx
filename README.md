@@ -5,6 +5,8 @@
 
 ## ✨ News
 
+- 2026-04-18: V0.2.1 released with the `openpipixia` / `ppx` naming refresh, Weixin and WeCom channel support, improved Feishu guidance and voice handling, gateway streaming and realtime feedback, local client API service, and the new privilege-level-based agent lifecycle under `~/.openppx`.
+
 - 2026-02-18: V0.2 released with multi-agent and GUI operation support.
 
 - 2026-02-12: Initial version released with single-agent support, including Feishu image and file sending/receiving.
@@ -48,12 +50,6 @@ ppx create --name "medium-main" --privilege-level medium
 ppx create --name "high-main" --privilege-level high
 ppx create --name "root-main" --privilege-level root --workspace ~/work/openppx-root
 ```
-
-Breaking change:
-
-- `--role` has been removed. Use `--privilege-level`.
-- Legacy config field `agent.role` is no longer supported. Use `agent.privilegeLevel`.
-- Supported privilege levels are `low`, `medium`, `high`, and `root`.
 
 Each agent has a per-agent config home under `~/.openppx/<agent_name>/` that includes:
 
