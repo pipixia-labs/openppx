@@ -115,7 +115,11 @@ Uses **WebSocket** long connection — no public IP required.
       "appSecret": "xxx",
       "encryptKey": "",
       "verificationToken": "",
-      "allowFrom": []
+      "allowFrom": [],
+      "groupPolicy": "mention",
+      "replyToMessage": false,
+      "reactEmoji": "THUMBSUP",
+      "streamingEnabled": false
     }
   }
 }
@@ -123,9 +127,13 @@ Uses **WebSocket** long connection — no public IP required.
 
 > `encryptKey` and `verificationToken` are optional for Long Connection mode.
 > `allowFrom`: Leave empty to allow all users, or add `["ou_xxx"]` to restrict access.
+> `groupPolicy`: `"mention"` (default — group chats respond only when the bot is @mentioned) or `"open"` (respond to every group message).
+> `replyToMessage`: Set `true` to send the first final response through Feishu's reply API, quoting the user's original message. Topic/thread messages reply to the root message automatically when thread metadata is present.
+> `reactEmoji`: Reaction added to accepted inbound messages. Use `""` to disable the acknowledgement reaction.
+> `streamingEnabled`: Set `true` to patch one in-progress Feishu message with streaming deltas.
 
 > [!TIP]
-> Feishu uses WebSocket to receive messages — no webhook or public IP needed!
+> Feishu uses WebSocket to receive messages — no webhook or public IP needed. In group chats, @mention the bot unless you explicitly set `"groupPolicy": "open"`.
 
 ---
 

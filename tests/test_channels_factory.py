@@ -88,12 +88,19 @@ class ChannelFactoryTests(unittest.TestCase):
         os.environ["FEISHU_APP_ID"] = "app-id"
         os.environ["FEISHU_APP_SECRET"] = "app-secret"
         os.environ["FEISHU_STREAMING_ENABLED"] = "1"
+        os.environ["FEISHU_GROUP_POLICY"] = "open"
+        os.environ["FEISHU_REPLY_TO_MESSAGE"] = "1"
+        os.environ["FEISHU_REACT_EMOJI"] = "EYES"
 
         manager, local_channel = build_channel_manager(bus=MessageBus(), channel_names=["local", "feishu"])
 
         self.assertIsNotNone(local_channel)
         self.assertFalse(getattr(local_channel, "_streaming_enabled", True))
-        self.assertTrue(getattr(manager.channels["feishu"], "_streaming_enabled", False))
+        feishu = manager.channels["feishu"]
+        self.assertTrue(getattr(feishu, "_streaming_enabled", False))
+        self.assertEqual(getattr(feishu, "group_policy", ""), "open")
+        self.assertTrue(getattr(feishu, "reply_to_message", False))
+        self.assertEqual(getattr(feishu, "react_emoji", ""), "EYES")
 
     def test_build_manager_skips_unimplemented_channel(self) -> None:
         os.environ["TELEGRAM_BOT_TOKEN"] = "token-1"

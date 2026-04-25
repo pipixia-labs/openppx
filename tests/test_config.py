@@ -240,16 +240,25 @@ class ConfigTests(unittest.TestCase):
 
         self.assertTrue(cfg["channels"]["local"]["streamingEnabled"])
         self.assertFalse(cfg["channels"]["feishu"]["streamingEnabled"])
+        self.assertEqual(cfg["channels"]["feishu"]["groupPolicy"], "mention")
+        self.assertFalse(cfg["channels"]["feishu"]["replyToMessage"])
+        self.assertEqual(cfg["channels"]["feishu"]["reactEmoji"], "THUMBSUP")
 
     def test_config_to_env_maps_channel_streaming_flags(self) -> None:
         cfg = default_config()
         cfg["channels"]["local"]["streamingEnabled"] = False
         cfg["channels"]["feishu"]["streamingEnabled"] = True
+        cfg["channels"]["feishu"]["groupPolicy"] = "open"
+        cfg["channels"]["feishu"]["replyToMessage"] = True
+        cfg["channels"]["feishu"]["reactEmoji"] = "EYES"
 
         env = config_to_env(cfg)
 
         self.assertEqual(env["LOCAL_STREAMING_ENABLED"], "0")
         self.assertEqual(env["FEISHU_STREAMING_ENABLED"], "1")
+        self.assertEqual(env["FEISHU_GROUP_POLICY"], "open")
+        self.assertEqual(env["FEISHU_REPLY_TO_MESSAGE"], "1")
+        self.assertEqual(env["FEISHU_REACT_EMOJI"], "EYES")
 
     def test_bootstrap_env_from_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -260,6 +269,9 @@ class ConfigTests(unittest.TestCase):
             cfg["channels"]["feishu"]["appId"] = "app-id"
             cfg["channels"]["feishu"]["appSecret"] = "app-secret"
             cfg["channels"]["feishu"]["allowFrom"] = ["ou_1", "ou_2"]
+            cfg["channels"]["feishu"]["groupPolicy"] = "open"
+            cfg["channels"]["feishu"]["replyToMessage"] = True
+            cfg["channels"]["feishu"]["reactEmoji"] = "EYES"
             cfg["channels"]["telegram"]["enabled"] = True
             cfg["channels"]["telegram"]["token"] = "tg-token"
             cfg["channels"]["telegram"]["allowFrom"] = ["u1", "u2"]
@@ -400,6 +412,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(os.environ["OPENPPX_HEARTBEAT_ACTIVE_HOURS_TIMEZONE"], "UTC")
         self.assertEqual(os.environ["FEISHU_APP_ID"], "app-id")
         self.assertEqual(os.environ["FEISHU_ALLOW_FROM"], "ou_1,ou_2")
+        self.assertEqual(os.environ["FEISHU_GROUP_POLICY"], "open")
+        self.assertEqual(os.environ["FEISHU_REPLY_TO_MESSAGE"], "1")
+        self.assertEqual(os.environ["FEISHU_REACT_EMOJI"], "EYES")
         self.assertEqual(os.environ["TELEGRAM_BOT_TOKEN"], "tg-token")
         self.assertEqual(os.environ["TELEGRAM_ALLOW_FROM"], "u1,u2")
         self.assertEqual(os.environ["TELEGRAM_PROXY"], "http://127.0.0.1:7890")

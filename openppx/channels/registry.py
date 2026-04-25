@@ -80,6 +80,9 @@ def _build_feishu(bus: MessageBus, _local_writer: LocalWriter) -> BaseChannel:
         verification_token=os.getenv("FEISHU_VERIFICATION_TOKEN", "").strip(),
         allow_from=allow_from,
         streaming_enabled=_env_flag("FEISHU_STREAMING_ENABLED", default=False),
+        group_policy=os.getenv("FEISHU_GROUP_POLICY", "mention").strip() or "mention",
+        reply_to_message=_env_flag("FEISHU_REPLY_TO_MESSAGE", default=False),
+        react_emoji=os.getenv("FEISHU_REACT_EMOJI", "THUMBSUP").strip(),
     )
 
 

@@ -44,6 +44,8 @@ _CHANNEL_STRIPPED_FIELDS: tuple[tuple[str, str, str], ...] = (
     ("feishu", "appSecret", "FEISHU_APP_SECRET"),
     ("feishu", "encryptKey", "FEISHU_ENCRYPT_KEY"),
     ("feishu", "verificationToken", "FEISHU_VERIFICATION_TOKEN"),
+    ("feishu", "groupPolicy", "FEISHU_GROUP_POLICY"),
+    ("feishu", "reactEmoji", "FEISHU_REACT_EMOJI"),
     ("telegram", "token", "TELEGRAM_BOT_TOKEN"),
     ("telegram", "proxy", "TELEGRAM_PROXY"),
     ("whatsapp", "bridgeUrl", "WHATSAPP_BRIDGE_URL"),
@@ -96,6 +98,7 @@ _CHANNEL_ALLOWLIST_FIELDS: tuple[tuple[str, str, str], ...] = (
 _CHANNEL_FLAG_FIELDS: tuple[tuple[str, str, str, bool], ...] = (
     ("local", "streamingEnabled", "LOCAL_STREAMING_ENABLED", True),
     ("feishu", "streamingEnabled", "FEISHU_STREAMING_ENABLED", False),
+    ("feishu", "replyToMessage", "FEISHU_REPLY_TO_MESSAGE", False),
     ("discord", "includeBots", "DISCORD_INCLUDE_BOTS", False),
     ("dingtalk", "streamModeEnabled", "DINGTALK_STREAM_MODE_ENABLED", True),
     ("email", "consentGranted", "EMAIL_CONSENT_GRANTED", False),
@@ -458,6 +461,9 @@ def default_config() -> dict[str, Any]:
                 "verificationToken": "",
                 "allowFrom": [],
                 "streamingEnabled": False,
+                "groupPolicy": "mention",
+                "replyToMessage": False,
+                "reactEmoji": "THUMBSUP",
             },
             "telegram": {
                 "enabled": False,

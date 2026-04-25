@@ -14,6 +14,16 @@ from openppx.bus.queue import MessageBus
 from openppx.channels.feishu import FeishuChannel
 
 
+def _mention(key: str, name: str, open_id: str, user_id: str = "") -> pytypes.SimpleNamespace:
+    """Build a minimal Feishu mention object for unit tests."""
+
+    return pytypes.SimpleNamespace(
+        key=key,
+        name=name,
+        id=pytypes.SimpleNamespace(open_id=open_id, user_id=user_id),
+    )
+
+
 class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._env_backup = dict(os.environ)
@@ -24,7 +34,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_on_message_adds_thumbsup_reaction_and_forwards_group_text(self) -> None:
         bus = MessageBus()
-        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret", group_policy="open")
         data = pytypes.SimpleNamespace(
             event=pytypes.SimpleNamespace(
                 message=pytypes.SimpleNamespace(
@@ -59,6 +69,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
             app_id="app-id",
             app_secret="app-secret",
             streaming_enabled=True,
+            group_policy="open",
         )
         data = pytypes.SimpleNamespace(
             event=pytypes.SimpleNamespace(
@@ -108,6 +119,66 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_inbound(), timeout=0.05)
 
+    async def test_on_group_message_ignores_unmentioned_bot_by_default(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._bot_open_id = "ou_bot"
+        data = pytypes.SimpleNamespace(
+            event=pytypes.SimpleNamespace(
+                message=pytypes.SimpleNamespace(
+                    message_id="om_not_for_bot",
+                    chat_id="oc_group_2",
+                    chat_type="group",
+                    message_type="text",
+                    content='{"text":"hello team"}',
+                    mentions=[],
+                ),
+                sender=pytypes.SimpleNamespace(
+                    sender_type="user",
+                    sender_id=pytypes.SimpleNamespace(open_id="ou_user_1"),
+                ),
+            )
+        )
+
+        with patch.object(channel, "_add_reaction", new=AsyncMock()) as add_reaction:
+            await channel._on_message(data)
+            add_reaction.assert_not_awaited()
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_inbound(), timeout=0.05)
+
+    async def test_on_group_message_strips_bot_mention_and_resolves_user_mentions(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel._bot_open_id = "ou_bot"
+        data = pytypes.SimpleNamespace(
+            event=pytypes.SimpleNamespace(
+                message=pytypes.SimpleNamespace(
+                    message_id="om_mention_1",
+                    chat_id="oc_group_2",
+                    chat_type="group",
+                    message_type="text",
+                    content='{"text":"@_bot please ask @_user_2"}',
+                    mentions=[
+                        _mention("@_bot", "OpenPpx", "ou_bot"),
+                        _mention("@_user_2", "Alice", "ou_alice"),
+                    ],
+                ),
+                sender=pytypes.SimpleNamespace(
+                    sender_type="user",
+                    sender_id=pytypes.SimpleNamespace(open_id="ou_user_1"),
+                ),
+            )
+        )
+
+        with patch.object(channel, "_add_reaction", new=AsyncMock(return_value="rx_1")) as add_reaction:
+            await channel._on_message(data)
+            add_reaction.assert_awaited_once_with("om_mention_1", "THUMBSUP")
+
+        inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=0.2)
+        self.assertEqual(inbound.content, "please ask @Alice (ou_alice)")
+        self.assertEqual(inbound.metadata.get("reaction_id"), "rx_1")
+
     async def test_on_message_respects_allow_from(self) -> None:
         bus = MessageBus()
         channel = FeishuChannel(
@@ -141,7 +212,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_on_message_downloads_file_and_forwards_workspace_path(self) -> None:
         bus = MessageBus()
-        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret", group_policy="open")
         data = pytypes.SimpleNamespace(
             event=pytypes.SimpleNamespace(
                 message=pytypes.SimpleNamespace(
@@ -174,7 +245,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_on_message_downloads_audio_and_forwards_workspace_path(self) -> None:
         bus = MessageBus()
-        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret", group_policy="open")
         data = pytypes.SimpleNamespace(
             event=pytypes.SimpleNamespace(
                 message=pytypes.SimpleNamespace(
@@ -208,7 +279,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_on_message_downloads_image_and_forwards_workspace_path(self) -> None:
         bus = MessageBus()
-        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret", group_policy="open")
         data = pytypes.SimpleNamespace(
             event=pytypes.SimpleNamespace(
                 message=pytypes.SimpleNamespace(
@@ -241,7 +312,7 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_on_post_message_with_text_and_image_forwards_both(self) -> None:
         bus = MessageBus()
-        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret", group_policy="open")
         data = pytypes.SimpleNamespace(
             event=pytypes.SimpleNamespace(
                 message=pytypes.SimpleNamespace(
@@ -272,6 +343,69 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inbound.metadata.get("msg_type"), "post")
         self.assertEqual(inbound.metadata.get("image_keys"), ["img_v2_post_1"])
         self.assertEqual(inbound.metadata.get("image_paths"), [str(saved)])
+
+    async def test_on_message_deduplicates_message_id(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret", group_policy="open")
+        data = pytypes.SimpleNamespace(
+            event=pytypes.SimpleNamespace(
+                message=pytypes.SimpleNamespace(
+                    message_id="om_dupe_1",
+                    chat_id="oc_group_2",
+                    chat_type="group",
+                    message_type="text",
+                    content='{"text":"run once"}',
+                ),
+                sender=pytypes.SimpleNamespace(
+                    sender_type="user",
+                    sender_id=pytypes.SimpleNamespace(open_id="ou_user_1"),
+                ),
+            )
+        )
+
+        with patch.object(channel, "_add_reaction", new=AsyncMock()) as add_reaction:
+            await channel._on_message(data)
+            await channel._on_message(data)
+
+        inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=0.2)
+        self.assertEqual(inbound.content, "run once")
+        add_reaction.assert_awaited_once_with("om_dupe_1", "THUMBSUP")
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_inbound(), timeout=0.05)
+
+    async def test_on_message_includes_reply_context_and_thread_metadata(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(bus=bus, app_id="app-id", app_secret="app-secret")
+        data = pytypes.SimpleNamespace(
+            event=pytypes.SimpleNamespace(
+                message=pytypes.SimpleNamespace(
+                    message_id="om_child_1",
+                    chat_id="oc_p2p_1",
+                    chat_type="p2p",
+                    message_type="text",
+                    content='{"text":"continue"}',
+                    parent_id="om_parent_1",
+                    root_id="om_root_1",
+                    thread_id="omt_1",
+                ),
+                sender=pytypes.SimpleNamespace(
+                    sender_type="user",
+                    sender_id=pytypes.SimpleNamespace(open_id="ou_user_1"),
+                ),
+            )
+        )
+
+        with (
+            patch.object(channel, "_add_reaction", new=AsyncMock()),
+            patch.object(channel, "_get_reply_context", new=AsyncMock(return_value="[Reply to: earlier]")),
+        ):
+            await channel._on_message(data)
+
+        inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=0.2)
+        self.assertEqual(inbound.content, "[Reply to: earlier]\ncontinue")
+        self.assertEqual(inbound.metadata.get("parent_id"), "om_parent_1")
+        self.assertEqual(inbound.metadata.get("root_id"), "om_root_1")
+        self.assertEqual(inbound.metadata.get("thread_id"), "omt_1")
 
     async def test_stop_handles_ws_client_without_stop_method(self) -> None:
         bus = MessageBus()
@@ -386,11 +520,35 @@ class FeishuChannelTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(channel, "_send_text_sync", return_value="om_text_plain") as send_text:
             channel._send_sync(outbound)
 
-        send_text.assert_called_once_with(outbound)
+        send_text.assert_called_once_with(outbound, use_reply=True)
         self.assertEqual(
             outbound.metadata.get("delivery"),
             {"status": "sent", "content_type": "text", "message_ids": ["om_text_plain"]},
         )
+
+    async def test_send_sync_uses_reply_for_final_text_when_enabled(self) -> None:
+        bus = MessageBus()
+        channel = FeishuChannel(
+            bus=bus,
+            app_id="app-id",
+            app_secret="app-secret",
+            reply_to_message=True,
+        )
+        channel._client = object()
+        outbound = OutboundMessage(
+            channel="feishu",
+            chat_id="oc_group_1",
+            content="plain text",
+            metadata={"message_id": "om_parent_1"},
+        )
+
+        with patch.object(channel, "_reply_message_sync", return_value="om_reply_1") as reply_msg:
+            channel._send_sync(outbound)
+
+        reply_msg.assert_called_once()
+        self.assertEqual(reply_msg.call_args.args[0], "om_parent_1")
+        self.assertEqual(reply_msg.call_args.args[1], "text")
+        self.assertEqual(outbound.metadata["delivery"]["message_ids"], ["om_reply_1"])
 
     async def test_send_delta_creates_then_patches_same_message(self) -> None:
         os.environ["OPENPPX_FEISHU_STREAM_UPDATE_INTERVAL_MS"] = "0"

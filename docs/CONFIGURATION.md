@@ -342,7 +342,11 @@ export OPENPPX_GUI_ALLOW_DANGEROUS_KEYS=false
       "appId": "cli_xxx",
       "appSecret": "xxx",
       "encryptKey": "",
-      "verificationToken": ""
+      "verificationToken": "",
+      "groupPolicy": "mention",
+      "replyToMessage": false,
+      "reactEmoji": "THUMBSUP",
+      "streamingEnabled": false
     }
   },
   "web": {
