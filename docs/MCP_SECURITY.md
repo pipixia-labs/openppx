@@ -14,6 +14,34 @@
 - `toolFilter`（或 `tool_filter`）：暴露工具白名单
 - `toolNamePrefix`（或 `tool_name_prefix`）：工具名前缀
 - `requireConfirmation`（或 `require_confirmation`）：调用确认
+- `runtimeHeaders`（或 `runtime_headers`）：把 ADK 运行时上下文按需映射为远端 MCP 请求头
+- `progressEvents`（或 `progress_events`）：是否把 MCP progress notification 转为 openppx step event，默认 `false`
+
+`runtimeHeaders` 默认关闭，避免把 user/session 等上下文静默发送给远端服务。支持的 source 包括：
+
+- `user_id`、`session_id`、`app_name`、`invocation_id`、`agent_name`
+- `metadata.<key>` / `custom_metadata.<key>` / `run_metadata.<key>`
+- `state.<key>`、`session.<attr>`、`literal:<value>`
+
+示例：
+
+```json
+{
+  "tools": {
+    "mcpServers": {
+      "tenant_api": {
+        "url": "https://mcp.example.com/mcp",
+        "runtimeHeaders": {
+          "X-OpenPPX-User": "user_id",
+          "X-OpenPPX-Session": "session_id",
+          "X-OpenPPX-Request-Kind": "metadata.request_kind"
+        },
+        "progressEvents": true
+      }
+    }
+  }
+}
+```
 
 ### 最小验证流程
 

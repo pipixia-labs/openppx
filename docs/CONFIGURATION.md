@@ -381,6 +381,16 @@ export OPENPPX_GUI_ALLOW_DANGEROUS_KEYS=false
         "args": [],
         "toolNamePrefix": "mcp_gui_",
         "requireConfirmation": true
+      },
+      "tenant_api": {
+        "enabled": false,
+        "url": "https://mcp.example.com/mcp",
+        "runtimeHeaders": {
+          "X-OpenPPX-User": "user_id",
+          "X-OpenPPX-Session": "session_id",
+          "X-OpenPPX-Request-Kind": "metadata.request_kind"
+        },
+        "progressEvents": true
       }
     }
   },

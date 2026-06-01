@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from google.adk.tools.mcp_tool.mcp_session_manager import (
@@ -60,6 +61,59 @@ class McpRegistryTests(unittest.TestCase):
         self.assertEqual(len(toolsets), 1)
         self.assertIsInstance(toolsets[0]._connection_params, StreamableHTTPConnectionParams)
         self.assertEqual(toolsets[0].tool_name_prefix, "x_")
+
+    def test_build_mcp_toolsets_runtime_header_provider(self) -> None:
+        toolsets = build_mcp_toolsets(
+            {
+                "remote": {
+                    "url": "https://example.com/mcp",
+                    "runtimeHeaders": {
+                        "X-OpenPPX-User": "user_id",
+                        "X-OpenPPX-Session": "session_id",
+                        "X-OpenPPX-App": "app_name",
+                        "X-OpenPPX-Invocation": "invocation_id",
+                        "X-OpenPPX-Agent": "agent_name",
+                        "X-OpenPPX-Request-Kind": "metadata.request_kind",
+                        "X-OpenPPX-Tenant": "state.tenant_id",
+                        "X-Static": "literal:fixed",
+                    },
+                }
+            },
+            log_registered=False,
+        )
+
+        toolset = toolsets[0]
+        self.assertEqual(toolset.runtime_headers["X-OpenPPX-User"], "user_id")
+        self.assertIsNotNone(toolset._header_provider)
+        ctx = SimpleNamespace(
+            user_id="user-1",
+            invocation_id="inv-1",
+            agent_name="openppx",
+            session=SimpleNamespace(id="session-1", app_name="openppx"),
+            run_config=SimpleNamespace(custom_metadata={"request_kind": "gateway_stream"}),
+            state={"tenant_id": "tenant-1"},
+        )
+
+        headers = toolset._header_provider(ctx)  # type: ignore[misc]
+
+        self.assertEqual(headers["X-OpenPPX-User"], "user-1")
+        self.assertEqual(headers["X-OpenPPX-Session"], "session-1")
+        self.assertEqual(headers["X-OpenPPX-App"], "openppx")
+        self.assertEqual(headers["X-OpenPPX-Invocation"], "inv-1")
+        self.assertEqual(headers["X-OpenPPX-Agent"], "openppx")
+        self.assertEqual(headers["X-OpenPPX-Request-Kind"], "gateway_stream")
+        self.assertEqual(headers["X-OpenPPX-Tenant"], "tenant-1")
+        self.assertEqual(headers["X-Static"], "fixed")
+
+    def test_build_mcp_toolsets_runtime_headers_default_disabled(self) -> None:
+        toolsets = build_mcp_toolsets({"remote": {"url": "https://example.com/mcp"}}, log_registered=False)
+        self.assertEqual(toolsets[0].runtime_headers, {})
+        self.assertIsNone(toolsets[0]._header_provider)
+
+    def test_build_mcp_toolsets_progress_events_default_disabled(self) -> None:
+        toolsets = build_mcp_toolsets({"remote": {"url": "https://example.com/mcp"}}, log_registered=False)
+        self.assertFalse(toolsets[0].progress_events)
+        self.assertIsNone(toolsets[0]._progress_callback)
 
     def test_build_mcp_toolsets_from_env_invalid_json(self) -> None:
         with patch.dict(os.environ, {_MCP_SERVERS_ENV: "{bad json"}, clear=False):
@@ -128,6 +182,37 @@ class McpRegistryTests(unittest.TestCase):
 
 
 class McpRegistryProbeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_progress_events_publish_step_update(self) -> None:
+        toolsets = build_mcp_toolsets(
+            {"remote": {"url": "https://example.com/mcp", "progressEvents": True}},
+            log_registered=False,
+        )
+        toolset = toolsets[0]
+        self.assertTrue(toolset.progress_events)
+        self.assertIsNotNone(toolset._progress_callback)
+        callback_context = SimpleNamespace(
+            invocation_id="inv-1",
+            function_call_id="call-1",
+            session=SimpleNamespace(id="session-1"),
+        )
+
+        with patch("openppx.core.mcp_registry.publish_runtime_step_event", new=AsyncMock()) as mocked_publish:
+            callback = toolset._progress_callback("mcp_remote_long_task", callback_context=callback_context)
+            self.assertIsNotNone(callback)
+            await callback(2, 4, "half done")
+
+        mocked_publish.assert_awaited_once()
+        kwargs = mocked_publish.await_args.kwargs
+        self.assertEqual(kwargs["invocation_id"], "inv-1")
+        self.assertEqual(kwargs["function_call_id"], "call-1")
+        self.assertEqual(kwargs["step_phase"], "running")
+        self.assertEqual(kwargs["step_update_kind"], "progress")
+        self.assertEqual(kwargs["tool_name"], "mcp_remote_long_task")
+        self.assertIn("50%", kwargs["content"])
+        self.assertEqual(kwargs["extra_metadata"]["_mcp_server"], "remote")
+        self.assertEqual(kwargs["extra_metadata"]["_mcp_progress"], 2)
+        self.assertEqual(kwargs["extra_metadata"]["_mcp_total"], 4)
+
     async def test_safe_mcp_toolset_marks_unavailable_on_connection_error(self) -> None:
         toolsets = build_mcp_toolsets(
             {"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]}},

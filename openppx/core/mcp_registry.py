@@ -8,7 +8,9 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any
+from typing import Callable
 
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.tools.mcp_tool import McpToolset
 from google.adk.tools.mcp_tool.mcp_session_manager import (
     SseConnectionParams,
@@ -17,7 +19,9 @@ from google.adk.tools.mcp_tool.mcp_session_manager import (
 )
 from loguru import logger
 from mcp import StdioServerParameters
+from mcp.shared.session import ProgressFnT
 
+from ..runtime.step_events import publish_runtime_step_event
 from .env_utils import is_enabled
 
 _MCP_SERVERS_ENV = "OPENPPX_MCP_SERVERS_JSON"
@@ -74,6 +78,17 @@ class McpToolsetMeta:
     prefix: str
 
 
+@dataclass(frozen=True)
+class McpToolsetOptions:
+    """Resolved configurable options for one MCP toolset."""
+
+    tool_filter: list[str] | None
+    prefix: str
+    require_confirmation: bool
+    runtime_headers: dict[str, str]
+    progress_events: bool
+
+
 class ManagedMcpToolset(SafeMcpToolset):
     """Safe MCP toolset with explicit metadata for diagnostics."""
 
@@ -84,8 +99,14 @@ class ManagedMcpToolset(SafeMcpToolset):
         connection_params: Any,
         tool_filter: list[str] | None,
         require_confirmation: bool,
+        header_provider: Callable[[ReadonlyContext], dict[str, str]] | None = None,
+        progress_callback: Callable[..., ProgressFnT | None] | ProgressFnT | None = None,
+        runtime_headers: dict[str, str] | None = None,
+        progress_events: bool = False,
     ) -> None:
         self.meta = meta
+        self.runtime_headers = dict(runtime_headers or {})
+        self.progress_events = bool(progress_events)
         # Runtime health state is tracked for startup diagnostics and operator hints.
         self.availability_status = "unknown"
         self.availability_message = ""
@@ -94,6 +115,8 @@ class ManagedMcpToolset(SafeMcpToolset):
             tool_filter=tool_filter,
             tool_name_prefix=meta.prefix,
             require_confirmation=require_confirmation,
+            header_provider=header_provider,
+            progress_callback=progress_callback,
         )
 
     def mark_available(self) -> None:
@@ -135,6 +158,27 @@ def _string_dict(value: Any) -> dict[str, str]:
     return {str(k): str(v) for k, v in value.items()}
 
 
+def _safe_header_name(value: Any) -> str:
+    """Return a valid simple header name or an empty string."""
+    name = str(value or "").strip()
+    if not name or any(ch in name for ch in "\r\n:"):
+        return ""
+    return name
+
+
+def _header_value(value: Any) -> str:
+    """Render one runtime value as a safe HTTP header value."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        rendered = "true" if value else "false"
+    elif isinstance(value, (dict, list, tuple)):
+        rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    else:
+        rendered = str(value)
+    return rendered.replace("\r", " ").replace("\n", " ").strip()
+
+
 def _pick(raw: dict[str, Any], snake: str, camel: str, default: Any = None) -> Any:
     if snake in raw:
         return raw[snake]
@@ -143,11 +187,149 @@ def _pick(raw: dict[str, Any], snake: str, camel: str, default: Any = None) -> A
     return default
 
 
+def _pick_bool(raw: dict[str, Any], snake: str, camel: str, default: bool = False) -> bool:
+    """Resolve one boolean-ish config key with snake/camel aliases."""
+    return is_enabled(_pick(raw, snake, camel, default), default=default)
+
+
 def _is_server_enabled(raw_cfg: dict[str, Any]) -> bool:
     """Resolve per-server enabled flag with a default of true."""
     if "enabled" not in raw_cfg:
         return True
     return is_enabled(raw_cfg.get("enabled"), default=False)
+
+
+def _normalize_runtime_header_bindings(raw_cfg: dict[str, Any]) -> dict[str, str]:
+    """Resolve explicit runtime header bindings from one server config."""
+    raw_headers = _pick(raw_cfg, "runtime_headers", "runtimeHeaders", {})
+    if not isinstance(raw_headers, dict):
+        return {}
+    bindings: dict[str, str] = {}
+    for raw_name, raw_source in raw_headers.items():
+        header_name = _safe_header_name(raw_name)
+        source = str(raw_source or "").strip()
+        if header_name and source:
+            bindings[header_name] = source
+    return bindings
+
+
+def _metadata_value(ctx: ReadonlyContext, key: str) -> Any:
+    run_config = getattr(ctx, "run_config", None)
+    metadata = getattr(run_config, "custom_metadata", None) or {}
+    if isinstance(metadata, dict):
+        return metadata.get(key)
+    return None
+
+
+def _resolve_runtime_header_source(ctx: ReadonlyContext, source: str) -> Any:
+    """Resolve one supported runtime header source from ADK ReadonlyContext."""
+    normalized = source.strip()
+    session = getattr(ctx, "session", None)
+    if normalized == "user_id":
+        return getattr(ctx, "user_id", "")
+    if normalized == "session_id":
+        return getattr(session, "id", "")
+    if normalized == "app_name":
+        return getattr(session, "app_name", "")
+    if normalized == "invocation_id":
+        return getattr(ctx, "invocation_id", "")
+    if normalized == "agent_name":
+        return getattr(ctx, "agent_name", "")
+    if normalized.startswith("metadata."):
+        return _metadata_value(ctx, normalized.removeprefix("metadata."))
+    if normalized.startswith("custom_metadata."):
+        return _metadata_value(ctx, normalized.removeprefix("custom_metadata."))
+    if normalized.startswith("run_metadata."):
+        return _metadata_value(ctx, normalized.removeprefix("run_metadata."))
+    if normalized.startswith("state."):
+        return getattr(ctx, "state", {}).get(normalized.removeprefix("state."))
+    if normalized.startswith("session."):
+        return getattr(session, normalized.removeprefix("session."), "")
+    if normalized.startswith("literal:"):
+        return normalized.removeprefix("literal:")
+    return None
+
+
+def _build_header_provider(
+    runtime_headers: dict[str, str],
+) -> Callable[[ReadonlyContext], dict[str, str]] | None:
+    """Build an ADK MCP header provider from explicit runtime bindings."""
+    if not runtime_headers:
+        return None
+
+    def _provider(ctx: ReadonlyContext) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        for header_name, source in runtime_headers.items():
+            value = _header_value(_resolve_runtime_header_source(ctx, source))
+            if value:
+                headers[header_name] = value
+        return headers
+
+    return _provider
+
+
+def _format_progress_number(value: float | int | None) -> str:
+    if value is None:
+        return ""
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def _format_mcp_progress(tool_name: str, progress: float, total: float | None, message: str | None) -> str:
+    detail = f" - {message.strip()}" if isinstance(message, str) and message.strip() else ""
+    if total and total > 0:
+        percentage = max(0.0, min(100.0, (float(progress) / float(total)) * 100))
+        return (
+            f"MCP `{tool_name}` progress {percentage:.0f}% "
+            f"({_format_progress_number(progress)}/{_format_progress_number(total)}){detail}"
+        )
+    return f"MCP `{tool_name}` progress {_format_progress_number(progress)}{detail}"
+
+
+def _build_progress_callback(meta: McpToolsetMeta, enabled: bool) -> Callable[..., ProgressFnT | None] | None:
+    """Build an ADK MCP progress callback factory for openppx step events."""
+    if not enabled:
+        return None
+
+    def _factory(
+        tool_name: str,
+        *,
+        callback_context: Any | None = None,
+        **_kwargs: Any,
+    ) -> ProgressFnT | None:
+        async def _callback(progress: float, total: float | None, message: str | None) -> None:
+            invocation_id = str(getattr(callback_context, "invocation_id", "") or "").strip()
+            function_call_id = str(getattr(callback_context, "function_call_id", "") or "").strip()
+            session = getattr(callback_context, "session", None)
+            session_id = str(getattr(session, "id", "") or "").strip()
+            content = _format_mcp_progress(tool_name, progress, total, message)
+            extra_metadata: dict[str, Any] = {
+                "_feedback_origin": "mcp_progress",
+                "_mcp_server": meta.name,
+                "_mcp_transport": meta.transport,
+                "_mcp_progress": progress,
+            }
+            if total is not None:
+                extra_metadata["_mcp_total"] = total
+            await publish_runtime_step_event(
+                invocation_id=invocation_id or None,
+                function_call_id=function_call_id or None,
+                step_id=function_call_id or f"mcp:{meta.name}:{tool_name}",
+                step_phase="running",
+                step_update_kind="progress",
+                step_title=tool_name,
+                step_kind="tool",
+                tool_name=tool_name,
+                session_id=session_id or None,
+                content=content,
+                extra_metadata=extra_metadata,
+            )
+
+        return _callback
+
+    return _factory
 
 
 def _toolset_meta(toolset: SafeMcpToolset) -> dict[str, str]:
@@ -322,7 +504,7 @@ def _build_connection_params(server_name: str, raw_cfg: dict[str, Any]) -> tuple
     return None
 
 
-def _resolve_toolset_options(server_name: str, raw_cfg: dict[str, Any]) -> tuple[list[str] | None, str, bool]:
+def _resolve_toolset_options(server_name: str, raw_cfg: dict[str, Any]) -> McpToolsetOptions:
     """Resolve tool filter, name prefix and confirmation options."""
     tool_filter = _pick(raw_cfg, "tool_filter", "toolFilter")
     tool_filter_list = _string_list(tool_filter) if isinstance(tool_filter, list) else None
@@ -330,8 +512,16 @@ def _resolve_toolset_options(server_name: str, raw_cfg: dict[str, Any]) -> tuple
     prefix = str(_pick(raw_cfg, "tool_name_prefix", "toolNamePrefix", "") or "").strip()
     if not prefix:
         prefix = f"mcp_{server_name}_"
-    require_confirmation = bool(_pick(raw_cfg, "require_confirmation", "requireConfirmation", False))
-    return tool_filter_list, prefix, require_confirmation
+    require_confirmation = _pick_bool(raw_cfg, "require_confirmation", "requireConfirmation", False)
+    runtime_headers = _normalize_runtime_header_bindings(raw_cfg)
+    progress_events = _pick_bool(raw_cfg, "progress_events", "progressEvents", False)
+    return McpToolsetOptions(
+        tool_filter=tool_filter_list,
+        prefix=prefix,
+        require_confirmation=require_confirmation,
+        runtime_headers=runtime_headers,
+        progress_events=progress_events,
+    )
 
 
 def build_mcp_toolsets(mcp_servers: dict[str, Any], *, log_registered: bool = True) -> list[ManagedMcpToolset]:
@@ -344,6 +534,8 @@ def build_mcp_toolsets(mcp_servers: dict[str, Any], *, log_registered: bool = Tr
     - `toolFilter` / `tool_filter`
     - `toolNamePrefix` / `tool_name_prefix`
     - `requireConfirmation` / `require_confirmation`
+    - `runtimeHeaders` / `runtime_headers`
+    - `progressEvents` / `progress_events`
     """
     toolsets: list[ManagedMcpToolset] = []
     for server_name, raw_cfg in mcp_servers.items():
@@ -359,22 +551,26 @@ def build_mcp_toolsets(mcp_servers: dict[str, Any], *, log_registered: bool = Tr
             continue
         connection_params, transport_name = built
 
-        tool_filter_list, prefix, require_confirmation = _resolve_toolset_options(str(server_name), raw_cfg)
+        options = _resolve_toolset_options(str(server_name), raw_cfg)
 
         meta = McpToolsetMeta(
             name=str(server_name),
             transport=transport_name,
-            prefix=prefix,
+            prefix=options.prefix,
         )
         toolset = ManagedMcpToolset(
             meta=meta,
             connection_params=connection_params,
-            tool_filter=tool_filter_list,
-            require_confirmation=require_confirmation,
+            tool_filter=options.tool_filter,
+            require_confirmation=options.require_confirmation,
+            header_provider=_build_header_provider(options.runtime_headers),
+            progress_callback=_build_progress_callback(meta, options.progress_events),
+            runtime_headers=options.runtime_headers,
+            progress_events=options.progress_events,
         )
         toolsets.append(toolset)
         if log_registered:
-            logger.info("MCP server '{}' registered (prefix='{}')", server_name, prefix)
+            logger.info("MCP server '{}' registered (prefix='{}')", server_name, options.prefix)
 
     return toolsets
 

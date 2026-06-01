@@ -476,3 +476,61 @@ class OpenPpxStepEventPlugin(BasePlugin):
                 step_update_kind="progress",
             )
         return None
+
+
+async def publish_runtime_step_event(
+    *,
+    step_phase: str,
+    step_title: str,
+    step_kind: str,
+    content: str,
+    invocation_id: str | None = None,
+    function_call_id: str | None = None,
+    step_id: str | None = None,
+    step_update_kind: str = "status",
+    tool_name: str | None = None,
+    session_id: str | None = None,
+    done: bool = False,
+    important: bool = False,
+    extra_metadata: dict[str, Any] | None = None,
+) -> bool:
+    """Publish one normalized step event through the configured route.
+
+    Returns False when no channel route or step-event publisher is active.
+    """
+    if _STEP_EVENT_PUBLISHER is None:
+        return False
+    channel, chat_id = get_route()
+    if not channel or not chat_id:
+        return False
+
+    metadata = build_step_metadata(
+        event_class="step_update",
+        invocation_id=invocation_id,
+        function_call_id=function_call_id,
+        step_id=step_id,
+        step_phase=step_phase,
+        step_update_kind=step_update_kind,
+        step_title=step_title,
+        step_kind=step_kind,
+        tool_name=tool_name,
+        session_id=session_id,
+        done=done,
+        important=important,
+        content=content,
+        extra_metadata=extra_metadata,
+    )
+    metadata["_feedback_origin"] = metadata.get("_feedback_origin") or "runtime"
+    try:
+        await _STEP_EVENT_PUBLISHER(
+            OutboundMessage(
+                channel=channel,
+                chat_id=chat_id,
+                content=content,
+                metadata=metadata,
+            )
+        )
+        return True
+    except Exception:
+        logger.exception("Failed publishing openppx runtime step event")
+        return False
