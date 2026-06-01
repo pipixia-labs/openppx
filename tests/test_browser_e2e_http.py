@@ -400,7 +400,10 @@ class BrowserE2EHttpTests(unittest.TestCase):
             def log_message(self, format: str, *args: object) -> None:
                 return
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        try:
+            self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        except PermissionError as exc:
+            self.skipTest(f"loopback HTTP server is not available in this environment: {exc}")
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 

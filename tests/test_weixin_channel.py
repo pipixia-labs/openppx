@@ -49,6 +49,7 @@ class WeixinChannelTests(unittest.IsolatedAsyncioTestCase):
         bus = MessageBus()
         channel = WeixinChannel(bus=bus, token="token-1")
         channel._client = SimpleNamespace()
+        channel._token = "token-1"
         channel._context_tokens["wx-02"] = "ctx-2"
 
         with patch.object(channel, "_send_text", new=AsyncMock()) as mocked_send:
@@ -66,6 +67,7 @@ class WeixinChannelTests(unittest.IsolatedAsyncioTestCase):
         bus = MessageBus()
         channel = WeixinChannel(bus=bus, token="token-1")
         channel._client = SimpleNamespace()
+        channel._token = "token-1"
         channel._context_tokens["wx-02"] = "ctx-2"
 
         with (
@@ -77,7 +79,7 @@ class WeixinChannelTests(unittest.IsolatedAsyncioTestCase):
                     channel="weixin",
                     chat_id="wx-02",
                     content="caption",
-                    metadata={"content_type": "image", "image_path": "demo.png"},
+                    metadata={"content_type": "image", "image_path": "demo.png", "media": ["demo.png"]},
                 )
             )
 
