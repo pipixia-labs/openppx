@@ -112,5 +112,11 @@
 | `OPENPPX_EXEC_SECURITY` | 自动（有 allowlist 时=`allowlist`，否则=`full`） | 执行策略：`deny` / `allowlist` / `full` |
 | `OPENPPX_EXEC_SAFE_BINS` | 空 | 在 `allowlist` 模式下允许的额外命令名（逗号分隔） |
 | `OPENPPX_EXEC_ASK` | `off` | 审批策略：`off` / `on-miss` / `always` |
+| `OPENPPX_HIGH_RISK_ACTION_ACCESS` | `true` | 高风险工具策略：`true` 允许，`conditional` 走 ADK 确认，其他值禁用 |
 
-当前版本中，`OPENPPX_EXEC_ASK` 触发时会返回 `approval required` 占位错误（尚未接入完整审批流）。
+在 root agent / gateway 路径中，`OPENPPX_EXEC_ASK` 和
+`OPENPPX_HIGH_RISK_ACTION_ACCESS=conditional` 会使用 ADK 原生
+`adk_request_confirmation` 暂停工具调用。用户回复 `yes` / `confirm` /
+`approve` 后继续执行，回复 `no` / `reject` / `cancel` 后拒绝执行。直接
+调用 Python 工具函数且没有 ADK `tool_context` 时仍会返回
+`approval required`，用于保持低层安全边界。

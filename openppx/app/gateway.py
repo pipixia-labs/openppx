@@ -33,6 +33,13 @@ from ..runtime.runner_factory import create_runner
 from ..runtime.step_events import build_step_metadata
 from ..runtime.step_events import configure_step_event_publisher
 from ..runtime.subagent_agent import build_restricted_subagent
+from ..runtime.tool_confirmation import (
+    ToolConfirmationRequest,
+    build_tool_confirmation_response_content,
+    extract_tool_confirmation_requests,
+    parse_tool_confirmation_response,
+    render_tool_confirmation_prompt,
+)
 from ..runtime.tool_context import route_context
 from ..core.config import get_agent_home_dir
 from ..core.security import load_security_policy
@@ -121,6 +128,7 @@ class Gateway:
         self._subagent_semaphore = asyncio.Semaphore(self._subagent_max_concurrency())
         # Map logical inbound session keys to active ADK session ids.
         self._session_overrides: dict[str, str] = {}
+        self._pending_confirmations: dict[str, ToolConfirmationRequest] = {}
         self._inflight_user_requests = 0
         self._last_inbound_route: tuple[str, str] | None = None
         self._last_heartbeat_delivery: dict[str, Any] | None = None
@@ -357,6 +365,53 @@ class Gateway:
             prompt = inject_request_time(text, received_at=received_at)
             parts.append(types.Part.from_text(text=prompt))
         return types.UserContent(parts=parts)
+
+    def _pending_confirmation_prompt(self, request: ToolConfirmationRequest) -> str:
+        """Return guidance when a route already has a pending confirmation."""
+        return (
+            render_tool_confirmation_prompt(request)
+            + "\n\nA confirmation is already pending for this conversation. "
+            + "Reply `yes` to approve or `no` to reject before sending a new task."
+        )
+
+    async def _capture_tool_confirmation(
+        self,
+        *,
+        session_route_key: str,
+        event: Any,
+    ) -> ToolConfirmationRequest | None:
+        """Record the first ADK tool confirmation request from an event."""
+        requests = extract_tool_confirmation_requests(event)
+        if not requests:
+            return None
+        request = requests[0]
+        self._pending_confirmations[session_route_key] = request
+        return request
+
+    async def _resume_tool_confirmation(
+        self,
+        *,
+        request: ToolConfirmationRequest,
+        confirmed: bool,
+        msg: InboundMessage,
+        principal: ResolvedPrincipal,
+        session_id: str,
+    ) -> str:
+        """Resume one pending ADK confirmation interrupt with approve/reject."""
+        content = build_tool_confirmation_response_content(request, confirmed=confirmed)
+        final = await self._run_text_stream(
+            runner=self.runner,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            default_when_empty=None,
+            user_id=principal.principal_id,
+            session_id=session_id,
+            invocation_id=request.invocation_id or None,
+            new_message=content,
+        )
+        if final:
+            return final
+        return "Approved tool call." if confirmed else "Rejected tool call."
 
     def heartbeat_status(self) -> dict[str, Any]:
         """Return heartbeat runtime status for diagnostics and operator tooling."""
@@ -615,6 +670,7 @@ class Gateway:
         chat_id: str,
         default_when_empty: str | None = "(no response)",
         emit_stream: bool = False,
+        on_event: Callable[[Any], Any] | None = None,
         **run_kwargs: Any,
     ) -> str:
         """Run one ADK stream and merge emitted text parts into final output."""
@@ -645,6 +701,7 @@ class Gateway:
             final = await run_text_async(
                 runner,
                 default_when_empty=default_when_empty,
+                on_event=on_event,
                 on_text_update=_publish_text_update if emit_stream else None,
                 **effective_run_kwargs,
             )
@@ -831,9 +888,38 @@ class Gateway:
                 chat_id=msg.chat_id,
                 content="Started a new conversation session.",
                 metadata=msg.metadata,
-            )
+        )
 
         active_session_id = self._session_overrides.get(session_route_key, session_route_key)
+        pending_confirmation = self._pending_confirmations.get(session_route_key)
+        if pending_confirmation is not None:
+            confirmed = parse_tool_confirmation_response(msg.content)
+            if confirmed is None:
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=self._pending_confirmation_prompt(pending_confirmation),
+                    metadata=msg.metadata,
+                )
+
+            self._pending_confirmations.pop(session_route_key, None)
+            final = await self._resume_tool_confirmation(
+                request=pending_confirmation,
+                confirmed=confirmed,
+                msg=msg,
+                principal=principal,
+                session_id=active_session_id,
+            )
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=final,
+                metadata={
+                    **(msg.metadata or {}),
+                    "_confirmation_response": "approved" if confirmed else "rejected",
+                },
+            )
+
         interaction_context = self._build_interaction_context(
             principal=principal,
             channel=msg.channel,
@@ -850,17 +936,28 @@ class Gateway:
             media_paths=msg.media,
             received_at=msg.timestamp,
         )
+        captured_confirmation: ToolConfirmationRequest | None = None
+
+        async def _on_event(event: Any) -> None:
+            nonlocal captured_confirmation
+            request = await self._capture_tool_confirmation(session_route_key=session_route_key, event=event)
+            if request is not None and captured_confirmation is None:
+                captured_confirmation = request
+
         # Route context lets tools like `message(...)` infer the current target.
         final = await self._run_text_stream(
             runner=self.runner,
             channel=msg.channel,
             chat_id=msg.chat_id,
             emit_stream=bool((msg.metadata or {}).get("_wants_stream")),
+            on_event=_on_event,
             user_id=principal.principal_id,
             session_id=active_session_id,
             new_message=request,
             state_delta=state_delta,
         )
+        if captured_confirmation is not None:
+            final = render_tool_confirmation_prompt(captured_confirmation)
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,

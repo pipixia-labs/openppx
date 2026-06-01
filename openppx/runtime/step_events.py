@@ -10,6 +10,7 @@ from typing import Any
 from google.adk.plugins.base_plugin import BasePlugin
 
 from ..bus.events import OutboundMessage
+from .tool_confirmation import REQUEST_CONFIRMATION_TOOL_NAME, extract_tool_confirmation_requests
 from .tool_context import get_route
 
 logger = logging.getLogger(__name__)
@@ -337,6 +338,8 @@ class OpenPpxStepEventPlugin(BasePlugin):
         step_phase: str,
         content: str,
         step_update_kind: str = "status",
+        step_title: str | None = None,
+        step_kind: str = "tool",
         done: bool = False,
         important: bool = False,
         extra_metadata: dict[str, Any] | None = None,
@@ -357,8 +360,8 @@ class OpenPpxStepEventPlugin(BasePlugin):
                 function_call_id=function_call_id,
                 step_phase=step_phase,
                 step_update_kind=step_update_kind,
-                step_title=tool_name,
-                step_kind="tool",
+                step_title=step_title or tool_name,
+                step_kind=step_kind,
                 step_order=step_order,
                 tool_name=tool_name,
                 done=done,
@@ -462,9 +465,25 @@ class OpenPpxStepEventPlugin(BasePlugin):
         get_function_calls = getattr(event, "get_function_calls", None)
         if not callable(get_function_calls):
             return None
+        confirmation_ids: set[str] = set()
+        for confirmation in extract_tool_confirmation_requests(event):
+            confirmation_ids.add(confirmation.confirmation_id)
+            await self._publish_step_event(
+                invocation_id=invocation_id,
+                function_call_id=confirmation.original_function_call_id or confirmation.confirmation_id,
+                tool_name=confirmation.tool_name,
+                step_phase="waiting",
+                content=f"`{confirmation.tool_name}` requires confirmation",
+                step_update_kind="confirmation",
+                step_kind="approval",
+                step_title="Confirmation required",
+                important=True,
+            )
         for function_call in get_function_calls() or []:
             function_call_id = _clean_str(getattr(function_call, "id", None))
             tool_name = _clean_str(getattr(function_call, "name", None)) or "tool"
+            if function_call_id in confirmation_ids or tool_name == REQUEST_CONFIRMATION_TOOL_NAME:
+                continue
             if not function_call_id or function_call_id not in long_running_ids:
                 continue
             await self._publish_step_event(

@@ -108,10 +108,24 @@ def _high_risk_action_access() -> str:
     return os.getenv("OPENPPX_HIGH_RISK_ACTION_ACCESS", "true").strip().lower() or "true"
 
 
-def _require_high_risk_action(action_name: str) -> str | None:
+def _tool_context_confirmed(tool_context: Any | None) -> bool:
+    """Return whether ADK resumed the current tool call with confirmation."""
+    confirmation = getattr(tool_context, "tool_confirmation", None)
+    return bool(getattr(confirmation, "confirmed", False))
+
+
+def high_risk_action_requires_confirmation(action_name: str) -> bool:
+    """Return whether the action should use ADK confirmation before execution."""
+    _ = action_name
+    return _high_risk_action_access() == "conditional"
+
+
+def _require_high_risk_action(action_name: str, tool_context: Any | None = None) -> str | None:
     """Return an error when current policy blocks a high-risk action."""
     mode = _high_risk_action_access()
     if mode == "true":
+        return None
+    if mode == "conditional" and _tool_context_confirmed(tool_context):
         return None
     if mode == "conditional":
         return f"Error: approval required for high-risk action '{action_name}'"
@@ -1597,14 +1611,37 @@ def _wrap_command_with_sandbox(sandbox: str, command: str, workspace: str, cwd: 
     raise ValueError(f"Unknown sandbox backend {sandbox!r}. Available: ['bwrap']")
 
 
-def _validate_exec_security(command: str, argv: list[str], policy: SecurityPolicy) -> str | None:
+def _validate_exec_security(
+    command: str,
+    argv: list[str],
+    policy: SecurityPolicy,
+    *,
+    confirmation_received: bool = False,
+) -> str | None:
     """Validate command against configured exec security mode."""
     return _policy_validate_exec_security(
         command=command,
         argv=argv,
         policy=policy,
         shell_builtins=_SHELL_BUILTINS,
+        confirmation_received=confirmation_received,
     )
+
+
+def exec_command_requires_confirmation(command: str, **_kwargs: Any) -> bool:
+    """Return whether an exec command should request ADK confirmation."""
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+    policy = _security_policy()
+    try:
+        argv = shlex.split(cmd, posix=True)
+    except ValueError:
+        return False
+    if not argv:
+        return False
+    security_error = _validate_exec_security(cmd, argv, policy)
+    return bool(security_error and "approval required" in security_error.lower())
 
 
 def _format_exec_output(stdout: str, stderr: str, exit_code: int | None) -> str:
@@ -1770,6 +1807,7 @@ def exec_command(
     pty: bool = False,
     scope: str | None = None,
     sandbox: str | None = None,
+    tool_context: Any | None = None,
 ) -> str:
     """Execute a command safely and return combined output.
 
@@ -1819,7 +1857,12 @@ def exec_command(
     if not argv:
         return _ret("tool.exec.output", "Error: command is empty")
 
-    security_error = _validate_exec_security(cmd, argv, policy)
+    security_error = _validate_exec_security(
+        cmd,
+        argv,
+        policy,
+        confirmation_received=_tool_context_confirmed(tool_context),
+    )
     if security_error:
         return _ret("tool.exec.output", security_error)
 
@@ -2074,6 +2117,7 @@ def process_session(
     bracketed: bool = True,
     eof: bool = False,
     scope: str | None = None,
+    tool_context: Any | None = None,
 ) -> str:
     """Manage background exec sessions.
 
@@ -2390,7 +2434,7 @@ def process_session(
         return _ret("tool.process.output", f"Pasted {len(data)} chars to session {sid} ({mode}).")
 
     if normalized == "kill":
-        blocked = _require_high_risk_action("process.kill")
+        blocked = _require_high_risk_action("process.kill", tool_context)
         if blocked:
             return _ret("tool.process.output", blocked)
         err = manager.kill_session(sid, scope_key=effective_scope)
@@ -2422,7 +2466,7 @@ def process_session(
         return _ret("tool.process.output", f"Termination requested for session {sid}.")
 
     if normalized == "remove":
-        blocked = _require_high_risk_action("process.remove")
+        blocked = _require_high_risk_action("process.remove", tool_context)
         if blocked:
             return _ret("tool.process.output", blocked)
         removed = manager.remove_session(sid, scope_key=effective_scope)
@@ -3832,6 +3876,7 @@ def message(
     chat_id: str | None = None,
     media: list[str] | str | None = None,
     buttons: list[list[str]] | None = None,
+    tool_context: Any | None = None,
 ) -> str:
     """Send an outbound message with optional attachments and button labels.
 
@@ -3851,7 +3896,7 @@ def message(
         - Falls back to current route context.
         - Final fallback is local/default.
     """
-    blocked = _require_high_risk_action("message.send")
+    blocked = _require_high_risk_action("message.send", tool_context)
     if blocked:
         return _ret("tool.message.output", blocked)
     target_channel, target_chat_id = _resolve_route(channel, chat_id)
@@ -4040,7 +4085,13 @@ def spawn_subagent(
     return result
 
 
-def message_image(path: str, caption: str = "", channel: str | None = None, chat_id: str | None = None) -> str:
+def message_image(
+    path: str,
+    caption: str = "",
+    channel: str | None = None,
+    chat_id: str | None = None,
+    tool_context: Any | None = None,
+) -> str:
     """Send an outbound image message (optionally with caption).
 
     Args:
@@ -4056,7 +4107,7 @@ def message_image(path: str, caption: str = "", channel: str | None = None, chat
     Notes:
         - Allowed suffixes: .png, .jpg, .jpeg, .webp, .gif, .bmp
     """
-    blocked = _require_high_risk_action("message_image.send")
+    blocked = _require_high_risk_action("message_image.send", tool_context)
     if blocked:
         return _ret("tool.message_image.output", blocked)
     target_channel, target_chat_id = _resolve_route(channel, chat_id)
@@ -4105,7 +4156,13 @@ def message_image(path: str, caption: str = "", channel: str | None = None, chat
     return result
 
 
-def message_file(path: str, caption: str = "", channel: str | None = None, chat_id: str | None = None) -> str:
+def message_file(
+    path: str,
+    caption: str = "",
+    channel: str | None = None,
+    chat_id: str | None = None,
+    tool_context: Any | None = None,
+) -> str:
     """Send an outbound file message (optionally with caption text).
 
     Args:
@@ -4118,7 +4175,7 @@ def message_file(path: str, caption: str = "", channel: str | None = None, chat_
         Queue success message when gateway publisher is active; otherwise a local
         outbox write confirmation, or an "Error: ..." message.
     """
-    blocked = _require_high_risk_action("message_file.send")
+    blocked = _require_high_risk_action("message_file.send", tool_context)
     if blocked:
         return _ret("tool.message_file.output", blocked)
     target_channel, target_chat_id = _resolve_route(channel, chat_id)
@@ -4196,6 +4253,7 @@ def cron(
     deliver: bool | None = None,
     channel: str | None = None,
     chat_id: str | None = None,
+    tool_context: Any | None = None,
 ) -> str:
     """Manage persisted cron jobs (scheduler + delivery metadata).
 
@@ -4261,7 +4319,7 @@ def cron(
         return result
 
     if action == "remove":
-        blocked = _require_high_risk_action("cron.remove")
+        blocked = _require_high_risk_action("cron.remove", tool_context)
         if blocked:
             return _ret("tool.cron.output", blocked)
         if not job_id:
@@ -4273,7 +4331,7 @@ def cron(
         return result
 
     if action == "add":
-        blocked = _require_high_risk_action("cron.add")
+        blocked = _require_high_risk_action("cron.add", tool_context)
         if blocked:
             return _ret("tool.cron.output", blocked)
         if not message:

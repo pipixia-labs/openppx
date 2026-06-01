@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from google.adk.agents import LlmAgent
+from google.adk.tools import FunctionTool
 from google.adk.tools import LongRunningFunctionTool
 from google.adk.tools import load_artifacts
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
@@ -24,12 +25,14 @@ from ..tooling.registry import (
     exec_command,
     glob,
     grep,
+    high_risk_action_requires_confirmation,
     list_dir,
     message_file,
     message,
     message_image,
     read_file,
     process_session,
+    exec_command_requires_confirmation,
     spawn_subagent,
     web_fetch,
     web_search,
@@ -71,6 +74,43 @@ def _tool_name(tool: Any) -> str:
     return getattr(tool, "__name__", str(tool))
 
 
+def _confirm_high_risk_action(action_name: str) -> bool:
+    """Return whether one high-risk action should use ADK confirmation."""
+    return high_risk_action_requires_confirmation(action_name)
+
+
+def _message_requires_confirmation(**_kwargs: Any) -> bool:
+    """Return whether outbound message tools should request confirmation."""
+    return _confirm_high_risk_action("message.send")
+
+
+def _message_image_requires_confirmation(**_kwargs: Any) -> bool:
+    """Return whether outbound image delivery should request confirmation."""
+    return _confirm_high_risk_action("message_image.send")
+
+
+def _message_file_requires_confirmation(**_kwargs: Any) -> bool:
+    """Return whether outbound file delivery should request confirmation."""
+    return _confirm_high_risk_action("message_file.send")
+
+
+def _process_requires_confirmation(action: str = "list", **_kwargs: Any) -> bool:
+    """Return whether a process-session operation should request confirmation."""
+    normalized = str(action or "").strip().lower()
+    return normalized in {"kill", "remove"} and _confirm_high_risk_action(f"process.{normalized}")
+
+
+def _cron_requires_confirmation(action: str, **_kwargs: Any) -> bool:
+    """Return whether a cron operation should request confirmation."""
+    normalized = str(action or "").strip().lower()
+    return normalized in {"add", "remove"} and _confirm_high_risk_action(f"cron.{normalized}")
+
+
+def _confirmation_tool(func: Any, predicate: Any) -> FunctionTool:
+    """Wrap a Python function in ADK's native confirmation tool wrapper."""
+    return FunctionTool(func=func, require_confirmation=predicate)
+
+
 def _build_instruction() -> str:
     """Build the root-agent instruction from layered prompt sections."""
     return build_root_agent_instruction()
@@ -99,15 +139,15 @@ def _build_tools() -> list[Any]:
         list_dir,
         glob,
         grep,
-        exec_command,
-        process_session,
+        _confirmation_tool(exec_command, exec_command_requires_confirmation),
+        _confirmation_tool(process_session, _process_requires_confirmation),
         browser,
         web_search,
         web_fetch,
-        message,
-        message_image,
-        message_file,
-        cron,
+        _confirmation_tool(message, _message_requires_confirmation),
+        _confirmation_tool(message_image, _message_image_requires_confirmation),
+        _confirmation_tool(message_file, _message_file_requires_confirmation),
+        _confirmation_tool(cron, _cron_requires_confirmation),
     ]
     if _can_delegate():
         base_tools.append(LongRunningFunctionTool(func=spawn_subagent))

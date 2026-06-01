@@ -92,6 +92,92 @@ class GatewayTests(unittest.TestCase):
         self.assertIn("Use this as the reference 'now' for relative time expressions", text)
         self.assertIn("\n\nhello", text)
 
+    def test_process_message_prompts_and_resumes_tool_confirmation(self) -> None:
+        confirmation_call = pytypes.SimpleNamespace(
+            id="confirm_1",
+            name="adk_request_confirmation",
+            args={
+                "originalFunctionCall": {
+                    "id": "fc_message",
+                    "name": "message",
+                    "args": {"content": "hello"},
+                },
+                "toolConfirmation": {"hint": "Approve message?"},
+            },
+        )
+        confirmation_event = pytypes.SimpleNamespace(
+            invocation_id="inv_confirm",
+            long_running_tool_ids={"confirm_1"},
+            content=pytypes.SimpleNamespace(parts=[]),
+            get_function_calls=lambda: [confirmation_call],
+        )
+        final_event = pytypes.SimpleNamespace(
+            content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="message sent")])
+        )
+        captured: list[dict[str, object]] = []
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                captured.append(kwargs)
+                if len(captured) == 1:
+                    yield confirmation_event
+                else:
+                    yield final_event
+
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=MessageBus())
+            first = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="send hello")
+            prompt = asyncio.run(gateway.process_message(first))
+            second = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="yes")
+            resumed = asyncio.run(gateway.process_message(second))
+
+        self.assertIn("Approve message?", prompt.content)
+        self.assertIn("Reply `yes` to approve", prompt.content)
+        self.assertEqual(resumed.content, "message sent")
+        self.assertEqual(captured[1]["invocation_id"], "inv_confirm")
+        function_response = captured[1]["new_message"].parts[0].function_response
+        self.assertEqual(function_response.id, "confirm_1")
+        self.assertEqual(function_response.name, "adk_request_confirmation")
+        self.assertEqual(function_response.response, {"confirmed": True})
+
+    def test_process_message_blocks_new_task_while_confirmation_pending(self) -> None:
+        confirmation_call = pytypes.SimpleNamespace(
+            id="confirm_1",
+            name="adk_request_confirmation",
+            args={
+                "originalFunctionCall": {
+                    "id": "fc_exec",
+                    "name": "exec",
+                    "args": {"command": "echo hello"},
+                },
+                "toolConfirmation": {"hint": "Approve exec?"},
+            },
+        )
+        confirmation_event = pytypes.SimpleNamespace(
+            invocation_id="inv_confirm",
+            long_running_tool_ids={"confirm_1"},
+            content=pytypes.SimpleNamespace(parts=[]),
+            get_function_calls=lambda: [confirmation_call],
+        )
+        captured: list[dict[str, object]] = []
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                captured.append(kwargs)
+                yield confirmation_event
+
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=MessageBus())
+            first = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="run command")
+            asyncio.run(gateway.process_message(first))
+            second = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="different task")
+            blocked = asyncio.run(gateway.process_message(second))
+
+        self.assertIn("confirmation is already pending", blocked.content)
+        self.assertEqual(len(captured), 1)
+
     def test_process_message_sets_participant_relation_and_access_rows(self) -> None:
         fake_event = pytypes.SimpleNamespace(
             content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="ok")])

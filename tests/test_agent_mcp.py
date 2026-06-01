@@ -7,6 +7,19 @@ import unittest
 from unittest.mock import patch
 
 
+def _tool_names(tools: list[object]) -> set[str]:
+    names: set[str] = set()
+    for tool in tools:
+        if hasattr(tool, "name") and isinstance(getattr(tool, "name"), str):
+            names.add(getattr(tool, "name"))
+            continue
+        if hasattr(tool, "func"):
+            names.add(getattr(getattr(tool, "func"), "__name__", str(tool)))
+            continue
+        names.add(getattr(tool, "__name__", str(tool)))
+    return names
+
+
 class AgentMcpTests(unittest.TestCase):
     def test_build_tools_appends_mcp_toolsets(self) -> None:
         from openppx import agent
@@ -84,10 +97,11 @@ class AgentMcpTests(unittest.TestCase):
             with patch("openppx.app.agent.build_mcp_toolsets_from_env", return_value=[]):
                 tools = agent._build_tools()
 
-        self.assertIn(exec_command, tools)
-        self.assertIn(web_search, tools)
-        self.assertNotIn(message, tools)
-        self.assertNotIn(message_file, tools)
+        names = _tool_names(tools)
+        self.assertIn("exec", names)
+        self.assertIn("web_search", names)
+        self.assertNotIn("message", names)
+        self.assertNotIn("message_file", names)
 
     def test_build_tools_keeps_high_full_tool_access(self) -> None:
         from openppx import agent
@@ -101,10 +115,11 @@ class AgentMcpTests(unittest.TestCase):
             with patch("openppx.app.agent.build_mcp_toolsets_from_env", return_value=[]):
                 tools = agent._build_tools()
 
-        self.assertIn(exec_command, tools)
-        self.assertIn(web_search, tools)
-        self.assertIn(message, tools)
-        self.assertIn(message_file, tools)
+        names = _tool_names(tools)
+        self.assertIn("exec", names)
+        self.assertIn("web_search", names)
+        self.assertIn("message", names)
+        self.assertIn("message_file", names)
 
 
 if __name__ == "__main__":

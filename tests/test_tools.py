@@ -97,6 +97,16 @@ class ToolsTests(unittest.TestCase):
 
             self.assertIn("approval required", message("hello"))
 
+    def test_high_risk_tools_allow_confirmed_tool_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            os.environ["OPENPPX_HIGH_RISK_ACTION_ACCESS"] = "conditional"
+            tool_context = pytypes.SimpleNamespace(tool_confirmation=pytypes.SimpleNamespace(confirmed=True))
+
+            response = message("hello", channel="local", chat_id="u1", tool_context=tool_context)
+
+            self.assertIn("Message recorded", response)
+
     def test_builtin_tool_metadata_marks_read_and_high_risk_tools(self) -> None:
         read_meta = get_tool_meta("read_file")
         exec_meta = get_tool_meta("exec")
@@ -724,6 +734,12 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("approval required", out.lower())
         self.assertIn("ask=always", out.lower())
 
+    def test_exec_tool_ask_always_allows_confirmed_tool_context(self) -> None:
+        os.environ["OPENPPX_EXEC_ASK"] = "always"
+        tool_context = pytypes.SimpleNamespace(tool_confirmation=pytypes.SimpleNamespace(confirmed=True))
+        out = exec_command("echo hello", tool_context=tool_context)
+        self.assertIn("hello", out.lower())
+
     def test_exec_tool_ask_on_miss_requires_approval_for_allowlist_miss(self) -> None:
         os.environ["OPENPPX_EXEC_SECURITY"] = "allowlist"
         os.environ["OPENPPX_EXEC_ALLOWLIST"] = "python"
@@ -731,6 +747,14 @@ class ToolsTests(unittest.TestCase):
         out = exec_command("echo hello")
         self.assertIn("approval required", out.lower())
         self.assertIn("ask=on-miss", out.lower())
+
+    def test_exec_tool_ask_on_miss_allows_confirmed_allowlist_miss(self) -> None:
+        os.environ["OPENPPX_EXEC_SECURITY"] = "allowlist"
+        os.environ["OPENPPX_EXEC_ALLOWLIST"] = "python"
+        os.environ["OPENPPX_EXEC_ASK"] = "on-miss"
+        tool_context = pytypes.SimpleNamespace(tool_confirmation=pytypes.SimpleNamespace(confirmed=True))
+        out = exec_command("echo hello", tool_context=tool_context)
+        self.assertIn("hello", out.lower())
 
     def test_exec_tool_ask_on_miss_allows_allowlist_hit(self) -> None:
         os.environ["OPENPPX_EXEC_SECURITY"] = "allowlist"

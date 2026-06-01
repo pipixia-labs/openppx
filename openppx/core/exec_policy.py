@@ -185,6 +185,7 @@ def validate_exec_security(
     argv: list[str],
     policy: SecurityPolicy,
     shell_builtins: Iterable[str],
+    confirmation_received: bool = False,
 ) -> str | None:
     """Validate command against configured exec security mode."""
     builtins = set(shell_builtins)
@@ -194,7 +195,7 @@ def validate_exec_security(
     ask_error, ask_mode = _resolve_exec_ask_mode()
     if ask_error:
         return ask_error
-    if ask_mode == "always":
+    if ask_mode == "always" and not confirmation_received:
         return "Error: approval required to execute command (ask=always)"
     if mode == "deny":
         return "Error: exec denied by security policy (mode=deny)"
@@ -209,6 +210,8 @@ def validate_exec_security(
         if policy.is_exec_allowed(command_name):
             continue
         if _normalize_exec_name(command_name) in safe_bins:
+            continue
+        if confirmation_received and ask_mode in {"always", "on-miss"}:
             continue
         if ask_mode == "on-miss":
             return (

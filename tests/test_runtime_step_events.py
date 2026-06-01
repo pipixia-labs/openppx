@@ -118,6 +118,45 @@ class StepEventPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(published), 1)
         self.assertEqual(published[0].metadata["_step_phase"], "waiting")
 
+    async def test_on_event_callback_marks_tool_confirmation_waiting(self) -> None:
+        published = []
+
+        async def publisher(msg):
+            published.append(msg)
+
+        configure_step_event_publisher(publisher)
+        plugin = OpenPpxStepEventPlugin()
+        invocation_context = SimpleNamespace(invocation_id="inv_3")
+        function_call = SimpleNamespace(
+            id="confirm_1",
+            name="adk_request_confirmation",
+            args={
+                "originalFunctionCall": {
+                    "id": "fc_message",
+                    "name": "message",
+                    "args": {"content": "hello"},
+                },
+                "toolConfirmation": {"hint": "Approve message?"},
+            },
+        )
+        event = SimpleNamespace(
+            invocation_id="inv_3",
+            long_running_tool_ids={"confirm_1"},
+            get_function_calls=lambda: [function_call],
+        )
+
+        await plugin.before_run_callback(invocation_context=invocation_context)
+        with route_context("local", "default"):
+            await plugin.on_event_callback(invocation_context=invocation_context, event=event)
+
+        self.assertEqual(len(published), 1)
+        metadata = published[0].metadata
+        self.assertEqual(metadata["_step_phase"], "waiting")
+        self.assertEqual(metadata["_step_kind"], "approval")
+        self.assertEqual(metadata["_step_update_kind"], "confirmation")
+        self.assertEqual(metadata["_step_title"], "Confirmation required")
+        self.assertEqual(metadata["_tool_name"], "message")
+
 
 if __name__ == "__main__":
     unittest.main()
