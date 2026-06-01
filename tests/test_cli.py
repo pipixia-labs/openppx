@@ -1277,6 +1277,48 @@ class CLITests(unittest.TestCase):
         self.assertIn("issues", payload)
         self.assertIn("installPrereqs", payload)
         self.assertIn("heartbeat", payload)
+        self.assertIn("runtime", payload)
+        self.assertTrue(payload["runtime"]["adk"]["supported"])
+
+    def test_doctor_runtime_status_reports_adk_storage_and_context_cache(self) -> None:
+        from openppx import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            meta_path = Path(tmp) / "database" / ".adk_meta.json"
+            meta_path.parent.mkdir(parents=True)
+            meta_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "adk_major": 2,
+                        "adk_version": "2.1.0",
+                        "last_writer": "openppx",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "OPENPPX_DATA_DIR": tmp,
+                    "OPENPPX_CONTEXT_CACHE_ENABLED": "1",
+                    "OPENPPX_CONTEXT_CACHE_INTERVALS": "3",
+                    "OPENPPX_CONTEXT_CACHE_MIN_TOKENS": "4096",
+                    "OPENPPX_CONTEXT_CACHE_TTL_SECONDS": "120",
+                },
+                clear=False,
+            ):
+                status = cli._doctor_runtime_status()
+
+        self.assertTrue(status["adk"]["supported"])
+        self.assertEqual(status["storage_meta"]["path"], str(meta_path))
+        self.assertTrue(status["storage_meta"]["exists"])
+        self.assertEqual(status["storage_meta"]["adk_major"], 2)
+        self.assertEqual(status["context_cache"]["requested"], True)
+        self.assertEqual(status["context_cache"]["enabled_for_full_profile"], True)
+        self.assertEqual(status["context_cache"]["enabled_for_ephemeral_profile"], False)
+        self.assertEqual(status["context_cache"]["cache_intervals"], 3)
+        self.assertEqual(status["context_cache"]["ttl_seconds"], 120)
 
     def test_cmd_doctor_json_output_includes_provider_oauth_issue(self) -> None:
         from openppx import cli

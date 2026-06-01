@@ -54,7 +54,7 @@ from ..core.provider import (
 from ..core.provider_registry import find_provider_spec
 from ..runtime.cron_helpers import cron_store_path, format_schedule, format_timestamp_ms
 from ..runtime.cron_service import CronService
-from ..runtime.adk_version import assert_supported_adk_major
+from ..runtime.adk_version import assert_supported_adk_major, installed_adk_version
 from ..runtime.heartbeat_status_store import read_heartbeat_status_snapshot
 from ..runtime.token_usage_store import read_token_usage_stats
 from ..runtime.gateway_service import (
@@ -127,6 +127,68 @@ def _doctor_session_db_url() -> str:
     if value:
         return value
     return load_session_config().db_url
+
+
+def _doctor_runtime_status() -> dict[str, Any]:
+    """Build ADK-specific runtime diagnostics for doctor output."""
+    from ..runtime.adk_storage_meta import adk_storage_meta_path
+    from ..runtime.context_cache import build_context_cache_config, context_cache_requested
+
+    version = installed_adk_version()
+    major_text = version.split(".", 1)[0] if version else ""
+    try:
+        major = int(major_text)
+    except ValueError:
+        major = None
+
+    meta_path = adk_storage_meta_path(get_data_dir())
+    storage_meta: dict[str, Any] = {
+        "path": str(meta_path),
+        "exists": meta_path.exists(),
+        "schema_version": None,
+        "adk_major": None,
+        "adk_version": "",
+        "last_writer": "",
+        "read_error": "",
+    }
+    if meta_path.exists():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                storage_meta.update(
+                    {
+                        "schema_version": payload.get("schema_version"),
+                        "adk_major": payload.get("adk_major"),
+                        "adk_version": str(payload.get("adk_version", "")),
+                        "last_writer": str(payload.get("last_writer", "")),
+                    }
+                )
+            else:
+                storage_meta["read_error"] = "metadata payload is not an object"
+        except Exception as exc:
+            storage_meta["read_error"] = str(exc)
+
+    cache_requested = context_cache_requested()
+    cache_config = build_context_cache_config(profile="full") if cache_requested else None
+    context_cache: dict[str, Any] = {
+        "requested": cache_requested,
+        "enabled_for_full_profile": cache_config is not None,
+        "enabled_for_ephemeral_profile": False,
+        "cache_intervals": getattr(cache_config, "cache_intervals", None),
+        "min_tokens": getattr(cache_config, "min_tokens", None),
+        "ttl_seconds": getattr(cache_config, "ttl_seconds", None),
+    }
+
+    return {
+        "adk": {
+            "version": version,
+            "major": major,
+            "supported_major": 2,
+            "supported": major == 2,
+        },
+        "storage_meta": storage_meta,
+        "context_cache": context_cache,
+    }
 
 
 def _parse_enabled_channels(raw: str | None) -> list[str]:
@@ -1264,6 +1326,7 @@ def _cmd_doctor(
     registry = get_registry()
     skills_count = len(registry.list_skills())
     session_db_url = _doctor_session_db_url()
+    runtime_status = _doctor_runtime_status()
     if parse_enabled_channels is _parse_enabled_channels:
         configured_channels = _doctor_parse_enabled_channels()
     else:
@@ -1344,6 +1407,7 @@ def _cmd_doctor(
         },
         "skills": {"count": skills_count},
         "session": {"db_url": session_db_url},
+        "runtime": runtime_status,
         "channels": {"configured": configured_channels},
         "installPrereqs": install_prereqs,
         "heartbeat": {
@@ -1384,6 +1448,23 @@ def _cmd_doctor(
         f"Workspace: {registry.workspace}",
         f"Detected skills: {skills_count}",
         f"Provider: {provider_name} (enabled={provider_enabled}, model={provider_model})",
+        (
+            "ADK runtime: "
+            f"version={runtime_status['adk']['version']}, "
+            f"supported={runtime_status['adk']['supported']}"
+        ),
+        (
+            "ADK storage meta: "
+            f"exists={runtime_status['storage_meta']['exists']}, "
+            f"adk_major={runtime_status['storage_meta']['adk_major']}, "
+            f"schema={runtime_status['storage_meta']['schema_version']}"
+        ),
+        (
+            "Context cache: "
+            f"requested={runtime_status['context_cache']['requested']}, "
+            f"full={runtime_status['context_cache']['enabled_for_full_profile']}, "
+            f"ephemeral={runtime_status['context_cache']['enabled_for_ephemeral_profile']}"
+        ),
         (
             "Provider OAuth: "
             f"required={provider_oauth.get('required')}, "
@@ -1480,6 +1561,13 @@ def _cmd_doctor(
             _stdout_line(_ok(normalized))
 
     _stdout_line(_section("Runtime status:"))
+    _stdout_line(
+        "ADK: "
+        f"version={runtime_status['adk']['version']}, "
+        f"supported={runtime_status['adk']['supported']}, "
+        f"storage_meta={'present' if runtime_status['storage_meta']['exists'] else 'missing'}, "
+        f"context_cache_requested={runtime_status['context_cache']['requested']}"
+    )
     if heartbeat_snapshot is None:
         _stdout_line(_warn("Heartbeat: snapshot=missing"))
     else:

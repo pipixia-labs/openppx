@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+eval = [
+    "google-adk[eval]>=2.1.0,<3.0.0",
+]
 wecom = [
     "wecom-aibot-sdk-python>=0.1.5",
 ]
