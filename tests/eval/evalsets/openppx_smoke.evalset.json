@@ -1,0 +1,41 @@
+{
+  "eval_set_id": "openppx_smoke",
+  "name": "openppx smoke eval",
+  "description": "Minimal ADK evalset for validating the openppx eval entrypoint and a no-tool response case.",
+  "eval_cases": [
+    {
+      "eval_id": "exact_echo",
+      "conversation": [
+        {
+          "invocation_id": "openppx-smoke-0001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Reply with exactly: OPENPPX_EVAL_SMOKE"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "OPENPPX_EVAL_SMOKE"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [],
+            "tool_responses": [],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "openppx",
+        "user_id": "eval_user",
+        "state": {}
+      }
+    }
+  ]
+}

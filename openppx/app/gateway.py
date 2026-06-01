@@ -10,7 +10,6 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.genai import types
 
 from ..bus.events import InboundMessage, OutboundMessage
@@ -29,6 +28,7 @@ from ..runtime.identity_models import ResolvedPrincipal
 from ..runtime.identity_store import create_identity_store
 from ..runtime.interaction_context import InteractionContext
 from ..runtime.message_time import append_execution_time, inject_request_time
+from ..runtime.run_config import build_run_config
 from ..runtime.runner_factory import create_runner
 from ..runtime.step_events import build_step_metadata
 from ..runtime.step_events import configure_step_event_publisher
@@ -621,7 +621,14 @@ class Gateway:
         final = ""
         effective_run_kwargs = dict(run_kwargs)
         if emit_stream and "run_config" not in effective_run_kwargs:
-            effective_run_kwargs["run_config"] = RunConfig(streaming_mode=StreamingMode.SSE)
+            effective_run_kwargs["run_config"] = build_run_config(
+                profile="full",
+                streaming=True,
+                custom_metadata={
+                    "channel": channel,
+                    "request_kind": "gateway_stream",
+                },
+            )
         with route_context(channel, chat_id):
             async for event in runner.run_async(**effective_run_kwargs):
                 text = extract_text(getattr(event, "content", None))

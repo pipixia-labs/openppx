@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -43,6 +44,15 @@ class _Session:
 
 
 class SQLiteMemoryServiceTests(unittest.TestCase):
+    def test_database_path_stamps_adk_meta_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "agent" / "database" / "memory.db"
+            SQLiteMemoryService(db_path=db_path)
+
+            payload = json.loads((db_path.parent / ".adk_meta.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["adk_major"], 2)
+            self.assertEqual(payload["last_writer"], "openppx")
+
     def test_add_events_and_search_fact_memory(self) -> None:
         async def _scenario() -> None:
             with tempfile.TemporaryDirectory() as tmp:

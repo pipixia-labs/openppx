@@ -1,6 +1,6 @@
 """Agent bootstrap injection for ADK model requests.
 
-This module injects per-agent bootstrap files into the model system prompt.
+This module injects per-agent bootstrap files into the model request contents.
 Supported files follow the openclaw-style order:
 ``AGENTS.md``, ``SOUL.md``, ``TOOLS.md``, ``IDENTITY.md``, ``USER.md``.
 """
@@ -11,6 +11,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.llm_request import LlmRequest
+from google.adk.plugins.base_plugin import BasePlugin
+from google.genai import types
 
 from ..core.config import get_agent_home_dir
 
@@ -141,14 +146,65 @@ def render_workspace_bootstrap_context(sections: list[BootstrapSection], workspa
     return "\n".join(lines).strip()
 
 
+def _has_injected_context(system_instruction: Any) -> bool:
+    """Return whether legacy system instruction already includes context."""
+    if isinstance(system_instruction, str):
+        return _INJECTED_HEADER in system_instruction
+    if isinstance(system_instruction, list):
+        return any(isinstance(item, str) and _INJECTED_HEADER in item for item in system_instruction)
+    return False
+
+
+def _content_text(content: Any) -> str:
+    """Return concatenated text parts from a GenAI content-like object."""
+    parts = getattr(content, "parts", None) or []
+    text_parts: list[str] = []
+    for part in parts:
+        text = getattr(part, "text", None)
+        if isinstance(text, str):
+            text_parts.append(text)
+    return "\n".join(text_parts)
+
+
+def _contents_have_injected_context(contents: Any) -> bool:
+    """Return whether request contents already include bootstrap context."""
+    if not isinstance(contents, list):
+        return False
+    return any(_INJECTED_HEADER in _content_text(content) for content in contents)
+
+
+def _content_contains_function_response(content: Any) -> bool:
+    """Return whether content contains tool/function response parts."""
+    parts = getattr(content, "parts", None) or []
+    return any(getattr(part, "function_response", None) is not None for part in parts)
+
+
+def _insert_before_latest_user_batch(contents: list[Any], content: Any) -> None:
+    """Insert content into the latest user batch so ADK cache will not cache it."""
+    insert_index = len(contents)
+    if contents:
+        for index in range(len(contents) - 1, -1, -1):
+            existing = contents[index]
+            if getattr(existing, "role", None) != "user":
+                insert_index = index + 1
+                break
+            if _content_contains_function_response(existing):
+                insert_index = index + 1
+                break
+            insert_index = index
+    contents[insert_index:insert_index] = [content]
+
+
 async def before_model_workspace_bootstrap_callback(
     callback_context: Any,
     llm_request: Any,
 ) -> None:
-    """Inject agent bootstrap context into ``llm_request`` system instruction.
+    """Inject agent bootstrap context into ``llm_request`` contents.
 
-    This callback mutates ``llm_request.config.system_instruction`` in-place and
-    keeps any existing system instruction after the injected agent context.
+    Dynamic agent-home context must not enter ``system_instruction`` because ADK
+    explicit context caching includes system instruction in the cache payload.
+    The bootstrap block is inserted into the latest user-content batch so the
+    Gemini cache prefix algorithm treats it as non-cached request content.
     """
     # The callback context is currently unused for this minimal bootstrap
     # implementation, but we keep the canonical ADK parameter name to ensure
@@ -156,11 +212,9 @@ async def before_model_workspace_bootstrap_callback(
     _ = callback_context
 
     config = getattr(llm_request, "config", None)
-    if config is None:
-        return None
-
     current = getattr(config, "system_instruction", None)
-    if isinstance(current, str) and _INJECTED_HEADER in current:
+    contents = getattr(llm_request, "contents", None)
+    if _has_injected_context(current) or _contents_have_injected_context(contents):
         return None
 
     workspace_root = _workspace_root()
@@ -172,15 +226,43 @@ async def before_model_workspace_bootstrap_callback(
     if not injected:
         return None
 
-    if not current:
-        config.system_instruction = injected
-        return None
-    if isinstance(current, str):
-        config.system_instruction = f"{injected}\n\n{current}"
-        return None
-    if isinstance(current, list):
-        config.system_instruction = [injected, *current]
-        return None
+    if not isinstance(contents, list):
+        contents = []
+        llm_request.contents = contents
 
-    config.system_instruction = injected
+    bootstrap_content = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=injected)],
+    )
+    _insert_before_latest_user_batch(contents, bootstrap_content)
     return None
+
+
+def _callback_agent_name(callback_context: Any) -> str:
+    name = getattr(callback_context, "agent_name", None)
+    return name if isinstance(name, str) else ""
+
+
+class OpenPpxWorkspaceBootstrapPlugin(BasePlugin):
+    """Inject agent-home bootstrap files before model requests."""
+
+    def __init__(self, *, target_agent_name: str | None = None) -> None:
+        super().__init__(name="openppx_workspace_bootstrap")
+        self._target_agent_name = target_agent_name
+
+    def _matches_agent(self, callback_context: Any) -> bool:
+        if not self._target_agent_name:
+            return True
+        agent_name = _callback_agent_name(callback_context)
+        return not agent_name or agent_name == self._target_agent_name
+
+    async def before_model_callback(
+        self,
+        *,
+        callback_context: CallbackContext,
+        llm_request: LlmRequest,
+    ) -> None:
+        if not self._matches_agent(callback_context):
+            return None
+        await before_model_workspace_bootstrap_callback(callback_context, llm_request)
+        return None

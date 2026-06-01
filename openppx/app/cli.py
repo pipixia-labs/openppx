@@ -54,6 +54,7 @@ from ..core.provider import (
 from ..core.provider_registry import find_provider_spec
 from ..runtime.cron_helpers import cron_store_path, format_schedule, format_timestamp_ms
 from ..runtime.cron_service import CronService
+from ..runtime.adk_version import assert_supported_adk_major
 from ..runtime.heartbeat_status_store import read_heartbeat_status_snapshot
 from ..runtime.token_usage_store import read_token_usage_stats
 from ..runtime.gateway_service import (
@@ -4112,6 +4113,7 @@ def _should_bootstrap_single_agent_env(args: argparse.Namespace) -> bool:
 
 
 def main(argv: list[str] | None = None) -> None:
+    assert_supported_adk_major()
     parser = argparse.ArgumentParser(
         prog="ppx",
         description="Lightweight skills-only agent based on Google ADK.",

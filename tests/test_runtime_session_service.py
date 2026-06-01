@@ -57,6 +57,17 @@ class SessionServiceFactoryTests(unittest.TestCase):
             self.assertIsNotNone(out)
             mocked.assert_called_once_with(db_url)
 
+    def test_create_sqlite_backend_stamps_database_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "agent" / "database" / "sessions.db"
+            db_url = f"sqlite+aiosqlite:///{db_path}"
+            with patch("openppx.runtime.session_service.DatabaseSessionService") as mocked:
+                mocked.return_value = object()
+                out = create_session_service(SessionConfig(db_url=db_url))
+
+            self.assertIsNotNone(out)
+            self.assertTrue((db_path.parent / ".adk_meta.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
+import types as pytypes
 import unittest
 import unittest.mock
+from pathlib import Path
 
 from openppx.gui.executor import CapturedScreen
 from openppx.gui.task_runner import GuiTaskRunner, execute_gui_task
@@ -31,7 +35,7 @@ class GuiTaskRunnerTests(unittest.TestCase):
                 with unittest.mock.patch(
                     "openppx.runtime.runner_factory.create_runner",
                     return_value=(object(), None),
-                ):
+                ) as mocked_create_runner:
                     GuiTaskRunner._build_adk_planner_runner(
                         planner_model="gemini-3-flash-preview",
                         planner_api_key="google-key",
@@ -41,6 +45,7 @@ class GuiTaskRunnerTests(unittest.TestCase):
 
         mocked_litellm.assert_not_called()
         self.assertEqual(mocked_agent.call_args.kwargs["model"], "gemini-3-flash-preview")
+        self.assertEqual(mocked_create_runner.call_args.kwargs["profile"], "ephemeral")
 
     def test_build_planner_runner_uses_litellm_for_non_google_provider(self) -> None:
         with unittest.mock.patch("google.adk.models.lite_llm.LiteLlm") as mocked_litellm:
@@ -49,7 +54,7 @@ class GuiTaskRunnerTests(unittest.TestCase):
                 with unittest.mock.patch(
                     "openppx.runtime.runner_factory.create_runner",
                     return_value=(object(), None),
-                ):
+                ) as mocked_create_runner:
                     GuiTaskRunner._build_adk_planner_runner(
                         planner_model="openai/gpt-4.1-mini",
                         planner_api_key="openai-key",
@@ -58,6 +63,46 @@ class GuiTaskRunnerTests(unittest.TestCase):
                     )
 
         mocked_litellm.assert_called_once()
+        self.assertEqual(mocked_create_runner.call_args.kwargs["profile"], "ephemeral")
+
+    def test_plan_next_adk_uses_ephemeral_run_config(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                captured.update(kwargs)
+                yield pytypes.SimpleNamespace(
+                    content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="planner output")])
+                )
+
+        runner = GuiTaskRunner(
+            planner_model="test-planner",
+            planner_api_key="test-key",
+            planner_runner=_FakeRunner(),
+            action_executor=lambda **_: {"ok": True},
+            runtime=_FakeRuntime(),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "screen.png"
+            path.write_bytes(b"fake-png")
+            final = asyncio.run(
+                runner._plan_next_adk_async(  # type: ignore[attr-defined]
+                    "task",
+                    "plan",
+                    {},
+                    [],
+                    CapturedScreen(base64_png="screen", width=10, height=10, path=str(path)),
+                )
+            )
+
+        self.assertEqual(final, "planner output")
+        run_config = captured["run_config"]
+        self.assertEqual(run_config.custom_metadata["profile"], "ephemeral")
+        self.assertEqual(run_config.custom_metadata["request_kind"], "gui_planner")
+        self.assertEqual(run_config.max_llm_calls, 8)
+        self.assertFalse(run_config.model_dump(mode="python")["save_input_blobs_as_artifacts"])
+        self.assertEqual(run_config.get_session_config.num_recent_events, 0)
 
     def test_task_runner_execute_then_reply(self) -> None:
         planned = [

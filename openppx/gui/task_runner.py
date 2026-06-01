@@ -152,7 +152,7 @@ class GuiTaskRunner:
             model=model,
             instruction=load_planner_system_prompt(),
         )
-        runner, _ = create_runner(agent=planner_agent, app_name="openppx_gui_planner")
+        runner, _ = create_runner(agent=planner_agent, app_name="openppx_gui_planner", profile="ephemeral")
         return runner
 
     @staticmethod
@@ -246,6 +246,7 @@ class GuiTaskRunner:
     ) -> str:
         """Run one planner request through ADK runner and return final text."""
         from google.genai import types
+        from ..runtime.run_config import build_run_config
 
         prompt_text = self._build_planner_user_text(task, current_plan, saved_info, history)
         parts: list[Any] = [types.Part.from_text(text=prompt_text)]
@@ -264,6 +265,10 @@ class GuiTaskRunner:
             user_id=self._planner_user_id,
             session_id=self._planner_session_id,
             new_message=request,
+            run_config=build_run_config(
+                profile="ephemeral",
+                custom_metadata={"request_kind": "gui_planner"},
+            ),
         ):
             text = extract_text(getattr(event, "content", None))
             final = merge_text_stream(final, text)

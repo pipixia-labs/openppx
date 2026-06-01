@@ -364,12 +364,13 @@ class GroundingExecutor:
             model=adk_model,
             instruction=load_executor_system_prompt(),
         )
-        runner, _ = create_runner(agent=agent, app_name="openppx_gui_grounding")
+        runner, _ = create_runner(agent=agent, app_name="openppx_gui_grounding", profile="ephemeral")
         return runner
 
     async def _ground_with_adk(self, before: CapturedScreen, action: str) -> str:
         """Run one grounding request through ADK runner and return final text."""
         from google.genai import types
+        from ..runtime.run_config import build_run_config
 
         parts: list[Any] = [types.Part.from_text(text=action)]
         try:
@@ -389,6 +390,10 @@ class GroundingExecutor:
             user_id=self._grounding_user_id,
             session_id=self._grounding_session_id,
             new_message=request,
+            run_config=build_run_config(
+                profile="ephemeral",
+                custom_metadata={"request_kind": "gui_grounding"},
+            ),
         ):
             text = extract_text(getattr(event, "content", None))
             final = merge_text_stream(final, text)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import platform
 from typing import Any
 
 from google.adk.agents import LlmAgent
@@ -13,16 +12,9 @@ from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 
 from ..core.config import normalize_agent_privilege_level
 from ..core.env_utils import env_enabled
-from ..core.gui_mcp import resolve_gui_mcp_from_env
 from ..core.mcp_registry import build_mcp_toolsets_from_env
 from ..core.provider import build_adk_model_from_env
-from ..runtime.debug_callbacks import after_model_debug_callback, before_model_debug_callback
-from ..runtime.interaction_context import (
-    INTERACTION_CONTEXT_STATE_KEY,
-    MEMORY_INGEST_OFFSET_STATE_KEY,
-)
-from ..runtime.workspace_bootstrap import before_model_workspace_bootstrap_callback
-from ..tooling.skills_adapter import get_registry, list_skills, read_skill
+from ..tooling.skills_adapter import list_skills, read_skill
 from ..tooling.registry import (
     browser,
     computer_task,
@@ -43,67 +35,17 @@ from ..tooling.registry import (
     web_search,
     write_file,
 )
-
-_GUI_BUILTIN_TOOLS_ENABLED_ENV = "OPENPPX_GUI_BUILTIN_TOOLS_ENABLED"
-
-
-async def _before_agent_memory_callback(callback_context: Any) -> None:
-    """Store an ingest offset fallback when gateway did not provide one.
-
-    Gateway-driven invocations inject a pre-run offset so memory ingest includes
-    the current user message. This callback only acts as a fallback for runtime
-    paths that resume or spawn agents without that gateway-managed state.
-    """
-    state = getattr(callback_context, "state", None)
-    session = getattr(callback_context, "session", None)
-    if state is None or session is None:
-        return
-    if state.get(MEMORY_INGEST_OFFSET_STATE_KEY) is not None:
-        return
-    state[MEMORY_INGEST_OFFSET_STATE_KEY] = len(getattr(session, "events", []) or [])
-
-
-async def _after_agent_memory_callback(callback_context: Any) -> None:
-    """Persist new invocation events into ADK memory when memory is configured.
-
-    The callback consumes the invocation-scoped ingest offset written by gateway
-    (or the fallback written in ``_before_agent_memory_callback``), then forwards
-    only the new events to ``add_events_to_memory``.
-    """
-    state = getattr(callback_context, "state", None)
-    session = getattr(callback_context, "session", None)
-    if state is None or session is None:
-        return
-
-    interaction_context = state.get(INTERACTION_CONTEXT_STATE_KEY) or {}
-    if isinstance(interaction_context, dict) and not interaction_context.get("memory_ingest_enabled", True):
-        return
-
-    raw_offset = state.get(MEMORY_INGEST_OFFSET_STATE_KEY, 0)
-    try:
-        offset = max(0, int(raw_offset))
-    except (TypeError, ValueError):
-        offset = 0
-    events = list(getattr(session, "events", []) or [])
-    delta_events = events[offset:]
-    if not delta_events:
-        return
-
-    custom_metadata: dict[str, Any] = {"ingest_reason": "after_agent_callback"}
-    if isinstance(interaction_context, dict):
-        custom_metadata.update(interaction_context)
-    try:
-        await callback_context.add_events_to_memory(
-            events=delta_events,
-            custom_metadata=custom_metadata,
-        )
-    except ValueError:
-        return
+from .prompt import (
+    build_root_agent_instruction,
+    build_startup_runtime_context,
+    build_static_policy_instruction,
+    gui_builtin_tools_enabled,
+)
 
 
 def _gui_builtin_tools_enabled() -> bool:
     """Return whether legacy builtin GUI tools should be exposed."""
-    return env_enabled(_GUI_BUILTIN_TOOLS_ENABLED_ENV, default=True)
+    return gui_builtin_tools_enabled()
 
 
 def _agent_privilege_level() -> str:
@@ -130,54 +72,18 @@ def _tool_name(tool: Any) -> str:
 
 
 def _build_instruction() -> str:
-    runtime = f"{platform.system()} {platform.machine()} / Python"
-    workspace = os.getenv("OPENPPX_WORKSPACE", os.getcwd())
-    skills_summary = get_registry().build_summary()
-    gui_builtin_enabled = _gui_builtin_tools_enabled()
-    gui_mcp_routing = resolve_gui_mcp_from_env()
-    mcp_task_tool = gui_mcp_routing.task_tool_name if gui_mcp_routing else "mcp_*_gui_task"
-    mcp_action_tool = gui_mcp_routing.action_tool_name if gui_mcp_routing else "mcp_*_gui_action"
+    """Build the root-agent instruction from layered prompt sections."""
+    return build_root_agent_instruction()
 
-    gui_tool_guidance = (
-        f"- For desktop GUI tasks, prefer MCP GUI tools when available (`{mcp_task_tool}`, `{mcp_action_tool}`).\n"
-        "- Tool selection guidance:\n"
-        "  - Prefer `browser(...)` for web tasks that are feasible with browser runtime.\n"
-        f"  - Prefer `{mcp_task_tool}(...)` for end-to-end desktop GUI workflows.\n"
-        f"  - Use `{mcp_action_tool}(...)` only for single-step GUI actions or debugging one step.\n"
-    )
-    if gui_builtin_enabled:
-        gui_tool_guidance += (
-            "- Fallback (legacy builtin): use `computer_task(task=..., max_steps=...)` when MCP GUI tools are unavailable.\n"
-            "- Use `computer_use(action=...)` only for single-step builtin GUI actions.\n"
-        )
 
-    return f"""You are openppx, a lightweight skills-first coding assistant.
+def _build_static_instruction() -> str:
+    """Build stable root-agent policy for ADK ``static_instruction``."""
+    return build_static_policy_instruction()
 
-Runtime: {runtime}
-Workspace: {workspace}
 
-Your job:
-1. Solve user tasks directly.
-2. Use local skills when relevant.
-3. Keep responses concise and actionable.
-
-Rules:
-- Channel delivery (e.g. local/Feishu) is handled by the gateway runtime.
-- Skill loading is file-based (workspace + built-in SKILL.md).
-- Before using a skill deeply, call `list_skills` then `read_skill(name)` for the specific skill.
-- Do not invent skill content. Always read SKILL.md first.
-- Use `message_image(path=..., caption=...)` when a local image file should be delivered to the current channel.
-- Use `message_file(path=..., caption=...)` when a local file should be delivered to the current channel.
-- Use `spawn_subagent(prompt=...)` for background sub-tasks that should finish later.
-- Prefer these built-in tools for actions: `read_file`, `write_file`, `edit_file`, `list_dir`, `glob`, `grep`, `exec`, `process`, `browser`, `web_search`, `web_fetch`, `message`, `message_image`, `message_file`, `cron`, `spawn_subagent`.
-{gui_tool_guidance}- Browser routing supports `target=host|node|sandbox`; use `target=node` with `node=<id>` when a specific node proxy is required.
-- For long-running shell tasks, use `exec(background=true|yield_ms=...)` and follow-up with `process(...)`.
-- Current time is injected into each request payload (e.g. `Current request time`).
-  For relative scheduling, always use that injected request time as `now`.
-
-Available skills:
-{skills_summary}
-"""
+def _build_dynamic_instruction() -> str:
+    """Build startup/runtime context for ADK dynamic ``instruction``."""
+    return build_startup_runtime_context()
 
 
 def _build_tools() -> list[Any]:
@@ -236,13 +142,7 @@ def _build_tools() -> list[Any]:
 root_agent = LlmAgent(
     name="openppx",
     model=build_adk_model_from_env(),
-    instruction=_build_instruction(),
-    before_agent_callback=_before_agent_memory_callback,
-    after_agent_callback=_after_agent_memory_callback,
-    before_model_callback=[
-        before_model_workspace_bootstrap_callback,
-        before_model_debug_callback,
-    ],
-    after_model_callback=after_model_debug_callback,
+    static_instruction=_build_static_instruction(),
+    instruction=_build_dynamic_instruction(),
     tools=_build_tools(),
 )

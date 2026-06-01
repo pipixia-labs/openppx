@@ -8,6 +8,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from ..runtime.adk_version import assert_supported_adk_major
 from ..runtime.client_api_service import ClientApiCoordinator
 from .executor import execute_gui_action
 from .task_runner import execute_gui_task
@@ -362,6 +363,7 @@ def build_gui_mcp_server(name: str = "openppx-gui") -> FastMCP:
 
 def main() -> None:
     """Run the built-in GUI MCP server."""
+    assert_supported_adk_major()
     server_name = (os.getenv("OPENPPX_GUI_MCP_NAME", "") or "openppx-gui").strip()
     transport = (os.getenv("OPENPPX_GUI_MCP_TRANSPORT", "") or "stdio").strip().lower()
     if transport not in _SUPPORTED_TRANSPORTS:

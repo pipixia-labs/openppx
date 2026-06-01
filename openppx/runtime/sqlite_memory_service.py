@@ -18,6 +18,7 @@ from google.adk.memory.base_memory_service import BaseMemoryService, SearchMemor
 from google.adk.memory.memory_entry import MemoryEntry
 from google.genai import types
 
+from .adk_storage_meta import ensure_adk_storage_meta_for_sqlite_path
 from .memory_shared import (
     build_fact_key,
     content_text_for_memory,
@@ -137,6 +138,7 @@ class SQLiteMemoryService(BaseMemoryService):
 
     def __init__(self, *, db_path: str | Path):
         self._db_path = _prepare_db_path(Path(db_path))
+        ensure_adk_storage_meta_for_sqlite_path(self._db_path)
         self._lock = threading.Lock()
         try:
             self._ensure_schema()

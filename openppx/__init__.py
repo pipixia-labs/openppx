@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import importlib
 
+from .runtime.adk_version import assert_supported_adk_major as _assert_supported_adk_major
+
+_assert_supported_adk_major()
+
 __all__ = ["root_agent", "agent", "cli", "gateway"]
 
 

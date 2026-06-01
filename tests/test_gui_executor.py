@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import tempfile
+import types as pytypes
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -77,7 +80,7 @@ class GuiExecutorTests(unittest.TestCase):
                 with unittest.mock.patch(
                     "openppx.runtime.runner_factory.create_runner",
                     return_value=(object(), None),
-                ):
+                ) as mocked_create_runner:
                     GroundingExecutor._build_adk_grounding_runner(
                         model="gemini-3-flash-preview",
                         api_key="google-key",
@@ -87,6 +90,7 @@ class GuiExecutorTests(unittest.TestCase):
 
         mocked_litellm.assert_not_called()
         self.assertEqual(mocked_agent.call_args.kwargs["model"], "gemini-3-flash-preview")
+        self.assertEqual(mocked_create_runner.call_args.kwargs["profile"], "ephemeral")
 
     def test_build_runner_uses_litellm_for_non_google_provider(self) -> None:
         with unittest.mock.patch("google.adk.models.lite_llm.LiteLlm") as mocked_litellm:
@@ -95,7 +99,7 @@ class GuiExecutorTests(unittest.TestCase):
                 with unittest.mock.patch(
                     "openppx.runtime.runner_factory.create_runner",
                     return_value=(object(), None),
-                ):
+                ) as mocked_create_runner:
                     GroundingExecutor._build_adk_grounding_runner(
                         model="openai/gpt-4.1-mini",
                         api_key="openai-key",
@@ -104,6 +108,42 @@ class GuiExecutorTests(unittest.TestCase):
                     )
 
         mocked_litellm.assert_called_once()
+        self.assertEqual(mocked_create_runner.call_args.kwargs["profile"], "ephemeral")
+
+    def test_ground_with_adk_uses_ephemeral_run_config(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                captured.update(kwargs)
+                yield pytypes.SimpleNamespace(
+                    content=pytypes.SimpleNamespace(parts=[pytypes.SimpleNamespace(text="grounded")])
+                )
+
+        executor = GroundingExecutor(
+            model="test-model",
+            api_key="test-key",
+            runtime=_FakeRuntime(),
+            grounding_runner=_FakeRunner(),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "before.png"
+            path.write_bytes(b"fake-png")
+            final = asyncio.run(
+                executor._ground_with_adk(  # type: ignore[attr-defined]
+                    CapturedScreen(base64_png="screen", width=10, height=10, path=str(path)),
+                    "click login",
+                )
+            )
+
+        self.assertEqual(final, "grounded")
+        run_config = captured["run_config"]
+        self.assertEqual(run_config.custom_metadata["profile"], "ephemeral")
+        self.assertEqual(run_config.custom_metadata["request_kind"], "gui_grounding")
+        self.assertEqual(run_config.max_llm_calls, 8)
+        self.assertFalse(run_config.model_dump(mode="python")["save_input_blobs_as_artifacts"])
+        self.assertEqual(run_config.get_session_config.num_recent_events, 0)
 
     def test_executor_runs_with_tool_call_block(self) -> None:
         runtime = _FakeRuntime()
