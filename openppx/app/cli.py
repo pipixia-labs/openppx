@@ -187,21 +187,26 @@ def summarize_mcp_toolsets(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
     return summarize_fn(*args, **kwargs)
 
 
-def _load_runtime_adk_utils_symbols() -> tuple[Any, Any]:
+def _load_runtime_adk_utils_symbols() -> tuple[Any, Any, Any]:
     """Load ADK text helpers lazily to avoid session stack import at startup."""
     from ..runtime import adk_utils as _adk_utils
 
-    return _adk_utils.extract_text, _adk_utils.merge_text_stream
+    return _adk_utils.extract_text, _adk_utils.merge_text_stream, _adk_utils.run_text_async
 
 
 def extract_text(*args: Any, **kwargs: Any) -> Any:
-    extract_text_fn, _ = _load_runtime_adk_utils_symbols()
+    extract_text_fn, _, _ = _load_runtime_adk_utils_symbols()
     return extract_text_fn(*args, **kwargs)
 
 
 def merge_text_stream(*args: Any, **kwargs: Any) -> Any:
-    _, merge_text_stream_fn = _load_runtime_adk_utils_symbols()
+    _, merge_text_stream_fn, _ = _load_runtime_adk_utils_symbols()
     return merge_text_stream_fn(*args, **kwargs)
+
+
+async def run_text_async(*args: Any, **kwargs: Any) -> Any:
+    _, _, run_text_async_fn = _load_runtime_adk_utils_symbols()
+    return await run_text_async_fn(*args, **kwargs)
 
 
 def _load_runner_factory_symbol() -> Any:
@@ -3571,12 +3576,13 @@ def _cmd_message(message: str, user_id: str, session_id: str) -> int:
 
         request = types.UserContent(parts=[types.Part.from_text(text=prompt)])
 
-        final = ""
-        async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=request):
-            _debug_event(event)
-            text = extract_text(getattr(event, "content", None))
-            final = merge_text_stream(final, text)
-        return final
+        return await run_text_async(
+            runner,
+            on_event=_debug_event,
+            user_id=user_id,
+            session_id=session_id,
+            new_message=request,
+        )
 
     try:
         final_text = asyncio.run(_run_once())

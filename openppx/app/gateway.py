@@ -16,7 +16,7 @@ from ..bus.events import InboundMessage, OutboundMessage
 from ..bus.queue import MessageBus
 from ..channels.manager import ChannelManager
 from ..runtime.access_policy import AccessPolicy
-from ..runtime.adk_utils import extract_text, merge_text_stream
+from ..runtime.adk_utils import run_text_async
 from ..runtime.agent_access_runtime import ensure_agent_access_record
 from ..runtime.agent_access_store import AgentAccessStore, AgentMembership, create_agent_access_store
 from ..runtime.cron_helpers import cron_store_path
@@ -618,7 +618,6 @@ class Gateway:
         **run_kwargs: Any,
     ) -> str:
         """Run one ADK stream and merge emitted text parts into final output."""
-        final = ""
         effective_run_kwargs = dict(run_kwargs)
         if emit_stream and "run_config" not in effective_run_kwargs:
             effective_run_kwargs["run_config"] = build_run_config(
@@ -629,22 +628,26 @@ class Gateway:
                     "request_kind": "gateway_stream",
                 },
             )
+
+        async def _publish_text_update(_merged: str, delta: str) -> None:
+            if not emit_stream or not delta:
+                return
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=delta,
+                    metadata={"_stream_delta": True},
+                )
+            )
+
         with route_context(channel, chat_id):
-            async for event in runner.run_async(**effective_run_kwargs):
-                text = extract_text(getattr(event, "content", None))
-                merged = merge_text_stream(final, text)
-                if emit_stream and merged and merged != final:
-                    delta = merged[len(final):] if final and merged.startswith(final) else merged
-                    if delta:
-                        await self.bus.publish_outbound(
-                            OutboundMessage(
-                                channel=channel,
-                                chat_id=chat_id,
-                                content=delta,
-                                metadata={"_stream_delta": True},
-                            )
-                        )
-                final = merged
+            final = await run_text_async(
+                runner,
+                default_when_empty=default_when_empty,
+                on_text_update=_publish_text_update if emit_stream else None,
+                **effective_run_kwargs,
+            )
         if emit_stream:
             await self.bus.publish_outbound(
                 OutboundMessage(
@@ -654,11 +657,7 @@ class Gateway:
                     metadata={"_stream_end": True},
                 )
             )
-        if final:
-            return final
-        if default_when_empty is None:
-            return ""
-        return default_when_empty
+        return final
 
     async def _run_cron_job(self, job: CronJob) -> str | None:
         """Execute a scheduled cron job through the shared ADK runner."""

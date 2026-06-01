@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 from ..core.logging_utils import debug_logging_enabled, emit_debug
 from ..core.provider import canonical_provider_name, provider_api_key_env
-from ..runtime.adk_utils import extract_text, merge_text_stream
+from ..runtime.adk_utils import run_text_async
 from .prompts import load_executor_system_prompt
 
 DEFAULT_GUI_MODEL_ENV = "OPENPPX_GUI_MODEL"
@@ -384,9 +384,9 @@ class GroundingExecutor:
             pass
         request = types.UserContent(parts=parts)
 
-        final = ""
         assert self._grounding_runner is not None
-        async for event in self._grounding_runner.run_async(
+        return await run_text_async(
+            self._grounding_runner,
             user_id=self._grounding_user_id,
             session_id=self._grounding_session_id,
             new_message=request,
@@ -394,10 +394,7 @@ class GroundingExecutor:
                 profile="ephemeral",
                 custom_metadata={"request_kind": "gui_grounding"},
             ),
-        ):
-            text = extract_text(getattr(event, "content", None))
-            final = merge_text_stream(final, text)
-        return final
+        )
 
     def run(self, action: str, *, dry_run: bool = False) -> dict[str, Any]:
         """Execute one GUI action request end-to-end."""

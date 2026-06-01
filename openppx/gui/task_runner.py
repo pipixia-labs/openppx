@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from ..core.logging_utils import debug_logging_enabled, emit_debug
 from ..core.provider import canonical_provider_name, provider_api_key_env
-from ..runtime.adk_utils import extract_text, merge_text_stream
+from ..runtime.adk_utils import run_text_async
 from .executor import (
     DEFAULT_GUI_BASE_URL_ENV,
     DEFAULT_GUI_GROUNDING_PROVIDER_ENV,
@@ -260,8 +260,8 @@ class GuiTaskRunner:
             )
         request = types.UserContent(parts=parts)
 
-        final = ""
-        async for event in self._planner_runner.run_async(
+        return await run_text_async(
+            self._planner_runner,
             user_id=self._planner_user_id,
             session_id=self._planner_session_id,
             new_message=request,
@@ -269,10 +269,7 @@ class GuiTaskRunner:
                 profile="ephemeral",
                 custom_metadata={"request_kind": "gui_planner"},
             ),
-        ):
-            text = extract_text(getattr(event, "content", None))
-            final = merge_text_stream(final, text)
-        return final
+        )
 
     def _plan_next(
         self,

@@ -57,7 +57,7 @@ async def _run() -> int:
     from google.genai import types
 
     from openppx.app.agent import root_agent
-    from openppx.runtime.adk_utils import extract_text, merge_text_stream
+    from openppx.runtime.adk_utils import run_text_async
     from openppx.runtime.message_time import inject_request_time
     from openppx.runtime.runner_factory import create_runner
     from openppx.runtime.session_service import create_session_service
@@ -141,15 +141,21 @@ async def _run() -> int:
     request = types.UserContent(parts=[types.Part.from_text(text=prompt)])
     runner, _service = create_runner(agent=root_agent, app_name=app_name, session_service=session_service)
 
-    final_text = ""
-    async for event in runner.run_async(user_id=args.user_id, session_id=args.session_id, new_message=request):
+    def _emit_raw_event(event: Any) -> None:
         payload = event.model_dump(mode="json")
         _emit({"type": "event", "event": payload})
-        text = extract_text(getattr(event, "content", None))
-        merged = merge_text_stream(final_text, text)
-        if merged and merged != final_text:
-            final_text = merged
-            _emit({"type": "delta", "text": final_text})
+
+    def _emit_text_update(merged: str, _delta: str) -> None:
+        _emit({"type": "delta", "text": merged})
+
+    final_text = await run_text_async(
+        runner,
+        on_event=_emit_raw_event,
+        on_text_update=_emit_text_update,
+        user_id=args.user_id,
+        session_id=args.session_id,
+        new_message=request,
+    )
 
     _emit({"type": "final", "text": final_text})
     return 0
