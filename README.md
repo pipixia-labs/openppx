@@ -255,6 +255,8 @@ ppx delete low-main
 # Single-turn call
 python -m openppx.cli -m "Describe what you can do"
 python -m openppx.cli -m "Describe what you can do" --user-id local --session-id demo001
+ppx rewind --user-id local --session-id demo001
+ppx rewind --user-id local --session-id demo001 --before-invocation-id <invocation_id>
 
 # Local interactive gateway
 python -m openppx.cli gateway run --channels local --interactive-local

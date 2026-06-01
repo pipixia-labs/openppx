@@ -160,6 +160,15 @@ python -m openppx.cli -m "Describe what you can do"
 python -m openppx.cli -m "Describe what you can do" --user-id local --session-id demo001
 ```
 
+需要回退当前会话上下文时，可以使用 ADK 原生 rewind：
+
+```bash
+ppx rewind --user-id local --session-id demo001
+ppx rewind --user-id local --session-id demo001 --before-invocation-id <invocation_id>
+```
+
+`rewind` 会让后续模型上下文忽略被回退的 ADK events；它不会撤销已经发生的外部副作用，比如文件写入、消息发送、命令执行或 cron 变更。
+
 ### ADK CLI 模式
 
 ```bash

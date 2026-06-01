@@ -64,6 +64,11 @@ from ..runtime.gateway_service import (
     render_systemd_unit,
 )
 from ..runtime.message_time import inject_request_time
+from ..runtime.session_rewind import (
+    SessionRewindError,
+    render_rewind_success,
+    resolve_rewind_target,
+)
 from ..core.security import load_security_policy
 from ..tooling.skills_adapter import get_registry
 from . import cli_runtime_surface
@@ -3685,6 +3690,43 @@ def _cmd_message(message: str, user_id: str, session_id: str) -> int:
     return 0
 
 
+def _cmd_rewind(user_id: str, session_id: str, before_invocation_id: str | None) -> int:
+    """Rewind one ADK session before a selected invocation."""
+    if not session_id.strip():
+        _stdout_line("Error: `ppx rewind` requires --session-id.")
+        return 2
+
+    from .agent import root_agent
+
+    async def _run_once() -> str:
+        runner, session_service = create_runner(agent=root_agent, app_name=root_agent.name)
+        target = await resolve_rewind_target(
+            session_service,
+            app_name=getattr(runner, "app_name", root_agent.name),
+            user_id=user_id,
+            session_id=session_id,
+            before_invocation_id=before_invocation_id,
+        )
+        await runner.rewind_async(
+            user_id=user_id,
+            session_id=session_id,
+            rewind_before_invocation_id=target.invocation_id,
+        )
+        return render_rewind_success(target)
+
+    try:
+        message = asyncio.run(_run_once())
+    except (SessionRewindError, ValueError) as exc:
+        _stdout_line(f"Error rewinding session: {exc}")
+        return 1
+    except Exception as exc:
+        _stdout_line(f"Error rewinding session: {exc}")
+        return 1
+
+    _stdout_line(message)
+    return 0
+
+
 def _cron_service() -> CronService:
     workspace = load_security_policy().workspace_root
     return CronService(cron_store_path(workspace))
@@ -4303,6 +4345,25 @@ def main(argv: list[str] | None = None) -> None:
 
     run_parser = subparsers.add_parser("run", help="Run `adk run` for this agent.")
     run_parser.add_argument("adk_args", nargs=argparse.REMAINDER, help="Extra args passed to adk run.")
+    rewind_parser = subparsers.add_parser(
+        "rewind",
+        help="Rewind an ADK session before the latest or selected invocation.",
+    )
+    rewind_parser.add_argument(
+        "--user-id",
+        default=argparse.SUPPRESS,
+        help="User id for the ADK session. Defaults to the global --user-id value.",
+    )
+    rewind_parser.add_argument(
+        "--session-id",
+        default=argparse.SUPPRESS,
+        help="Session id to rewind. Required unless provided as a global option.",
+    )
+    rewind_parser.add_argument(
+        "--before-invocation-id",
+        default=None,
+        help="Invocation id to rewind before. Defaults to the latest visible invocation.",
+    )
     gateway_parser = subparsers.add_parser(
         "gateway",
         help="Gateway runtime commands (run/start/stop/restart/status).",
@@ -4872,6 +4933,11 @@ def main(argv: list[str] | None = None) -> None:
                 no_color=args.no_color,
             ),
             "run": lambda: _cmd_run(args.adk_args),
+            "rewind": lambda: _cmd_rewind(
+                user_id=args.user_id,
+                session_id=args.session_id,
+                before_invocation_id=args.before_invocation_id,
+            ),
             "gateway": _dispatch_gateway_command,
         }
         handler = handlers.get(args.command)

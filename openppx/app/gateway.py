@@ -30,6 +30,12 @@ from ..runtime.interaction_context import InteractionContext
 from ..runtime.message_time import append_execution_time, inject_request_time
 from ..runtime.run_config import build_run_config
 from ..runtime.runner_factory import create_runner
+from ..runtime.session_rewind import (
+    SessionRewindError,
+    normalize_rewind_selector,
+    render_rewind_success,
+    resolve_rewind_target,
+)
 from ..runtime.step_events import build_step_metadata
 from ..runtime.step_events import configure_step_event_publisher
 from ..runtime.subagent_agent import build_restricted_subagent
@@ -51,10 +57,12 @@ from ..tooling.registry import (
 )
 
 logger = logging.getLogger(__name__)
+_NOT_REWIND_COMMAND = object()
 
 _HELP_TEXT = (
     "openppx commands:\n"
     "/new - Start a new conversation session\n"
+    "/rewind [last|<invocation_id>] - Rewind this conversation using ADK session rewind\n"
     "/help - Show available commands"
 )
 
@@ -412,6 +420,40 @@ class Gateway:
         if final:
             return final
         return "Approved tool call." if confirmed else "Rejected tool call."
+
+    async def _rewind_session(
+        self,
+        *,
+        user_id: str,
+        session_id: str,
+        before_invocation_id: str | None,
+    ) -> str:
+        """Rewind the active ADK session using the native Runner API."""
+        app_name = getattr(self.runner, "app_name", self.app_name)
+        target = await resolve_rewind_target(
+            self.session_service,
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id,
+            before_invocation_id=before_invocation_id,
+        )
+        await self.runner.rewind_async(
+            user_id=user_id,
+            session_id=session_id,
+            rewind_before_invocation_id=target.invocation_id,
+        )
+        return render_rewind_success(target)
+
+    @staticmethod
+    def _parse_rewind_command(content: str) -> str | None | object:
+        """Return rewind selector for `/rewind` commands, or a sentinel for non-commands."""
+        stripped = content.strip()
+        if not stripped:
+            return _NOT_REWIND_COMMAND
+        command, _, remainder = stripped.partition(" ")
+        if command.lower() != "/rewind":
+            return _NOT_REWIND_COMMAND
+        return normalize_rewind_selector(remainder)
 
     def heartbeat_status(self) -> dict[str, Any]:
         """Return heartbeat runtime status for diagnostics and operator tooling."""
@@ -918,6 +960,25 @@ class Gateway:
                     **(msg.metadata or {}),
                     "_confirmation_response": "approved" if confirmed else "rejected",
                 },
+            )
+
+        rewind_selector = self._parse_rewind_command(msg.content)
+        if rewind_selector is not _NOT_REWIND_COMMAND:
+            rewound = False
+            try:
+                content = await self._rewind_session(
+                    user_id=principal.principal_id,
+                    session_id=active_session_id,
+                    before_invocation_id=rewind_selector if isinstance(rewind_selector, str) else None,
+                )
+                rewound = True
+            except (SessionRewindError, ValueError) as exc:
+                content = f"Unable to rewind conversation: {exc}"
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=content,
+                metadata={**(msg.metadata or {}), "_rewound": rewound},
             )
 
         interaction_context = self._build_interaction_context(

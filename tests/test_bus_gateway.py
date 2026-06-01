@@ -524,6 +524,103 @@ class GatewayTests(unittest.TestCase):
         )
         memory_service.add_session_to_memory.assert_awaited_once_with(fake_session)
 
+    def test_process_message_rewind_command_uses_latest_visible_invocation(self) -> None:
+        fake_session = pytypes.SimpleNamespace(
+            events=[
+                pytypes.SimpleNamespace(invocation_id="inv-1", actions=None),
+                pytypes.SimpleNamespace(invocation_id="inv-2", actions=None),
+            ]
+        )
+        session_service = pytypes.SimpleNamespace(get_session=AsyncMock(return_value=fake_session))
+        captured_rewinds: list[dict[str, object]] = []
+
+        class _FakeRunner:
+            app_name = "openppx"
+            memory_service = None
+
+            async def run_async(self, **_kwargs):
+                raise AssertionError("rewind command should not invoke model")
+
+            async def rewind_async(self, **kwargs):
+                captured_rewinds.append(kwargs)
+
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        runner = _FakeRunner()
+        with patch("openppx.app.gateway.create_runner", return_value=(runner, session_service)):
+            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=MessageBus())
+            inbound = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="/rewind")
+            outbound = asyncio.run(gateway.process_message(inbound))
+
+        self.assertIn("inv-2", outbound.content)
+        self.assertTrue(outbound.metadata["_rewound"])
+        self.assertEqual(
+            captured_rewinds,
+            [
+                {
+                    "user_id": _LOCAL_PRINCIPAL_ID,
+                    "session_id": _LOCAL_SESSION_ID,
+                    "rewind_before_invocation_id": "inv-2",
+                }
+            ],
+        )
+        session_service.get_session.assert_awaited_once_with(
+            app_name="openppx",
+            user_id=_LOCAL_PRINCIPAL_ID,
+            session_id=_LOCAL_SESSION_ID,
+        )
+
+    def test_process_message_rewind_command_accepts_explicit_invocation_id(self) -> None:
+        session_service = pytypes.SimpleNamespace(get_session=AsyncMock(side_effect=AssertionError("unused")))
+        captured_rewinds: list[dict[str, object]] = []
+
+        class _FakeRunner:
+            app_name = "openppx"
+            memory_service = None
+
+            async def run_async(self, **_kwargs):
+                raise AssertionError("rewind command should not invoke model")
+
+            async def rewind_async(self, **kwargs):
+                captured_rewinds.append(kwargs)
+
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        runner = _FakeRunner()
+        with patch("openppx.app.gateway.create_runner", return_value=(runner, session_service)):
+            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=MessageBus())
+            inbound = InboundMessage(
+                channel="local",
+                sender_id="u1",
+                chat_id="c1",
+                content="/rewind inv-explicit",
+            )
+            outbound = asyncio.run(gateway.process_message(inbound))
+
+        self.assertIn("inv-explicit", outbound.content)
+        self.assertEqual(captured_rewinds[0]["rewind_before_invocation_id"], "inv-explicit")
+        session_service.get_session.assert_not_called()
+
+    def test_process_message_rewind_command_reports_missing_session(self) -> None:
+        session_service = pytypes.SimpleNamespace(get_session=AsyncMock(return_value=None))
+
+        class _FakeRunner:
+            app_name = "openppx"
+            memory_service = None
+
+            async def run_async(self, **_kwargs):
+                raise AssertionError("rewind command should not invoke model")
+
+            async def rewind_async(self, **_kwargs):
+                raise AssertionError("rewind should not run without a target")
+
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), session_service)):
+            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=MessageBus())
+            inbound = InboundMessage(channel="local", sender_id="u1", chat_id="c1", content="/rewind")
+            outbound = asyncio.run(gateway.process_message(inbound))
+
+        self.assertIn("Unable to rewind conversation", outbound.content)
+        self.assertFalse(outbound.metadata["_rewound"])
+
 
 class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):
     async def test_consume_inbound_continues_after_processing_error(self) -> None:

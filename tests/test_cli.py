@@ -80,6 +80,31 @@ class CLITests(unittest.TestCase):
                 mocked.assert_called_once()
                 mocked_bootstrap.assert_called_once()
 
+    def test_rewind_mode_dispatch(self) -> None:
+        from openppx import cli
+
+        with patch.object(cli, "bootstrap_env_from_config") as mocked_bootstrap:
+            with patch.object(cli, "_cmd_rewind", return_value=0) as mocked:
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.main(
+                        [
+                            "rewind",
+                            "--user-id",
+                            "u1",
+                            "--session-id",
+                            "s1",
+                            "--before-invocation-id",
+                            "inv-1",
+                        ]
+                    )
+                self.assertEqual(ctx.exception.code, 0)
+                mocked.assert_called_once_with(
+                    user_id="u1",
+                    session_id="s1",
+                    before_invocation_id="inv-1",
+                )
+                mocked_bootstrap.assert_called_once()
+
     def test_onboard_command_removed(self) -> None:
         from openppx import cli
 
@@ -2588,6 +2613,58 @@ class CLITests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         mocked_info.assert_called_with("hello world")
+
+    def test_cmd_rewind_uses_native_runner_rewind(self) -> None:
+        from openppx import cli
+
+        fake_session = pytypes.SimpleNamespace(
+            events=[
+                pytypes.SimpleNamespace(invocation_id="inv-1", actions=None),
+                pytypes.SimpleNamespace(invocation_id="inv-2", actions=None),
+            ]
+        )
+        session_service = pytypes.SimpleNamespace(get_session=AsyncMock(return_value=fake_session))
+        captured_rewinds: list[dict[str, object]] = []
+
+        class _FakeRunner:
+            app_name = "openppx"
+
+            async def rewind_async(self, **kwargs):
+                captured_rewinds.append(kwargs)
+
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        fake_agent_module = pytypes.SimpleNamespace(root_agent=fake_agent)
+
+        with patch.dict("sys.modules", {"openppx.app.agent": fake_agent_module}):
+            with patch("openppx.app.cli.create_runner", return_value=(_FakeRunner(), session_service)):
+                with patch("builtins.print") as mocked_info:
+                    code = cli._cmd_rewind(
+                        user_id="u1",
+                        session_id="s1",
+                        before_invocation_id=None,
+                    )
+
+        self.assertEqual(code, 0)
+        self.assertIn("inv-2", mocked_info.call_args.args[0])
+        self.assertEqual(
+            captured_rewinds,
+            [
+                {
+                    "user_id": "u1",
+                    "session_id": "s1",
+                    "rewind_before_invocation_id": "inv-2",
+                }
+            ],
+        )
+
+    def test_cmd_rewind_requires_session_id(self) -> None:
+        from openppx import cli
+
+        with patch("builtins.print") as mocked_info:
+            code = cli._cmd_rewind(user_id="u1", session_id="", before_invocation_id=None)
+
+        self.assertEqual(code, 2)
+        mocked_info.assert_called_with("Error: `ppx rewind` requires --session-id.")
 
     def test_cron_list_mode_dispatch(self) -> None:
         from openppx import cli

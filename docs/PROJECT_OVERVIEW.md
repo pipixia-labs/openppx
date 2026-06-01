@@ -50,7 +50,7 @@
 
 ### 3.2 `/new` 与 `/help`
 
-网关已内置两条会话命令：
+网关已内置会话命令：
 
 - `/help`
   - 直接返回命令说明
@@ -60,6 +60,10 @@
   - 再为当前 `channel:chat_id` 绑定一个新的 ADK `session_id`
   - 后续对话进入新会话上下文
   - 不调用模型
+- `/rewind [last|<invocation_id>]`
+  - 使用 ADK 2.1 原生 `Runner.rewind_async()` 在当前会话追加 rewind event
+  - 默认回退到最新仍可见 invocation 之前；也可以显式指定 invocation id
+  - 只影响后续模型看到的 ADK session context，不撤销外部副作用
 
 当前实现是“进程内映射”，重启进程后会回到默认 `session_key` 路由。
 
