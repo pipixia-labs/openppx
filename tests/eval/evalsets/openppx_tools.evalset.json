@@ -1,0 +1,46 @@
+{
+  "eval_set_id": "openppx_tools",
+  "name": "openppx tool trajectory eval",
+  "description": "Low-side-effect tool trajectory baseline for the openppx root agent.",
+  "eval_cases": [
+    {
+      "eval_id": "list_skills_tool_trajectory",
+      "conversation": [
+        {
+          "invocation_id": "openppx-tools-0001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Use the list_skills tool exactly once to inspect available skills. After the tool result, reply with exactly: OPENPPX_TOOL_LIST_SKILLS_OK"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "OPENPPX_TOOL_LIST_SKILLS_OK"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "list_skills",
+                "args": {}
+              }
+            ],
+            "tool_responses": [],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "openppx",
+        "user_id": "eval_tool_user",
+        "state": {}
+      }
+    }
+  ]
+}

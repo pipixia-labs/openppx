@@ -11,6 +11,8 @@ Run from the `openppx_root` repository root:
 
 ```bash
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_smoke.evalset.json --config_file_path tests/eval/eval_config.json
+adk eval tests/eval/openppx tests/eval/evalsets/openppx_quality.evalset.json --config_file_path tests/eval/eval_config.json
+adk eval tests/eval/openppx tests/eval/evalsets/openppx_tools.evalset.json --config_file_path tests/eval/eval_config_tools.json
 ```
 
 If the local environment was installed without ADK eval extras, install the
@@ -23,3 +25,8 @@ pip install ".[eval]"
 This command calls the configured model and therefore requires normal model
 credentials. Deterministic pytest coverage only validates the entrypoint,
 schema, and app-name wiring; it does not run live LLM inference.
+
+`openppx_smoke` is the smallest no-tool entrypoint check. `openppx_quality`
+covers low-side-effect response, session-context, and refusal behavior.
+`openppx_tools` covers a safe tool-trajectory baseline and uses an `IN_ORDER`
+trajectory config so future harmless helper calls do not make the case fail.
