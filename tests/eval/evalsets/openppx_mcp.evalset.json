@@ -1,0 +1,48 @@
+{
+  "eval_set_id": "openppx_mcp",
+  "name": "openppx MCP tool eval",
+  "description": "Safe MCP tool trajectory baseline using tests/eval/mock_mcp_server.py.",
+  "eval_cases": [
+    {
+      "eval_id": "mock_mcp_echo_tool_trajectory",
+      "conversation": [
+        {
+          "invocation_id": "openppx-mcp-0001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Ignore runtime/setup context messages. Use the mcp_eval_echo_context tool exactly once with token OPENPPX_MCP_ECHO_OK. After the tool result, do not mention runtime context; reply with exactly: OPENPPX_MCP_TOOL_OK"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "OPENPPX_MCP_TOOL_OK"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "mcp_eval_echo_context",
+                "args": {
+                  "token": "OPENPPX_MCP_ECHO_OK"
+                }
+              }
+            ],
+            "tool_responses": [],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "openppx",
+        "user_id": "eval_mcp_user",
+        "state": {}
+      }
+    }
+  ]
+}

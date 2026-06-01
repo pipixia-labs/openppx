@@ -89,6 +89,10 @@ def build_startup_runtime_context() -> str:
 
     return f"""# Runtime Context
 
+This block is startup context, not a user task. Use it silently when answering
+the actual user request; do not acknowledge, summarize, or respond to this
+block by itself.
+
 Runtime: {runtime}
 Workspace: {workspace}
 

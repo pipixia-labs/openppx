@@ -45,7 +45,14 @@ def _load_mcp_servers_from_env() -> dict[str, Any]:
 
 def _resolve_tool_prefix(server_name: str, raw_cfg: dict[str, Any]) -> str:
     prefix = str(_pick(raw_cfg, "tool_name_prefix", "toolNamePrefix", "") or "").strip()
-    return prefix or f"mcp_{server_name}_"
+    if not prefix:
+        prefix = f"mcp_{server_name}"
+    return prefix.rstrip("_")
+
+
+def _prefixed_tool_name(prefix: str, tool_name: str) -> str:
+    """Return the ADK-rendered tool name for a toolset prefix."""
+    return f"{prefix}_{tool_name}" if prefix else tool_name
 
 
 def _looks_like_gui_server(server_name: str, raw_cfg: dict[str, Any]) -> bool:
@@ -84,8 +91,8 @@ def _resolve_gui_mcp_from_servers(mcp_servers: dict[str, Any]) -> GuiMcpRouting 
             GuiMcpRouting(
                 server_name=name,
                 tool_prefix=prefix,
-                action_tool_name=f"{prefix}gui_action",
-                task_tool_name=f"{prefix}gui_task",
+                action_tool_name=_prefixed_tool_name(prefix, "gui_action"),
+                task_tool_name=_prefixed_tool_name(prefix, "gui_task"),
             )
         )
 
@@ -112,16 +119,16 @@ def resolve_gui_mcp_from_summaries(summaries: list[dict[str, str]]) -> GuiMcpRou
         name = str(item.get("name", "")).strip()
         if not name:
             continue
-        prefix = str(item.get("prefix", "")).strip() or f"mcp_{name}_"
+        prefix = (str(item.get("prefix", "")).strip() or f"mcp_{name}").rstrip("_")
         lowered_name = name.lower()
         lowered_prefix = prefix.lower()
-        if lowered_name == _DEFAULT_GUI_SERVER_NAME or lowered_prefix.startswith("mcp_gui_"):
+        if lowered_name == _DEFAULT_GUI_SERVER_NAME or lowered_prefix == "mcp_gui" or lowered_prefix.startswith("mcp_gui_"):
             candidates.append(
                 GuiMcpRouting(
                     server_name=name,
                     tool_prefix=prefix,
-                    action_tool_name=f"{prefix}gui_action",
-                    task_tool_name=f"{prefix}gui_task",
+                    action_tool_name=_prefixed_tool_name(prefix, "gui_action"),
+                    task_tool_name=_prefixed_tool_name(prefix, "gui_task"),
                 )
             )
     if not candidates:

@@ -1,0 +1,65 @@
+{
+  "eval_set_id": "openppx_memory",
+  "name": "openppx memory/session eval",
+  "description": "Low-side-effect baseline for conversation memory across multiple turns in one ADK eval session.",
+  "eval_cases": [
+    {
+      "eval_id": "multi_turn_session_memory_recall",
+      "conversation": [
+        {
+          "invocation_id": "openppx-memory-0001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "For this memory eval session, remember this exact token: OPENPPX_MEMORY_SESSION_TOKEN. Reply with exactly: STORED_OPENPPX_MEMORY_SESSION_TOKEN"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "STORED_OPENPPX_MEMORY_SESSION_TOKEN"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [],
+            "tool_responses": [],
+            "intermediate_responses": []
+          }
+        },
+        {
+          "invocation_id": "openppx-memory-0002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What exact token did I ask you to remember in this memory eval session? Reply with only the token."
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "OPENPPX_MEMORY_SESSION_TOKEN"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [],
+            "tool_responses": [],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "openppx",
+        "user_id": "eval_memory_user",
+        "state": {}
+      }
+    }
+  ]
+}

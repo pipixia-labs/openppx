@@ -42,6 +42,8 @@ class PromptLayeringTests(unittest.TestCase):
 
         self.assertIn("Runtime:", text)
         self.assertIn("Workspace: openppx-test-workspace", text)
+        self.assertIn("not a user task", text)
+        self.assertIn("do not acknowledge", text)
         self.assertIn("desktop_gui_task", text)
         self.assertIn("desktop_gui_action", text)
         self.assertIn("- skill_a: test skill", text)

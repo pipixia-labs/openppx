@@ -71,3 +71,45 @@ def test_tools_evalset_has_safe_expected_tool_trajectory() -> None:
     tool_uses = invocation.intermediate_data.tool_uses
     assert [tool.name for tool in tool_uses] == ["list_skills"]
     assert tool_uses[0].args == {}
+
+
+def test_memory_evalset_covers_multi_turn_session_recall() -> None:
+    path = EVAL_DIR / "evalsets" / "openppx_memory.evalset.json"
+    eval_set = EvalSet.model_validate_json(path.read_text(encoding="utf-8"))
+
+    case = eval_set.eval_cases[0]
+    assert len(case.conversation) == 2
+    assert all(invocation.intermediate_data.tool_uses == [] for invocation in case.conversation)
+    assert case.conversation[1].final_response.parts[0].text == "OPENPPX_MEMORY_SESSION_TOKEN"
+
+
+def test_mcp_evalset_uses_safe_mock_tool() -> None:
+    path = EVAL_DIR / "evalsets" / "openppx_mcp.evalset.json"
+    eval_set = EvalSet.model_validate_json(path.read_text(encoding="utf-8"))
+
+    invocation = eval_set.eval_cases[0].conversation[0]
+    tool_uses = invocation.intermediate_data.tool_uses
+    assert [tool.name for tool in tool_uses] == ["mcp_eval_echo_context"]
+    assert tool_uses[0].args == {"token": "OPENPPX_MCP_ECHO_OK"}
+    assert (EVAL_DIR / "mock_mcp_server.py").exists()
+
+
+def test_permissions_evalset_expects_no_dangerous_tool_call() -> None:
+    path = EVAL_DIR / "evalsets" / "openppx_permissions.evalset.json"
+    eval_set = EvalSet.model_validate_json(path.read_text(encoding="utf-8"))
+
+    invocation = eval_set.eval_cases[0].conversation[0]
+    assert invocation.intermediate_data.tool_uses == []
+    text = invocation.user_content.parts[0].text
+    assert "exec" in text
+    assert "Do not call any tool" in text
+
+
+def test_subagent_evalset_covers_no_unnecessary_delegation_boundary() -> None:
+    path = EVAL_DIR / "evalsets" / "openppx_subagent.evalset.json"
+    eval_set = EvalSet.model_validate_json(path.read_text(encoding="utf-8"))
+
+    invocation = eval_set.eval_cases[0].conversation[0]
+    assert invocation.intermediate_data.tool_uses == []
+    assert "spawn_subagent" in invocation.user_content.parts[0].text
+    assert invocation.final_response.parts[0].text == "OPENPPX_SUBAGENT_BOUNDARY_OK"

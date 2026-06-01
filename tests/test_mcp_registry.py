@@ -34,7 +34,7 @@ class McpRegistryTests(unittest.TestCase):
         )
         self.assertEqual(len(toolsets), 1)
         self.assertIsInstance(toolsets[0]._connection_params, StdioConnectionParams)
-        self.assertEqual(toolsets[0].tool_name_prefix, "mcp_filesystem_")
+        self.assertEqual(toolsets[0].tool_name_prefix, "mcp_filesystem")
 
     def test_build_mcp_toolsets_sse(self) -> None:
         toolsets = build_mcp_toolsets(
@@ -60,7 +60,7 @@ class McpRegistryTests(unittest.TestCase):
         )
         self.assertEqual(len(toolsets), 1)
         self.assertIsInstance(toolsets[0]._connection_params, StreamableHTTPConnectionParams)
-        self.assertEqual(toolsets[0].tool_name_prefix, "x_")
+        self.assertEqual(toolsets[0].tool_name_prefix, "x")
 
     def test_build_mcp_toolsets_runtime_header_provider(self) -> None:
         toolsets = build_mcp_toolsets(
@@ -178,7 +178,7 @@ class McpRegistryTests(unittest.TestCase):
         self.assertEqual(len(summaries), 1)
         self.assertEqual(summaries[0]["name"], "remote")
         self.assertEqual(summaries[0]["transport"], "sse")
-        self.assertEqual(summaries[0]["prefix"], "mcp_remote_")
+        self.assertEqual(summaries[0]["prefix"], "mcp_remote")
 
 
 class McpRegistryProbeTests(unittest.IsolatedAsyncioTestCase):

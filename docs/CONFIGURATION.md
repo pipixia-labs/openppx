@@ -379,7 +379,7 @@ export OPENPPX_GUI_ALLOW_DANGEROUS_KEYS=false
         "enabled": true,
         "command": "openppx-gui-mcp",
         "args": [],
-        "toolNamePrefix": "mcp_gui_",
+        "toolNamePrefix": "mcp_gui",
         "requireConfirmation": true
       },
       "tenant_api": {

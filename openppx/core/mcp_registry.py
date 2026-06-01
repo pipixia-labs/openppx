@@ -213,6 +213,20 @@ def _normalize_runtime_header_bindings(raw_cfg: dict[str, Any]) -> dict[str, str
     return bindings
 
 
+def _normalize_tool_name_prefix(server_name: str, raw_prefix: Any) -> str:
+    """Return the ADK toolset prefix stem.
+
+    ADK adds an underscore between ``tool_name_prefix`` and the MCP tool name.
+    Keep openppx config tolerant of older examples that already included the
+    separator so MCP tools render as ``mcp_server_tool`` instead of
+    ``mcp_server__tool``.
+    """
+    prefix = str(raw_prefix or "").strip()
+    if not prefix:
+        prefix = f"mcp_{server_name}"
+    return prefix.rstrip("_")
+
+
 def _metadata_value(ctx: ReadonlyContext, key: str) -> Any:
     run_config = getattr(ctx, "run_config", None)
     metadata = getattr(run_config, "custom_metadata", None) or {}
@@ -509,9 +523,7 @@ def _resolve_toolset_options(server_name: str, raw_cfg: dict[str, Any]) -> McpTo
     tool_filter = _pick(raw_cfg, "tool_filter", "toolFilter")
     tool_filter_list = _string_list(tool_filter) if isinstance(tool_filter, list) else None
 
-    prefix = str(_pick(raw_cfg, "tool_name_prefix", "toolNamePrefix", "") or "").strip()
-    if not prefix:
-        prefix = f"mcp_{server_name}_"
+    prefix = _normalize_tool_name_prefix(server_name, _pick(raw_cfg, "tool_name_prefix", "toolNamePrefix", ""))
     require_confirmation = _pick_bool(raw_cfg, "require_confirmation", "requireConfirmation", False)
     runtime_headers = _normalize_runtime_header_bindings(raw_cfg)
     progress_events = _pick_bool(raw_cfg, "progress_events", "progressEvents", False)

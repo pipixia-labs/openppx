@@ -16,7 +16,7 @@ class GuiMcpRoutingTests(unittest.TestCase):
             routing = resolve_gui_mcp_from_env()
         self.assertIsNotNone(routing)
         assert routing is not None
-        self.assertEqual(routing.tool_prefix, "mcp_openppx_gui_")
+        self.assertEqual(routing.tool_prefix, "mcp_openppx_gui")
         self.assertEqual(routing.task_tool_name, "mcp_openppx_gui_gui_task")
         self.assertEqual(routing.action_tool_name, "mcp_openppx_gui_gui_action")
 
@@ -38,11 +38,11 @@ class GuiMcpRoutingTests(unittest.TestCase):
             routing = resolve_gui_mcp_from_env()
         self.assertIsNotNone(routing)
         assert routing is not None
-        self.assertEqual(routing.tool_prefix, "x_")
+        self.assertEqual(routing.tool_prefix, "x")
 
     def test_resolve_gui_mcp_from_summaries_fallback(self) -> None:
         routing = resolve_gui_mcp_from_summaries(
-            [{"name": "custom", "prefix": "mcp_gui_", "transport": "stdio"}]
+            [{"name": "custom", "prefix": "mcp_gui", "transport": "stdio"}]
         )
         self.assertIsNotNone(routing)
         assert routing is not None

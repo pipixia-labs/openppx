@@ -12,7 +12,7 @@
 - `transport`：可选，`sse` / `http`
 - `headers`：远端请求头
 - `toolFilter`（或 `tool_filter`）：暴露工具白名单
-- `toolNamePrefix`（或 `tool_name_prefix`）：工具名前缀
+- `toolNamePrefix`（或 `tool_name_prefix`）：工具名前缀 stem；ADK 会在 prefix 与工具名之间自动加 `_`
 - `requireConfirmation`（或 `require_confirmation`）：调用确认
 - `runtimeHeaders`（或 `runtime_headers`）：把 ADK 运行时上下文按需映射为远端 MCP 请求头
 - `progressEvents`（或 `progress_events`）：是否把 MCP progress notification 转为 openppx step event，默认 `false`
@@ -62,7 +62,7 @@
         "enabled": true,
         "command": "openppx-gui-mcp",
         "args": [],
-        "toolNamePrefix": "mcp_gui_",
+        "toolNamePrefix": "mcp_gui",
         "requireConfirmation": true
       }
     }

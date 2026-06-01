@@ -13,6 +13,11 @@ Run from the `openppx_root` repository root:
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_smoke.evalset.json --config_file_path tests/eval/eval_config.json
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_quality.evalset.json --config_file_path tests/eval/eval_config.json
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_tools.evalset.json --config_file_path tests/eval/eval_config_tools.json
+adk eval tests/eval/openppx tests/eval/evalsets/openppx_memory.evalset.json --config_file_path tests/eval/eval_config.json
+adk eval tests/eval/openppx tests/eval/evalsets/openppx_subagent.evalset.json --config_file_path tests/eval/eval_config.json
+adk eval tests/eval/openppx tests/eval/evalsets/openppx_permissions.evalset.json --config_file_path tests/eval/eval_config.json
+OPENPPX_MCP_SERVERS_JSON='{"eval":{"command":"./.venv/bin/python","args":["tests/eval/mock_mcp_server.py"],"toolNamePrefix":"mcp_eval"}}' \
+  adk eval tests/eval/openppx tests/eval/evalsets/openppx_mcp.evalset.json --config_file_path tests/eval/eval_config_tools.json
 ```
 
 If the local environment was installed without ADK eval extras, install the
@@ -30,3 +35,6 @@ schema, and app-name wiring; it does not run live LLM inference.
 covers low-side-effect response, session-context, and refusal behavior.
 `openppx_tools` covers a safe tool-trajectory baseline and uses an `IN_ORDER`
 trajectory config so future harmless helper calls do not make the case fail.
+`openppx_memory`, `openppx_subagent`, `openppx_permissions`, and `openppx_mcp`
+extend coverage to multi-turn session memory, no-unnecessary-delegation boundaries, dangerous-tool
+refusal, and a safe mock MCP tool.
