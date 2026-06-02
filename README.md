@@ -5,6 +5,8 @@
 
 ## ✨ News
 
+- 2026-06-02: v0.3 released with the ADK 2.1 runtime upgrade, profile-based runner lifecycle, deterministic and live eval baselines, MCP runtime headers/progress events, native high-risk tool confirmation, prompt layering with optional context cache, and ADK-native session rewind.
+
 - 2026-04-18: v0.2.1 released with Weixin and WeCom channel support, improved Feishu guidance, gateway streaming and realtime feedback, local client API service, and the new privilege-level-based agent lifecycle.
 
 - 2026-02-18: v0.2 released with multi-agent and GUI operation support.
