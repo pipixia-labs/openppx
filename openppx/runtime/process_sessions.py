@@ -470,8 +470,9 @@ class ProcessSessionManager:
 
         def _reader(stream_name: str, source: subprocess.PIPE) -> None:
             try:
+                read_chunk = getattr(source, "read1", source.read)
                 while True:
-                    chunk = source.read(4096)
+                    chunk = read_chunk(4096)
                     if not chunk:
                         break
                     text = chunk.decode("utf-8", errors="replace")

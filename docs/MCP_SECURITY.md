@@ -16,6 +16,8 @@
 - `requireConfirmation`（或 `require_confirmation`）：调用确认
 - `runtimeHeaders`（或 `runtime_headers`）：把 ADK 运行时上下文按需映射为远端 MCP 请求头
 - `progressEvents`（或 `progress_events`）：是否把 MCP progress notification 转为 openppx step event，默认 `false`
+- `longTaskProxy`（或 `long_task_proxy`）：是否让 MCP 工具进入 openppx 长任务 proxy，默认 `true`
+- `inlineBudgetMs`（或 `inline_budget_ms`）：MCP 工具调用的内联等待预算，默认 `5000`
 
 `runtimeHeaders` 默认关闭，避免把 user/session 等上下文静默发送给远端服务。支持的 source 包括：
 
@@ -36,12 +38,54 @@
           "X-OpenPPX-Session": "session_id",
           "X-OpenPPX-Request-Kind": "metadata.request_kind"
         },
-        "progressEvents": true
+        "progressEvents": true,
+        "longTaskProxy": true,
+        "inlineBudgetMs": 5000
       }
     }
   }
 }
 ```
+
+### MCP 长任务 proxy
+
+`longTaskProxy` 默认开启后，openppx 会包装 ADK 返回的 MCP tools，而不是替换 ADK `McpToolset`。
+
+当前语义：
+
+- MCP 调用在 `inlineBudgetMs` 内完成时，工具结果按原样 inline 返回。
+- 超过预算仍未完成时，工具返回 `task_id`，后台 coroutine 在当前进程内继续执行。
+- 后台完成或失败会更新 `TaskRun(kind=mcp)` 和 task events。
+- 当前进程内仍 attached 的 MCP proxy task 可以 best-effort `interrupt_task` / `cancel_task`。
+- 如果进程重启或后台 coroutine 不再 attached，任务会进入 `stale`，后续可收敛为 `lost`。
+
+这里没有承诺通用 MCP server-side cancel/status/checkpoint。只有当具体 MCP server 暴露明确 job 协议时，才适合继续接入 server-specific adapter。
+
+### MCP 外部 job protocol
+
+如果某个 MCP server 的工具会快速返回外部 job id，可显式配置 `jobProtocol`：
+
+```json
+{
+  "jobProtocol": {
+    "jobIdPath": "job_id",
+    "statusTool": "job_status",
+    "statusArgs": {"job_id": "{job_id}"},
+    "outputTool": "job_output",
+    "cancelTool": "job_cancel"
+  }
+}
+```
+
+当前语义：
+
+- 只有配置了 `jobProtocol`，且原 MCP 工具结果能按 `jobIdPath` 取到 job id 时，openppx 才创建 external `TaskRun`。
+- `statusTool` 是必须项；没有它就不能声明可 rejoin 的外部 job。
+- `outputTool` / `cancelTool` 是可选项；未配置时不会伪造 output/cancel 能力。
+- `show_task` / scheduler 会通过 `statusTool` 更新任务状态；状态不可见时任务会进入 `stale`，而不是继续展示成普通 running。
+- `cancel_task` 只在 `cancelTool` 存在时展示并调用 provider cancel。
+
+这里仍不承诺 checkpoint/resume，也不自动发现 MCP server 的 job 协议；协议必须由配置显式声明。
 
 ### 最小验证流程
 

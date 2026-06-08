@@ -7,6 +7,7 @@ from io import BytesIO
 import os
 import re
 import tempfile
+import threading
 import time
 import types as pytypes
 import unittest
@@ -17,11 +18,15 @@ from urllib.error import HTTPError
 from urllib.error import URLError
 
 from openppx.browser.service import BrowserDispatchResponse
+from openppx.runtime.task_execution import TaskController
+from openppx.runtime.task_store import TaskStore
 from openppx.runtime.tool_context import route_context
 from openppx.tooling.tool_meta import get_tool_meta
 from openppx.tooling.registry import (
     SubagentSpawnRequest,
     browser,
+    cancel_task,
+    complete_goal,
     computer_task,
     computer_use,
     configure_browser_runtime,
@@ -31,17 +36,28 @@ from openppx.tooling.registry import (
     message,
     edit_file,
     exec_command,
+    finish_task_flow,
     glob,
     grep,
+    interrupt_task,
     list_dir,
+    list_context_summaries,
+    list_task_flows,
+    long_task,
     message,
     message_file,
     message_image,
     process_session,
     read_file,
+    show_task_flow,
     spawn_subagent,
+    summarize_context_text,
+    update_task_flow_step,
     web_fetch,
     web_search,
+    write_context_summary,
+    write_task_flow,
+    write_todos,
     write_file,
 )
 
@@ -110,15 +126,20 @@ class ToolsTests(unittest.TestCase):
     def test_builtin_tool_metadata_marks_read_and_high_risk_tools(self) -> None:
         read_meta = get_tool_meta("read_file")
         exec_meta = get_tool_meta("exec")
+        pause_meta = get_tool_meta("pause_task")
 
         self.assertIsNotNone(read_meta)
         self.assertIsNotNone(exec_meta)
+        self.assertIsNotNone(pause_meta)
         assert read_meta is not None
         assert exec_meta is not None
+        assert pause_meta is not None
         self.assertTrue(read_meta.read_only)
         self.assertFalse(exec_meta.read_only)
         self.assertTrue(exec_meta.exclusive)
         self.assertEqual(exec_meta.risk, "high")
+        self.assertFalse(pause_meta.read_only)
+        self.assertEqual(pause_meta.risk, "medium")
 
     def test_spawn_subagent_respects_delegation_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -317,18 +338,294 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("ok", out)
 
     def test_computer_use_tool_calls_executor(self) -> None:
-        payload = {"ok": True, "arguments": {"action": "wait", "time": 1}}
-        with patch("openppx.tooling.registry.execute_gui_action", return_value=payload) as mocked:
-            result = computer_use("wait 1 second", dry_run=True, model="m", api_key="k")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            payload = {"ok": True, "arguments": {"action": "wait", "time": 1}}
+            with patch("openppx.tooling.registry.execute_gui_action", return_value=payload) as mocked:
+                result = computer_use("wait 1 second", dry_run=True, model="m", api_key="k")
         self.assertIn('"ok": true', result)
         mocked.assert_called_once()
 
     def test_computer_task_tool_calls_runner(self) -> None:
-        payload = {"ok": True, "finished": True, "message": "done", "steps": []}
-        with patch("openppx.tooling.registry.execute_gui_task", return_value=payload) as mocked:
-            result = computer_task("finish login flow", max_steps=5, dry_run=True, planner_model="m", planner_api_key="k")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            payload = {"ok": True, "finished": True, "message": "done", "steps": []}
+            with patch("openppx.tooling.registry.execute_gui_task", return_value=payload) as mocked:
+                result = computer_task("finish login flow", max_steps=5, dry_run=True, planner_model="m", planner_api_key="k")
         self.assertIn('"ok": true', result)
         mocked.assert_called_once()
+
+    def test_computer_task_materializes_long_running_builtin_gui_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+
+            def _slow_task(**_kwargs):
+                time.sleep(0.05)
+                return {"ok": True, "finished": True, "message": "done", "steps": []}
+
+            with patch("openppx.tooling.registry.execute_gui_task", side_effect=_slow_task):
+                result = json.loads(
+                    computer_task(
+                        "finish login flow",
+                        max_steps=5,
+                        dry_run=True,
+                        planner_model="m",
+                        planner_api_key="k",
+                        inline_budget_ms=0,
+                    )
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["mode"], "task")
+            self.assertEqual(result["status"], "running")
+            task_id = result["task_id"]
+            store = TaskStore()
+            shown = TaskController(task_store=store).show_task(task_id)
+            self.assertEqual(shown["task"]["status"], "running")
+            self.assertTrue(shown["task"]["controls"]["can_interrupt"])
+            self.assertTrue(shown["task"]["controls"]["can_cancel"])
+            self.assertTrue(shown["task"]["controls"]["can_resume"])
+
+            completed = None
+            for _ in range(30):
+                time.sleep(0.02)
+                completed = store.get_task(task_id)
+                if completed is not None and completed.status == "completed":
+                    break
+
+            self.assertIsNotNone(completed)
+            assert completed is not None
+            self.assertEqual(completed.status, "completed")
+            self.assertIn("done", completed.terminal_summary)
+
+    def test_computer_task_cooperative_interrupt_stops_background_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            started = threading.Event()
+
+            def _cancellable_task(**kwargs):
+                cancel_token = kwargs["cancel_token"]
+                started.set()
+                while True:
+                    cancel_token.check_cancelled()
+                    time.sleep(0.01)
+
+            with patch("openppx.tooling.registry.execute_gui_task", side_effect=_cancellable_task):
+                result = json.loads(
+                    computer_task(
+                        "finish login flow",
+                        max_steps=5,
+                        dry_run=True,
+                        planner_model="m",
+                        planner_api_key="k",
+                        inline_budget_ms=0,
+                    )
+                )
+                self.assertTrue(started.wait(timeout=1.0))
+                interrupted = json.loads(interrupt_task(result["task_id"]))
+
+            self.assertTrue(interrupted["ok"])
+            self.assertEqual(interrupted["action"], "stop_requested")
+            store = TaskStore()
+            stopped = None
+            for _ in range(50):
+                time.sleep(0.02)
+                stopped = store.get_task(result["task_id"])
+                if stopped is not None and stopped.status == "interrupted":
+                    break
+
+            self.assertIsNotNone(stopped)
+            assert stopped is not None
+            self.assertEqual(stopped.status, "interrupted")
+            events = [
+                event.event_type
+                for event in TaskController(task_store=store).event_store.list_events(stopped.task_id)
+            ]
+            self.assertIn("task.interrupt_requested", events)
+            self.assertIn("task.interrupted", events)
+
+    def test_computer_task_cooperative_cancel_marks_background_task_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            started = threading.Event()
+
+            def _cancellable_task(**kwargs):
+                cancel_token = kwargs["cancel_token"]
+                started.set()
+                while True:
+                    cancel_token.check_cancelled()
+                    time.sleep(0.01)
+
+            with patch("openppx.tooling.registry.execute_gui_task", side_effect=_cancellable_task):
+                result = json.loads(
+                    computer_task(
+                        "finish login flow",
+                        max_steps=5,
+                        dry_run=True,
+                        planner_model="m",
+                        planner_api_key="k",
+                        inline_budget_ms=0,
+                    )
+                )
+                self.assertTrue(started.wait(timeout=1.0))
+                cancelled = json.loads(cancel_task(result["task_id"]))
+
+            self.assertTrue(cancelled["ok"])
+            self.assertEqual(cancelled["action"], "stop_requested")
+            store = TaskStore()
+            stopped = None
+            for _ in range(50):
+                time.sleep(0.02)
+                stopped = store.get_task(result["task_id"])
+                if stopped is not None and stopped.status == "cancelled":
+                    break
+
+            self.assertIsNotNone(stopped)
+            assert stopped is not None
+            self.assertEqual(stopped.status, "cancelled")
+            self.assertIn("cancellation requested", stopped.terminal_summary)
+            events = [
+                event.event_type
+                for event in TaskController(task_store=store).event_store.list_events(stopped.task_id)
+            ]
+            self.assertIn("task.cancel_requested", events)
+            self.assertIn("task.cancelled", events)
+
+    def test_computer_task_background_failure_marks_task_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+
+            def _slow_failed_task(**_kwargs):
+                time.sleep(0.05)
+                return {"ok": False, "error": "gui failed", "steps": []}
+
+            with patch("openppx.tooling.registry.execute_gui_task", side_effect=_slow_failed_task):
+                result = json.loads(
+                    computer_task(
+                        "finish login flow",
+                        max_steps=5,
+                        dry_run=True,
+                        planner_model="m",
+                        planner_api_key="k",
+                        inline_budget_ms=0,
+                    )
+                )
+
+            store = TaskStore()
+            failed = None
+            for _ in range(30):
+                time.sleep(0.02)
+                failed = store.get_task(result["task_id"])
+                if failed is not None and failed.status == "failed":
+                    break
+
+            self.assertIsNotNone(failed)
+            assert failed is not None
+            self.assertEqual(failed.status, "failed")
+            self.assertIn("gui failed", failed.last_error)
+
+    def test_goal_mirror_tools_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            ctx = pytypes.SimpleNamespace(session=pytypes.SimpleNamespace(id="session-1"))
+
+            goal_payload = json.loads(
+                long_task(
+                    "Finish long-task implementation",
+                    completion_criteria="Tests pass",
+                    current_summary="Context phase",
+                    tool_context=ctx,
+                )
+            )
+            todo_payload = json.loads(
+                write_todos(
+                    [
+                        {"content": "Add store", "status": "completed"},
+                        {"content": "Add tools", "status": "pending"},
+                    ],
+                    tool_context=ctx,
+                )
+            )
+            completed_payload = json.loads(complete_goal(final_summary="Done", tool_context=ctx))
+
+            self.assertTrue(goal_payload["ok"])
+            self.assertEqual(goal_payload["goal"]["session_id"], "session-1")
+            self.assertTrue(todo_payload["ok"])
+            self.assertEqual([item["status"] for item in todo_payload["items"]], ["completed", "in_progress"])
+            self.assertTrue(completed_payload["ok"])
+            self.assertEqual(completed_payload["goal"]["status"], "completed")
+            self.assertEqual(completed_payload["goal"]["current_summary"], "Done")
+
+    def test_task_flow_tools_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            ctx = pytypes.SimpleNamespace(session=pytypes.SimpleNamespace(id="session-1"))
+
+            written = json.loads(
+                write_task_flow(
+                    "Ship TaskFlow",
+                    [
+                        {"title": "Add store", "status": "in_progress"},
+                        {"title": "Add tools", "status": "pending"},
+                    ],
+                    tool_context=ctx,
+                )
+            )
+            flow_id = written["flow"]["flow_id"]
+            first_step_id = written["steps"][0]["step_id"]
+            updated = json.loads(
+                update_task_flow_step(
+                    flow_id,
+                    step_id=first_step_id,
+                    status="completed",
+                    evidence={"tests": "ok"},
+                )
+            )
+            shown = json.loads(show_task_flow(flow_id=flow_id, tool_context=ctx))
+            listed = json.loads(list_task_flows(tool_context=ctx))
+            finished = json.loads(finish_task_flow(flow_id=flow_id, evidence={"done": True}, tool_context=ctx))
+
+            self.assertTrue(written["ok"])
+            self.assertEqual([step["status"] for step in written["steps"]], ["in_progress", "pending"])
+            self.assertTrue(updated["ok"])
+            self.assertEqual(updated["step"]["status"], "completed")
+            self.assertEqual(updated["step"]["evidence"]["tests"], "ok")
+            self.assertTrue(shown["ok"])
+            self.assertEqual([step["status"] for step in shown["steps"]], ["completed", "in_progress"])
+            self.assertEqual(listed["items"][0]["flow_id"], flow_id)
+            self.assertTrue(finished["ok"])
+            self.assertEqual(finished["flow"]["status"], "completed")
+
+    def test_context_summary_tools_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            ctx = pytypes.SimpleNamespace(session=pytypes.SimpleNamespace(id="session-1"))
+
+            written = json.loads(
+                write_context_summary(
+                    "Keep summary separate from TaskRun facts.",
+                    title="Summary rule",
+                    flow_id="flow-1",
+                    scope="flow",
+                    tool_context=ctx,
+                )
+            )
+            summarized = json.loads(
+                summarize_context_text(
+                    "A" * 120 + "\n" + "B" * 120,
+                    title="Large text",
+                    max_chars=90,
+                    tool_context=ctx,
+                )
+            )
+            listed = json.loads(list_context_summaries(flow_id="flow-1", tool_context=ctx))
+
+            self.assertTrue(written["ok"])
+            self.assertEqual(written["summary"]["scope"], "flow")
+            self.assertEqual(written["summary"]["flow_id"], "flow-1")
+            self.assertTrue(summarized["ok"])
+            self.assertIn("context summary truncated", summarized["summary"]["content"])
+            self.assertEqual(listed["items"][0]["summary_id"], written["summary"]["summary_id"])
 
     def test_exec_tool_requests_heartbeat_wake(self) -> None:
         reasons: list[str] = []

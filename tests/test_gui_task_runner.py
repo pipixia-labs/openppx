@@ -11,6 +11,7 @@ from pathlib import Path
 
 from openppx.gui.executor import CapturedScreen
 from openppx.gui.task_runner import GuiTaskRunner, execute_gui_task
+from openppx.runtime.sync_tool_proxy import SyncCancellationToken
 
 
 class _FakeRuntime:
@@ -151,6 +152,43 @@ class GuiTaskRunnerTests(unittest.TestCase):
         self.assertEqual(result["steps"][0]["executor_raw_model_output"], '{"action":"left_click","coordinate":[500,500]}')
         self.assertEqual(result["steps"][0]["screenshots"]["before_path"], "/tmp/before.png")
         self.assertEqual(actions, ["click login button"])
+
+    def test_task_runner_passes_cancel_token_to_action_executor(self) -> None:
+        planned = [
+            '{"thinking":"step1","action":{"type":"execute","params":{"action":"click login button"}}}',
+            '{"thinking":"done","action":{"type":"reply","params":{"message":"login completed"}}}',
+        ]
+        observed: dict[str, object] = {}
+
+        def _fake_action_executor(
+            *,
+            action: str,
+            dry_run: bool = False,
+            cancel_token: object | None = None,
+        ) -> dict:
+            observed["action"] = action
+            observed["dry_run"] = dry_run
+            observed["cancel_token"] = cancel_token
+            return {"ok": True, "screen_changed": True, "retries_used": 0}
+
+        runner = GuiTaskRunner(
+            planner_model="test-planner",
+            planner_api_key="test-key",
+            planner_runner=object(),
+            action_executor=_fake_action_executor,
+            runtime=_FakeRuntime(),
+        )
+        cancel_token = SyncCancellationToken()
+        with unittest.mock.patch.object(
+            runner,
+            "_plan_next_adk_async",
+            new=unittest.mock.AsyncMock(side_effect=planned),
+        ):
+            result = runner.run("log in to website", max_steps=4, cancel_token=cancel_token)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(observed["action"], "click login button")
+        self.assertIs(observed["cancel_token"], cancel_token)
 
     def test_task_runner_supports_save_info_and_modify_plan(self) -> None:
         planned = [

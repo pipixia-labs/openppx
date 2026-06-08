@@ -39,6 +39,8 @@ from ..runtime.session_rewind import (
 from ..runtime.step_events import build_step_metadata
 from ..runtime.step_events import configure_step_event_publisher
 from ..runtime.subagent_agent import build_restricted_subagent
+from ..runtime.task_scheduler import TaskWakeScheduler
+from ..runtime.task_store import TaskEventStore, TaskStore
 from ..runtime.tool_confirmation import (
     ToolConfirmationRequest,
     build_tool_confirmation_response_content,
@@ -65,6 +67,7 @@ _HELP_TEXT = (
     "/rewind [last|<invocation_id>] - Rewind this conversation using ADK session rewind\n"
     "/help - Show available commands"
 )
+_TASK_DELIVERY_SUMMARY_MAX_CHARS = 1000
 
 
 async def _cancel_task(task: asyncio.Task[Any] | None) -> None:
@@ -132,6 +135,9 @@ class Gateway:
         self._inbound_task: asyncio.Task[None] | None = None
         self._cron_service: CronService | None = None
         self._heartbeat_runner: HeartbeatRunner | None = None
+        self._task_scheduler: TaskWakeScheduler | None = None
+        self._task_store: TaskStore | None = None
+        self._task_event_store: TaskEventStore | None = None
         self._subagent_tasks: dict[str, asyncio.Task[None]] = {}
         self._subagent_semaphore = asyncio.Semaphore(self._subagent_max_concurrency())
         # Map logical inbound session keys to active ADK session ids.
@@ -219,6 +225,136 @@ class Gateway:
             return normalized[:max(0, max_chars)]
         return f"{normalized[: max_chars - 3]}..."
 
+    @staticmethod
+    def _task_delivery_step_phase(status: str) -> str:
+        """Map durable task status to normalized step-event phase."""
+        normalized = status.strip().lower()
+        if normalized == "completed":
+            return "finished"
+        if normalized in {"failed", "lost"}:
+            return "failed"
+        if normalized in {"cancelled", "interrupted"}:
+            return "cancelled"
+        if normalized in {"waiting_user", "waiting_approval"}:
+            return "waiting"
+        return normalized or "running"
+
+    @staticmethod
+    def _task_delivery_heading(status: str) -> str:
+        """Return a compact user-visible heading for one task delivery."""
+        normalized = status.strip().lower()
+        if normalized == "completed":
+            return "Task completed"
+        if normalized == "failed":
+            return "Task failed"
+        if normalized == "lost":
+            return "Task lost"
+        if normalized == "cancelled":
+            return "Task cancelled"
+        if normalized == "interrupted":
+            return "Task stopped"
+        if normalized == "waiting_user":
+            return "Task waiting for user input"
+        if normalized == "waiting_approval":
+            return "Task waiting for approval"
+        return "Task update"
+
+    @staticmethod
+    def _truncate_task_summary(summary: str) -> str:
+        """Return a bounded summary for push delivery messages."""
+        text = summary.strip()
+        if len(text) <= _TASK_DELIVERY_SUMMARY_MAX_CHARS:
+            return text
+        return f"{text[: _TASK_DELIVERY_SUMMARY_MAX_CHARS - 15].rstrip()}\n[truncated]"
+
+    def _render_task_delivery_content(self, payload: dict[str, Any]) -> str:
+        """Render one task delivery payload as a concise channel message."""
+        task_id = str(payload.get("task_id", "") or "").strip()
+        title = str(payload.get("title", "") or "").strip() or "task"
+        status = str(payload.get("status", "") or "").strip()
+        heading = self._task_delivery_heading(status)
+        summary = self._truncate_task_summary(str(payload.get("summary", "") or ""))
+        id_suffix = f" (`{task_id}`)" if task_id else ""
+        content = f"{heading}: {title}{id_suffix}."
+        if summary:
+            content = f"{content}\n\n{summary}"
+        return content
+
+    @staticmethod
+    def _target_from_delivery_payload(payload: dict[str, Any]) -> tuple[str, str] | None:
+        """Return an explicit delivery target from scheduler payload when present."""
+        delivery = payload.get("delivery")
+        if not isinstance(delivery, dict):
+            return None
+        channel = str(delivery.get("channel", "") or "").strip()
+        chat_id = str(delivery.get("chat_id", "") or "").strip()
+        if not channel or not chat_id:
+            return None
+        return channel, chat_id
+
+    @staticmethod
+    def _target_from_session_route(session_id: str) -> tuple[str, str] | None:
+        """Infer channel/chat from the gateway session route key."""
+        parts = session_id.split(":")
+        if len(parts) < 3:
+            return None
+        channel = parts[1].strip()
+        chat_id = parts[2].strip()
+        if not channel or not chat_id:
+            return None
+        return channel, chat_id
+
+    def _resolve_task_delivery_target(self, payload: dict[str, Any]) -> tuple[str, str]:
+        """Resolve where a task delivery should be published."""
+        explicit = self._target_from_delivery_payload(payload)
+        if explicit is not None:
+            return explicit
+        session_target = self._target_from_session_route(str(payload.get("session_id", "") or ""))
+        if session_target is not None:
+            return session_target
+        if self._last_inbound_route is not None:
+            return self._last_inbound_route
+        return "local", "tasks"
+
+    async def _publish_task_delivery(self, payload: dict[str, Any]) -> None:
+        """Publish a once-only scheduler task delivery through the outbound bus."""
+        task_id = str(payload.get("task_id", "") or "").strip()
+        status = str(payload.get("status", "") or "").strip().lower()
+        content = self._render_task_delivery_content(payload)
+        target_channel, target_chat_id = self._resolve_task_delivery_target(payload)
+        done = status in {"completed", "failed", "cancelled", "lost", "interrupted"}
+        metadata = {
+            **build_step_metadata(
+                step_phase=self._task_delivery_step_phase(status),
+                step_update_kind="lifecycle" if done else "progress",
+                step_title=self._task_delivery_heading(status),
+                step_kind="task",
+                invocation_id=str(payload.get("invocation_id", "") or ""),
+                function_call_id=str(payload.get("function_call_id", "") or ""),
+                step_id=task_id,
+                task_id=task_id,
+                session_id=str(payload.get("session_id", "") or ""),
+                tool_name=str(payload.get("kind", "") or "task"),
+                done=done,
+                important=status not in {"completed"},
+                content=content,
+                extra_metadata={
+                    "_task_status": status,
+                    "_task_title": str(payload.get("title", "") or ""),
+                    "_feedback_origin": "runtime",
+                    "_delivery_type": "task",
+                },
+            ),
+        }
+        await self.bus.publish_outbound(
+            OutboundMessage(
+                channel=target_channel,
+                chat_id=target_chat_id,
+                content=content,
+                metadata=metadata,
+            )
+        )
+
     def _session_route_key(self, *, channel: str, chat_id: str, principal_id: str) -> str:
         """Return the logical route key for one agent/chat/principal session."""
         return f"{self._agent_id}:{channel}:{chat_id}:{principal_id}"
@@ -243,6 +379,14 @@ class Gateway:
             agent_access_store=self._agent_access_store,
             apply_env_overrides=True,
         )
+
+    def _task_fact_stores(self) -> tuple[TaskStore, TaskEventStore]:
+        """Return lazily initialized task stores for gateway-owned background work."""
+        if self._task_store is None:
+            self._task_store = TaskStore()
+        if self._task_event_store is None:
+            self._task_event_store = TaskEventStore(db_path=self._task_store.db_path)
+        return self._task_store, self._task_event_store
 
     def _ensure_principal_membership(self, principal: ResolvedPrincipal) -> str:
         """Ensure runtime access rows exist for the current principal and return its relation."""
@@ -477,6 +621,11 @@ class Gateway:
             runner_status = dict(self._heartbeat_runner.status())
         runner_status["target_mode"] = self._heartbeat_target_mode()
         runner_status["last_delivery"] = dict(self._last_heartbeat_delivery or {})
+        runner_status["task_scheduler"] = (
+            self._task_scheduler.status()
+            if self._task_scheduler is not None
+            else {"running": False, "owner": None, "last_result": None}
+        )
         return runner_status
 
     def _persist_heartbeat_status_snapshot(self) -> None:
@@ -880,7 +1029,10 @@ class Gateway:
                 on_run=self._run_heartbeat,
                 is_busy=self._heartbeat_is_busy,
             )
+        if self._task_scheduler is None:
+            self._task_scheduler = TaskWakeScheduler(on_delivery=self._publish_task_delivery)
         await self._cron_service.start()
+        await self._task_scheduler.start()
         await self._heartbeat_runner.start()
         if self.channel_manager:
             await self.channel_manager.start_all()
@@ -888,6 +1040,8 @@ class Gateway:
         self._inbound_task = asyncio.create_task(self._consume_inbound())
 
     async def stop(self) -> None:
+        if self._task_scheduler is not None:
+            await self._task_scheduler.stop()
         if self._heartbeat_runner is not None:
             await self._heartbeat_runner.stop()
         if self._cron_service is not None:
@@ -1029,10 +1183,106 @@ class Gateway:
             },
         )
 
+    def _ensure_subagent_task_run(self, request: SubagentSpawnRequest) -> None:
+        """Create the parent-visible TaskRun for one background sub-agent request."""
+        task_store, event_store = self._task_fact_stores()
+        if task_store.get_task(request.task_id) is not None:
+            return
+        prompt_preview = request.prompt.strip()[:200]
+        task_store.create_task(
+            task_id=request.task_id,
+            kind="subagent",
+            status="queued",
+            title="Sub-agent task",
+            owner_key=request.user_id,
+            user_id=request.user_id,
+            thread_id=request.session_id,
+            session_id=request.session_id,
+            turn_id=request.invocation_id,
+            invocation_id=request.invocation_id,
+            function_call_id=request.function_call_id,
+            tool_call_id=request.function_call_id,
+            dedupe_key=f"subagent:{request.invocation_id}:{request.function_call_id}:{request.task_id}",
+            external_ref=f"subagent:{request.task_id}",
+            runner_payload={
+                "runner": "subagent",
+                "child_session_id": f"subagent:{request.task_id}",
+                "notify_on_complete": request.notify_on_complete,
+                "prompt_preview": prompt_preview,
+                "delivery": {
+                    "channel": request.channel,
+                    "chat_id": request.chat_id,
+                },
+            },
+            runner_capabilities={
+                "status": True,
+                "cancel": False,
+                "interrupt": False,
+                "output": True,
+                "rejoin": False,
+                "pause": False,
+                "checkpoint": False,
+            },
+            resume_policy="not_resumable",
+            stop_policy="not_supported",
+            cancel_policy="not_supported",
+            progress_summary="Sub-agent queued.",
+        )
+        event_store.append_event(
+            request.task_id,
+            "task.queued",
+            message="Sub-agent queued.",
+            payload={"prompt_preview": prompt_preview},
+        )
+
+    def _mark_subagent_task_running(self, request: SubagentSpawnRequest) -> None:
+        """Mark a parent-visible sub-agent TaskRun as running."""
+        task_store, event_store = self._task_fact_stores()
+        updated = task_store.update_task(
+            request.task_id,
+            status="running",
+            progress_summary="Sub-agent execution started.",
+        )
+        if updated is None:
+            return
+        event_store.append_event(
+            request.task_id,
+            "task.running",
+            message="Sub-agent execution started.",
+            payload={"child_session_id": f"subagent:{request.task_id}"},
+        )
+
+    def _settle_subagent_task(self, request: SubagentSpawnRequest, response_payload: dict[str, Any]) -> None:
+        """Settle the parent-visible sub-agent TaskRun after worker completion."""
+        task_store, event_store = self._task_fact_stores()
+        completed = response_payload.get("status") == "completed"
+        terminal_status = "completed" if completed else "failed"
+        summary = (
+            str(response_payload.get("result", "") or "").strip()
+            if completed
+            else str(response_payload.get("error", "") or "Sub-agent task failed.").strip()
+        )
+        updated = task_store.update_task(
+            request.task_id,
+            status=terminal_status,
+            terminal_summary=summary,
+            progress_summary=summary or ("Sub-agent completed." if completed else "Sub-agent failed."),
+            last_error="" if completed else summary,
+        )
+        if updated is None:
+            return
+        event_store.append_event(
+            request.task_id,
+            f"task.{terminal_status}",
+            message=summary[:2000] if summary else ("Sub-agent completed." if completed else "Sub-agent failed."),
+            payload={"response": dict(response_payload)},
+        )
+
     def _dispatch_subagent_request(self, request: SubagentSpawnRequest) -> asyncio.Task[None] | None:
         """Schedule one background sub-agent request onto the current event loop."""
         if request.task_id in self._subagent_tasks:
             return self._subagent_tasks[request.task_id]
+        self._ensure_subagent_task_run(request)
         task = asyncio.create_task(
             self._run_subagent_request(request),
             name=f"subagent-{request.task_id}",
@@ -1054,6 +1304,7 @@ class Gateway:
     async def _run_subagent_request(self, request: SubagentSpawnRequest) -> None:
         """Execute a sub-agent task, resume parent invocation, then notify target."""
         async with self._subagent_semaphore:
+            self._mark_subagent_task_running(request)
             await self.bus.publish_outbound(
                 OutboundMessage(
                     channel=request.channel,
@@ -1109,6 +1360,7 @@ class Gateway:
                         "error": f"failed to resume parent invocation: {exc}",
                     }
 
+            self._settle_subagent_task(request, response_payload)
             if request.notify_on_complete:
                 await self._publish_subagent_notification(request, resume_text, response_payload)
 

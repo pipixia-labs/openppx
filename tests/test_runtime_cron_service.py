@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from openppx.runtime.cron_service import CronSchedule, CronService, _compute_next_run
+from openppx.runtime.task_store import TaskEventStore, TaskStore
 
 
 class _FakeClock:
@@ -290,6 +291,108 @@ class CronServiceAsyncTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(history), 1)
             self.assertEqual(history[0].job_id, job.id)
             self.assertEqual(history[0].status, "done")
+
+    async def test_successful_callback_execution_creates_completed_cron_task_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            clock = _FakeClock(start_ms=5_000_000)
+            db_path = Path(tmp) / "tasks.db"
+            task_store = TaskStore(db_path=db_path)
+            event_store = TaskEventStore(db_path=db_path)
+
+            async def on_job(job) -> str:
+                return f"ran {job.id}"
+
+            service = CronService(
+                Path(tmp) / "cron_jobs.json",
+                on_job=on_job,
+                now_ms_fn=clock.now,
+                task_store=task_store,
+                event_store=event_store,
+            )
+            job = service.add_job(
+                name="mapped",
+                schedule=CronSchedule(kind="every", every_seconds=1),
+                message="hello",
+            )
+            clock.advance(1_001)
+
+            executed = await service.tick_once()
+            tasks = task_store.list_tasks(limit=10)
+
+            self.assertEqual(executed, 1)
+            self.assertEqual(len(tasks), 1)
+            task = tasks[0]
+            self.assertEqual(task.kind, "cron_run")
+            self.assertEqual(task.status, "completed")
+            self.assertEqual(task.session_id, f"cron:{job.id}")
+            self.assertEqual(task.runner_payload["runner"], "cron")
+            self.assertEqual(task.runner_payload["job_id"], job.id)
+            self.assertFalse(task.runner_capabilities["cancel"])
+            self.assertIn(f"ran {job.id}", task.terminal_summary)
+            self.assertEqual(
+                [event.event_type for event in event_store.list_events(task.task_id)],
+                ["task.started", "task.completed"],
+            )
+
+    async def test_failed_callback_execution_creates_failed_cron_task_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            clock = _FakeClock(start_ms=6_000_000)
+            db_path = Path(tmp) / "tasks.db"
+            task_store = TaskStore(db_path=db_path)
+            event_store = TaskEventStore(db_path=db_path)
+
+            async def on_job(job) -> str:
+                raise RuntimeError("boom")
+
+            service = CronService(
+                Path(tmp) / "cron_jobs.json",
+                on_job=on_job,
+                now_ms_fn=clock.now,
+                task_store=task_store,
+                event_store=event_store,
+            )
+            service.add_job(
+                name="broken",
+                schedule=CronSchedule(kind="every", every_seconds=1),
+                message="hello",
+            )
+            clock.advance(1_001)
+
+            executed = await service.tick_once()
+            tasks = task_store.list_tasks(limit=10)
+
+            self.assertEqual(executed, 1)
+            self.assertEqual(len(tasks), 1)
+            task = tasks[0]
+            self.assertEqual(task.kind, "cron_run")
+            self.assertEqual(task.status, "failed")
+            self.assertEqual(task.last_error, "boom")
+            self.assertEqual(
+                [event.event_type for event in event_store.list_events(task.task_id)],
+                ["task.started", "task.failed"],
+            )
+
+    async def test_no_callback_execution_does_not_create_cron_task_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            task_store = TaskStore(db_path=db_path)
+            event_store = TaskEventStore(db_path=db_path)
+            service = CronService(
+                Path(tmp) / "cron_jobs.json",
+                task_store=task_store,
+                event_store=event_store,
+            )
+            job = service.add_job(
+                name="plain-cli",
+                schedule=CronSchedule(kind="every", every_seconds=1),
+                message="hello",
+            )
+
+            result = await service.run_job_with_result(job.id)
+
+            self.assertEqual(result.reason, "no_callback")
+            self.assertIsNone(result.task_id)
+            self.assertEqual(task_store.list_tasks(limit=10), [])
 
     async def test_remove_job_appends_removed_history_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

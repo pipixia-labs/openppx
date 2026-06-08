@@ -18,6 +18,8 @@ from .executor import (
     DEFAULT_GUI_MODEL_ENV,
     CapturedScreen,
     PyAutoGuiRuntime,
+    _call_accepts_keyword,
+    _check_cancelled,
     execute_gui_action,
 )
 from .prompts import load_planner_system_prompt
@@ -327,7 +329,14 @@ class GuiTaskRunner:
                     ) from exc
         raise ValueError("planner parsing fallback reached unexpectedly")
 
-    def run(self, task: str, *, max_steps: int = 8, dry_run: bool = False) -> dict[str, Any]:
+    def run(
+        self,
+        task: str,
+        *,
+        max_steps: int = 8,
+        dry_run: bool = False,
+        cancel_token: Any | None = None,
+    ) -> dict[str, Any]:
         """Run task loop until reply or max steps."""
         _debug(
             "gui.task_runner.run.start",
@@ -381,7 +390,9 @@ class GuiTaskRunner:
             return payload
 
         for step in range(1, max_steps + 1):
+            _check_cancelled(cancel_token)
             planned = self._plan_next(task, current_plan, saved_info, history)
+            _check_cancelled(cancel_token)
             action = planned.get("action", {})
             action_type = str(action.get("type", "")).strip().lower()
             params = action.get("params", {}) if isinstance(action.get("params"), dict) else {}
@@ -475,7 +486,13 @@ class GuiTaskRunner:
                     last_error_type="missing_execute_action",
                 )
 
-            result = self._action_executor(action=action_text, dry_run=dry_run)
+            result = _run_action_executor(
+                self._action_executor,
+                action=action_text,
+                dry_run=dry_run,
+                cancel_token=cancel_token,
+            )
+            _check_cancelled(cancel_token)
             step_record = {
                 "step": step,
                 "type": "execute",
@@ -568,6 +585,7 @@ def execute_gui_task(
     planner_model: str | None = None,
     planner_api_key: str | None = None,
     planner_base_url: str | None = None,
+    cancel_token: Any | None = None,
 ) -> dict[str, Any]:
     """Run a multi-step GUI task using environment-resolved planner settings."""
     planner_provider = canonical_provider_name(
@@ -627,7 +645,22 @@ def execute_gui_task(
         max_no_progress_steps=max_no_progress_steps,
         max_repeat_actions=max_repeat_actions,
     )
-    return runner.run(task, max_steps=resolved_max_steps, dry_run=dry_run)
+    if cancel_token is None:
+        return runner.run(task, max_steps=resolved_max_steps, dry_run=dry_run)
+    return runner.run(task, max_steps=resolved_max_steps, dry_run=dry_run, cancel_token=cancel_token)
+
+
+def _run_action_executor(
+    action_executor: Callable[..., dict[str, Any]],
+    *,
+    action: str,
+    dry_run: bool,
+    cancel_token: Any | None,
+) -> dict[str, Any]:
+    """Call an action executor with a cancellation token when it supports one."""
+    if cancel_token is not None and _call_accepts_keyword(action_executor, "cancel_token"):
+        return action_executor(action=action, dry_run=dry_run, cancel_token=cancel_token)
+    return action_executor(action=action, dry_run=dry_run)
 
 
 __all__ = ["GuiTaskRunner", "execute_gui_task"]

@@ -10,6 +10,7 @@ import unittest.mock
 from pathlib import Path
 
 from openppx.gui.executor import CapturedScreen, GroundingExecutor, PyAutoGuiRuntime, execute_gui_action
+from openppx.runtime.sync_tool_proxy import SyncCancellationToken, SyncProxyCancelled
 
 
 class _FakeRuntime:
@@ -223,6 +224,26 @@ class GuiExecutorTests(unittest.TestCase):
         with unittest.mock.patch("openppx.gui.executor.time.sleep") as mocked_sleep:
             runtime.perform({"action": "wait", "time": 8})
         mocked_sleep.assert_called_once_with(0.1)
+
+    def test_runtime_wait_observes_cancel_token(self) -> None:
+        class _FakeAutoGui:
+            class _Size:
+                width = 1920
+                height = 1080
+
+            def size(self):
+                return self._Size()
+
+        runtime = PyAutoGuiRuntime(
+            pyautogui_module=_FakeAutoGui(),
+            pyperclip_module=object(),
+            max_wait_seconds=1.0,
+        )
+        cancel_token = SyncCancellationToken()
+        cancel_token.request_stop(terminal_status="interrupted", reason="stop requested")
+
+        with self.assertRaises(SyncProxyCancelled):
+            runtime.perform({"action": "wait", "time": 1}, cancel_token=cancel_token)
 
     def test_runtime_blocks_action_by_blocklist(self) -> None:
         class _FakeAutoGui:

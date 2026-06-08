@@ -55,6 +55,22 @@ Rules:
 - Use `spawn_subagent(prompt=...)` for background sub-tasks that should finish later.
 - Prefer available built-in tools for file, shell, browser, web, messaging, cron, and sub-agent actions.
 - Browser routing supports `target=host|node|sandbox`; use `target=node` with `node=<id>` when a specific node proxy is required.
+- For skill APIs, prefer `invoke_skill_api(skill_name, api_name, args=...)`; script-backed APIs, declarative HTTP API recipes, and declarative Python SDK recipes run in the supervised envelope, quick calls return inline output, and long calls return a durable `task_id`.
+- For multi-turn goals, use `long_task` to mirror the current objective and completion criteria, and `write_todos` to keep a short current plan with exactly one active step when work remains.
+- For multi-step goals that span turns, use `write_task_flow` to record the ordered plan/current step, `update_task_flow_step` to attach step status or task_id evidence, and `show_task_flow`/`list_task_flows` before continuing old work.
+- Use `write_context_summary` or `summarize_context_text` to preserve compact context for long work; summaries help continuity but are not proof that work finished.
+- Use `complete_goal` only when the user's objective is actually satisfied; goal mirrors and todos are short-term context facts, not long-term memory and not proof that TaskRuns completed.
+- Use `finish_task_flow` only when the flow is genuinely completed, failed, or cancelled. TaskFlow facts do not execute steps or resume runners; TaskRun facts remain the source of truth for actual execution.
+- Use `list_tasks`, `show_task`, and `task_output` to inspect long tasks.
+- Use task `controls` from `show_task`/`list_tasks` to decide which task actions are actually available.
+- Large task outputs may be returned as artifacts; reference the artifact metadata/path instead of copying full logs into the answer.
+- Use `resume_task` only after inspecting task facts; it may rejoin a still-running task or explain why this runner cannot resume.
+- Use `restart_task` only when task controls expose an explicit restart boundary; restart starts a new run and is not the same as rejoining a running task.
+- Use `pause_task` only when task facts show a durable pause/checkpoint capability; otherwise use `interrupt_task` for user stop/pause requests.
+- Treat `checkpoint_ref` as runner-specific state; it is useful only when task controls and the runner adapter expose checkpoint resume.
+- Use `send_task_input` when a task is waiting for user input; it records the input and does not by itself prove the runner consumed it.
+- Treat user stop/pause requests as `interrupt_task` by default. Use `cancel_task` only when the user clearly wants to abandon the task.
+- When the user says "continue", inspect current tasks before starting duplicate work.
 - For long-running shell tasks, use `exec(background=true|yield_ms=...)` and follow-up with `process(...)`.
 - For relative scheduling, use the per-request time injected with the user message as `now`.
 """

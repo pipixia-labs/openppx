@@ -10,8 +10,22 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal
 from zoneinfo import ZoneInfo
+
+from .task_store import TaskEventStore, TaskRun, TaskStore
+
+
+CRON_RUNNER_CAPABILITIES: dict[str, bool] = {
+    "status": True,
+    "cancel": False,
+    "interrupt": False,
+    "output": True,
+    "artifact": False,
+    "rejoin": False,
+    "pause": False,
+    "checkpoint": False,
+}
 
 
 def _now_ms() -> int:
@@ -201,6 +215,7 @@ class CronRunResult:
     executed: bool
     reason: Literal["ok", "error", "skipped", "disabled", "not_found", "no_callback"]
     error: str | None = None
+    task_id: str | None = None
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
@@ -219,6 +234,17 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     return None
 
 
+def _schedule_payload(schedule: CronSchedule) -> dict[str, Any]:
+    """Return a JSON-safe cron schedule payload."""
+    return {
+        "kind": schedule.kind,
+        "every_seconds": schedule.every_seconds,
+        "cron_expr": schedule.cron_expr,
+        "at_ms": schedule.at_ms,
+        "tz": schedule.tz,
+    }
+
+
 class CronService:
     """In-process scheduler with persistent local store."""
 
@@ -229,6 +255,8 @@ class CronService:
         on_job: Callable[[CronJob], Awaitable[str | None]] | None = None,
         now_ms_fn: Callable[[], int] | None = None,
         sync_poll_interval_s: float = 2.0,
+        task_store: TaskStore | None = None,
+        event_store: TaskEventStore | None = None,
     ) -> None:
         self.store_path = store_path
         self.runtime_status_path = self.store_path.parent / "cron_runtime.json"
@@ -241,9 +269,19 @@ class CronService:
         self._running = False
         self._timer_task: asyncio.Task[None] | None = None
         self._max_history_entries = 100
+        self._task_store = task_store
+        self._event_store = event_store
 
     def _now(self) -> int:
         return self._now_ms_fn()
+
+    def _task_fact_stores(self) -> tuple[TaskStore, TaskEventStore]:
+        """Return lazy task fact stores for cron run mapping."""
+        if self._task_store is None:
+            self._task_store = TaskStore()
+        if self._event_store is None:
+            self._event_store = TaskEventStore(db_path=self._task_store.db_path)
+        return self._task_store, self._event_store
 
     def _read_store_mtime_ns(self) -> int | None:
         try:
@@ -608,6 +646,8 @@ class CronService:
     async def _execute_job(self, job: CronJob) -> CronRunResult:
         started_at = self._now()
         result = CronRunResult(executed=False, reason="skipped")
+        task_run: TaskRun | None = None
+        callback_output: str | None = None
         try:
             if self.on_job is None:
                 no_callback_error = "no on_job callback configured"
@@ -615,14 +655,26 @@ class CronService:
                 job.state.last_error = no_callback_error
                 result = CronRunResult(executed=False, reason="no_callback", error=no_callback_error)
             else:
-                await self.on_job(job)
+                task_run = self._create_cron_task_run(job, started_at_ms=started_at)
+                callback_output = await self.on_job(job)
                 job.state.last_status = "ok"
                 job.state.last_error = None
-                result = CronRunResult(executed=True, reason="ok")
-        except Exception as exc:  # pragma: no cover - callback failure path
+                result = CronRunResult(
+                    executed=True,
+                    reason="ok",
+                    task_id=task_run.task_id if task_run is not None else None,
+                )
+        except Exception as exc:
             job.state.last_status = "error"
             job.state.last_error = str(exc)
-            result = CronRunResult(executed=False, reason="error", error=str(exc))
+            result = CronRunResult(
+                executed=False,
+                reason="error",
+                error=str(exc),
+                task_id=task_run.task_id if task_run is not None else None,
+            )
+        if task_run is not None:
+            self._settle_cron_task_run(task_run, result=result, callback_output=callback_output)
 
         job.state.last_run_at_ms = started_at
         job.updated_at_ms = self._now()
@@ -646,6 +698,84 @@ class CronService:
         if job.enabled:
             job.state.next_run_at_ms = _compute_next_run(job.schedule, self._now())
         return result
+
+    def _create_cron_task_run(self, job: CronJob, *, started_at_ms: int) -> TaskRun | None:
+        """Create a parent-visible task fact for one cron callback execution."""
+        try:
+            task_store, event_store = self._task_fact_stores()
+            task = task_store.create_task(
+                kind="cron_run",
+                status="running",
+                title=f"Cron job: {job.name or job.id}",
+                owner_key="cron",
+                user_id="cron",
+                thread_id=f"cron:{job.id}",
+                session_id=f"cron:{job.id}",
+                turn_id=f"cron:{job.id}:{started_at_ms}",
+                dedupe_key=f"cron:{job.id}:{started_at_ms}:{uuid.uuid4().hex[:8]}",
+                external_ref=f"cron:{job.id}:{started_at_ms}",
+                runner_payload={
+                    "runner": "cron",
+                    "job_id": job.id,
+                    "job_name": job.name,
+                    "schedule": _schedule_payload(job.schedule),
+                    "deliver": job.payload.deliver,
+                    "channel": job.payload.channel,
+                    "to": job.payload.to,
+                    "started_at_ms": started_at_ms,
+                },
+                runner_capabilities=CRON_RUNNER_CAPABILITIES,
+                resume_policy="not_resumable",
+                stop_policy="not_supported",
+                cancel_policy="not_supported",
+                progress_summary="Cron job execution started.",
+            )
+            event_store.append_event(
+                task.task_id,
+                "task.started",
+                message="Cron job execution started.",
+                payload={"job_id": job.id, "job_name": job.name, "started_at_ms": started_at_ms},
+            )
+            return task
+        except Exception:
+            return None
+
+    def _settle_cron_task_run(
+        self,
+        task: TaskRun,
+        *,
+        result: CronRunResult,
+        callback_output: str | None,
+    ) -> None:
+        """Settle the task fact for one cron callback execution."""
+        try:
+            task_store, event_store = self._task_fact_stores()
+            completed = result.reason == "ok"
+            terminal_status = "completed" if completed else "failed"
+            summary = (
+                str(callback_output or "").strip()
+                if completed
+                else str(result.error or "Cron job execution failed.").strip()
+            )
+            if not summary:
+                summary = "Cron job completed." if completed else "Cron job execution failed."
+            updated = task_store.update_task(
+                task.task_id,
+                status=terminal_status,
+                terminal_summary=summary,
+                progress_summary=summary,
+                last_error="" if completed else summary,
+            )
+            if updated is None:
+                return
+            event_store.append_event(
+                task.task_id,
+                f"task.{terminal_status}",
+                message=summary[:2000],
+                payload={"reason": result.reason, "error": result.error},
+            )
+        except Exception:
+            return
 
     async def tick_once(self) -> int:
         store = self._load_store()

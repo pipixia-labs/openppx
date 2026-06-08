@@ -128,6 +128,40 @@ DeepSeek 默认模型为 `deepseek-v4-pro`。`providers.deepseek.strictToolCalls
 
 兼容说明：历史版本中写在 `config.json.env` 的内容仍可读取；后续保存配置时会迁移到 `runtime.json`。
 
+## Skill API recipe
+
+`invoke_skill_api(skill_name, api_name, args=...)` 会把动态 skill API 放进统一的 supervised execution envelope。skill 作者不需要声明某个 API 是长任务还是短任务；调用会先在 `inline_budget_ms` 内等待，超出预算仍未完成时自动公开为 `TaskRun` 并返回 `task_id`。
+
+当前支持三类 skill API：
+
+- 脚本：`scripts/{api}.py`、`scripts/{api}.sh` 或可执行脚本。
+- HTTP recipe：`apis/{api}.json`、`apis/{api}.http.json`。
+- Python SDK recipe：`apis/{api}.python.json`、`apis/{api}.sdk.json`。
+
+Python SDK recipe 只支持声明式 module/function 调用，不执行任意字符串代码。例如：
+
+```json
+{
+  "module": "demo_sdk",
+  "function": "search",
+  "kwargs": {
+    "query": "{query}",
+    "limit": "{limit}"
+  }
+}
+```
+
+也可以使用 `callable`：
+
+```json
+{
+  "callable": "demo_sdk:Client.run",
+  "args": ["{args}"]
+}
+```
+
+Python runner 只允许 recipe 指向 skill 根目录下的本地 Python 模块；如果需要调用第三方 SDK，建议在 skill 内写一个薄 wrapper 模块，由 wrapper 自行 import SDK 依赖。`{name}` 模板会从 `args` 中取值；当整个字符串就是一个模板时会保留原始 JSON 类型。
+
 ## 常用环境变量
 
 ### Provider / Runtime
@@ -173,6 +207,8 @@ DeepSeek 默认模型为 `deepseek-v4-pro`。`providers.deepseek.strictToolCalls
 - `OPENPPX_GUI_MCP_NAME`
 - `OPENPPX_GUI_MCP_TRANSPORT`
 - `OPENPPX_GUI_BUILTIN_TOOLS_ENABLED`
+- `OPENPPX_SYNC_PROXY_INLINE_BUDGET_MS`
+- `OPENPPX_SYNC_PROXY_MAX_WORKERS`
 
 ### GUI Automation
 
@@ -264,6 +300,36 @@ DeepSeek 默认模型为 `deepseek-v4-pro`。`providers.deepseek.strictToolCalls
 | `OPENPPX_MCP_PROBE_RETRY_ATTEMPTS` | `2`（范围 1..5） | MCP 探测失败重试次数 | 网络抖动场景下提高稳定性 |
 | `OPENPPX_MCP_PROBE_RETRY_BACKOFF_SECONDS` | `0.3`（范围 0..5） | MCP 探测重试退避基数（秒） | 控制探测重试节奏 |
 
+MCP server 配置还支持 per-server 长任务 proxy 字段：
+
+- `longTaskProxy` / `long_task_proxy`：默认 `true`。开启后，openppx 会包装 ADK MCP tool，并在运行时根据 `inlineBudgetMs` 判断 inline 返回还是公开为 `TaskRun`。
+- `inlineBudgetMs` / `inline_budget_ms`：默认 `5000`，范围由 runtime clamp 到安全上限。
+- `jobProtocol` / `job_protocol`：可选。显式声明该 MCP server 的外部 job 协议；只有配置后，openppx 才会把返回 `job_id` 的 MCP 调用转为可轮询的 external `TaskRun`。
+
+`jobProtocol` 最小示例：
+
+```json
+{
+  "tools": {
+    "mcpServers": {
+      "remote": {
+        "url": "https://example.com/mcp",
+        "jobProtocol": {
+          "jobIdPath": "job_id",
+          "statusTool": "job_status",
+          "statusArgs": {"job_id": "{job_id}"},
+          "outputTool": "job_output",
+          "cancelTool": "job_cancel",
+          "pollTimeoutMs": 5000
+        }
+      }
+    }
+  }
+}
+```
+
+说明：`jobProtocol` 不用于判断某次调用会运行多久，只用于当工具结果已经显式返回 job id 后，告诉 openppx 如何查询状态、读取输出和请求取消。没有配置 `cancelTool` 时，UI/API 不会展示 `cancel_task` 为可用。
+
 ### WhatsApp Bridge 与其他运行开关
 
 | 变量 | 默认值 | 作用 | 何时需要设置 |
@@ -276,6 +342,8 @@ DeepSeek 默认模型为 `deepseek-v4-pro`。`providers.deepseek.strictToolCalls
 | `OPENPPX_DEBUG_MAX_CHARS` | `2000`（范围 200..20000） | debug 日志中单段文本最大长度 | 排查长 prompt 截断时可调大 |
 
 ### GUI Automation（动作与任务编排）
+
+GUI 自动化推荐通过 MCP GUI 服务接入；legacy builtin `computer_use` / `computer_task` 仍可作为 fallback 使用。builtin GUI 工具会进入同步工具 proxy：调用在 inline budget 内完成时按旧格式返回，超过预算时公开为 `TaskRun` 并在当前进程后台继续执行。
 
 | 变量 | 默认值 | 作用 | 何时需要设置 |
 |---|---|---|---|
@@ -296,6 +364,10 @@ DeepSeek 默认模型为 `deepseek-v4-pro`。`providers.deepseek.strictToolCalls
 | `OPENPPX_GUI_TASK_PARSE_RETRIES` | `1` | planner JSON 解析重试次数 | planner 输出不稳定时增加 |
 | `OPENPPX_GUI_TASK_MAX_NO_PROGRESS_STEPS` | `3` | 连续无进展步骤阈值，触发 `status_code=no_progress` | 防止任务空转时 |
 | `OPENPPX_GUI_TASK_MAX_REPEAT_ACTIONS` | `3` | 连续重复同动作阈值，触发 `status_code=no_progress` | 防止重复动作死循环时 |
+| `OPENPPX_SYNC_PROXY_INLINE_BUDGET_MS` | `5000`（范围 0..120000） | builtin 同步工具进入 `TaskRun` 前的 inline 等待预算 | GUI fallback 或其它同步工具经常运行较久时调小/调大 |
+| `OPENPPX_SYNC_PROXY_MAX_WORKERS` | `4`（范围 1..32） | builtin 同步工具 proxy 后台线程池并发上限 | 控制 GUI fallback 等同步工具的资源占用 |
+
+注意：sync proxy 只能监督当前进程中的同步调用。Python 线程不能被框架安全强杀，因此 builtin GUI fallback 暂不暴露通用 `interrupt_task` / `cancel_task`；需要可取消、可 checkpoint 的 GUI 执行时，应优先走 MCP/job 化 GUI runner。
 
 推荐最小配置（GUI）：
 
@@ -391,7 +463,9 @@ export OPENPPX_GUI_ALLOW_DANGEROUS_KEYS=false
           "X-OpenPPX-Session": "session_id",
           "X-OpenPPX-Request-Kind": "metadata.request_kind"
         },
-        "progressEvents": true
+        "progressEvents": true,
+        "longTaskProxy": true,
+        "inlineBudgetMs": 5000
       }
     }
   },

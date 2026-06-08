@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import json
 import os
 import tempfile
@@ -65,7 +66,7 @@ class GuiRuntime(Protocol):
     def capture(self) -> CapturedScreen:
         """Capture the current screen and return encoded payload."""
 
-    def perform(self, arguments: dict[str, Any]) -> None:
+    def perform(self, arguments: dict[str, Any], *, cancel_token: Any | None = None) -> None:
         """Perform one parsed GUI action."""
 
 
@@ -218,8 +219,9 @@ class PyAutoGuiRuntime:
         if self._allowed_actions and action not in self._allowed_actions:
             raise ValueError(f"action not in allowlist: {action}")
 
-    def perform(self, arguments: dict[str, Any]) -> None:
+    def perform(self, arguments: dict[str, Any], *, cancel_token: Any | None = None) -> None:
         """Execute one GUI action."""
+        _check_cancelled(cancel_token)
         pyautogui = self._ensure_pyautogui()
         if pyautogui is None:  # pragma: no cover - runtime dependent
             raise RuntimeError(
@@ -279,7 +281,13 @@ class PyAutoGuiRuntime:
         if action == "wait":
             requested = float(arguments.get("time", 1.0))
             wait_seconds = max(0.0, min(requested, self._max_wait_seconds))
-            time.sleep(wait_seconds)
+            remaining = wait_seconds
+            while remaining > 0:
+                _check_cancelled(cancel_token)
+                chunk = min(0.1, remaining)
+                time.sleep(chunk)
+                remaining -= chunk
+            _check_cancelled(cancel_token)
             return
 
         raise ValueError(f"Unsupported GUI action: {action}")
@@ -396,7 +404,13 @@ class GroundingExecutor:
             ),
         )
 
-    def run(self, action: str, *, dry_run: bool = False) -> dict[str, Any]:
+    def run(
+        self,
+        action: str,
+        *,
+        dry_run: bool = False,
+        cancel_token: Any | None = None,
+    ) -> dict[str, Any]:
         """Execute one GUI action request end-to-end."""
         _debug(
             "gui.executor.run.start",
@@ -411,6 +425,7 @@ class GroundingExecutor:
         )
         action_retry_count = 0
         while True:
+            _check_cancelled(cancel_token)
             before = self._runtime.capture()
             parse_attempt = 0
             last_error = ""
@@ -419,7 +434,9 @@ class GroundingExecutor:
             arguments: dict[str, Any] | None = None
 
             while parse_attempt <= self._max_parse_retries:
+                _check_cancelled(cancel_token)
                 raw_output = str(_run_coro_sync(self._ground_with_adk(before, action)) or "")
+                _check_cancelled(cancel_token)
                 _debug(
                     "gui.executor.parse_attempt",
                     {
@@ -457,7 +474,8 @@ class GroundingExecutor:
             if tool_payload is None or arguments is None:
                 raise ValueError("grounding parser did not produce action arguments")
             if not dry_run:
-                self._runtime.perform(arguments)
+                _perform_runtime_action(self._runtime, arguments, cancel_token=cancel_token)
+            _check_cancelled(cancel_token)
             after = self._runtime.capture()
             screen_changed = before.base64_png != after.base64_png
             action_name = str(arguments.get("action", "")).strip().lower()
@@ -516,6 +534,7 @@ def execute_gui_action(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
+    cancel_token: Any | None = None,
 ) -> dict[str, Any]:
     """Execute one GUI action using env or explicit grounding config."""
     resolved_model = (model or os.getenv(DEFAULT_GUI_MODEL_ENV, "")).strip()
@@ -581,7 +600,41 @@ def execute_gui_action(
         verify_screen_change=verify_screen_change,
         max_action_retries=max_action_retries,
     )
-    return executor.run(action, dry_run=dry_run)
+    if cancel_token is None:
+        return executor.run(action, dry_run=dry_run)
+    return executor.run(action, dry_run=dry_run, cancel_token=cancel_token)
+
+
+def _check_cancelled(cancel_token: Any | None) -> None:
+    """Raise if a cooperative cancellation token has been requested."""
+    if cancel_token is not None and hasattr(cancel_token, "check_cancelled"):
+        cancel_token.check_cancelled()
+
+
+def _perform_runtime_action(
+    runtime: GuiRuntime,
+    arguments: dict[str, Any],
+    *,
+    cancel_token: Any | None,
+) -> None:
+    """Call a GUI runtime while preserving compatibility with older runtimes."""
+    perform = runtime.perform
+    if cancel_token is not None and _call_accepts_keyword(perform, "cancel_token"):
+        perform(arguments, cancel_token=cancel_token)
+        return
+    perform(arguments)
+
+
+def _call_accepts_keyword(call: Any, keyword: str) -> bool:
+    """Return whether a callable accepts one keyword argument."""
+    try:
+        signature = inspect.signature(call)
+    except (TypeError, ValueError):
+        return False
+    return keyword in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
 
 
 __all__ = [

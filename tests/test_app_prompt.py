@@ -19,6 +19,7 @@ class PromptLayeringTests(unittest.TestCase):
 
         self.assertIn("You are openppx", text)
         self.assertIn("Agent-home context", text)
+        self.assertIn("Large task outputs may be returned as artifacts", text)
         self.assertNotIn("Runtime:", text)
         self.assertNotIn("Workspace:", text)
         self.assertNotIn("Available skills:", text)

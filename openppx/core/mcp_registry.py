@@ -21,6 +21,12 @@ from loguru import logger
 from mcp import StdioServerParameters
 from mcp.shared.session import ProgressFnT
 
+from ..runtime.mcp_proxy import DEFAULT_MCP_PROXY_INLINE_BUDGET_MS
+from ..runtime.mcp_proxy import normalize_mcp_proxy_inline_budget_ms
+from ..runtime.mcp_proxy import wrap_mcp_tool_for_long_tasks
+from ..runtime.mcp_job_protocol import McpJobProtocolConfig
+from ..runtime.mcp_job_protocol import normalize_mcp_job_protocol
+from ..runtime.mcp_job_protocol import register_mcp_job_tools
 from ..runtime.step_events import publish_runtime_step_event
 from .env_utils import is_enabled
 
@@ -87,6 +93,9 @@ class McpToolsetOptions:
     require_confirmation: bool
     runtime_headers: dict[str, str]
     progress_events: bool
+    long_task_proxy: bool
+    inline_budget_ms: int
+    job_protocol: McpJobProtocolConfig | None
 
 
 class ManagedMcpToolset(SafeMcpToolset):
@@ -103,10 +112,16 @@ class ManagedMcpToolset(SafeMcpToolset):
         progress_callback: Callable[..., ProgressFnT | None] | ProgressFnT | None = None,
         runtime_headers: dict[str, str] | None = None,
         progress_events: bool = False,
+        long_task_proxy: bool = True,
+        inline_budget_ms: int = DEFAULT_MCP_PROXY_INLINE_BUDGET_MS,
+        job_protocol: McpJobProtocolConfig | None = None,
     ) -> None:
         self.meta = meta
         self.runtime_headers = dict(runtime_headers or {})
         self.progress_events = bool(progress_events)
+        self.long_task_proxy = bool(long_task_proxy)
+        self.inline_budget_ms = normalize_mcp_proxy_inline_budget_ms(inline_budget_ms)
+        self.job_protocol = job_protocol
         # Runtime health state is tracked for startup diagnostics and operator hints.
         self.availability_status = "unknown"
         self.availability_message = ""
@@ -118,6 +133,24 @@ class ManagedMcpToolset(SafeMcpToolset):
             header_provider=header_provider,
             progress_callback=progress_callback,
         )
+
+    async def get_tools(self, *args: Any, **kwargs: Any) -> list[Any]:
+        """Return ADK MCP tools, optionally wrapped by openppx long-task proxy."""
+        tools = await super().get_tools(*args, **kwargs)
+        if self.job_protocol is not None:
+            register_mcp_job_tools(self.meta.name, tools)
+        if not self.long_task_proxy:
+            return tools
+        return [
+            wrap_mcp_tool_for_long_tasks(
+                tool,
+                server_name=self.meta.name,
+                transport=self.meta.transport,
+                inline_budget_ms=self.inline_budget_ms,
+                job_protocol=self.job_protocol,
+            )
+            for tool in tools
+        ]
 
     def mark_available(self) -> None:
         """Mark the MCP toolset as reachable in this process."""
@@ -190,6 +223,15 @@ def _pick(raw: dict[str, Any], snake: str, camel: str, default: Any = None) -> A
 def _pick_bool(raw: dict[str, Any], snake: str, camel: str, default: bool = False) -> bool:
     """Resolve one boolean-ish config key with snake/camel aliases."""
     return is_enabled(_pick(raw, snake, camel, default), default=default)
+
+
+def _pick_int(raw: dict[str, Any], snake: str, camel: str, default: int) -> int:
+    """Resolve one integer-ish config key with snake/camel aliases."""
+    value = _pick(raw, snake, camel, default)
+    try:
+        return int(value)
+    except Exception:
+        return default
 
 
 def _is_server_enabled(raw_cfg: dict[str, Any]) -> bool:
@@ -355,6 +397,9 @@ def _toolset_meta(toolset: SafeMcpToolset) -> dict[str, str]:
             "prefix": toolset.meta.prefix,
             "status": toolset.availability_status,
             "status_message": toolset.availability_message,
+            "long_task_proxy": "enabled" if toolset.long_task_proxy else "disabled",
+            "inline_budget_ms": str(toolset.inline_budget_ms),
+            "job_protocol": "enabled" if toolset.job_protocol is not None else "disabled",
         }
     return {
         "name": "unknown",
@@ -527,12 +572,20 @@ def _resolve_toolset_options(server_name: str, raw_cfg: dict[str, Any]) -> McpTo
     require_confirmation = _pick_bool(raw_cfg, "require_confirmation", "requireConfirmation", False)
     runtime_headers = _normalize_runtime_header_bindings(raw_cfg)
     progress_events = _pick_bool(raw_cfg, "progress_events", "progressEvents", False)
+    long_task_proxy = _pick_bool(raw_cfg, "long_task_proxy", "longTaskProxy", True)
+    inline_budget_ms = normalize_mcp_proxy_inline_budget_ms(
+        _pick_int(raw_cfg, "inline_budget_ms", "inlineBudgetMs", DEFAULT_MCP_PROXY_INLINE_BUDGET_MS)
+    )
+    job_protocol = normalize_mcp_job_protocol(_pick(raw_cfg, "job_protocol", "jobProtocol", {}))
     return McpToolsetOptions(
         tool_filter=tool_filter_list,
         prefix=prefix,
         require_confirmation=require_confirmation,
         runtime_headers=runtime_headers,
         progress_events=progress_events,
+        long_task_proxy=long_task_proxy,
+        inline_budget_ms=inline_budget_ms,
+        job_protocol=job_protocol,
     )
 
 
@@ -548,6 +601,9 @@ def build_mcp_toolsets(mcp_servers: dict[str, Any], *, log_registered: bool = Tr
     - `requireConfirmation` / `require_confirmation`
     - `runtimeHeaders` / `runtime_headers`
     - `progressEvents` / `progress_events`
+    - `longTaskProxy` / `long_task_proxy` (optional, default true)
+    - `inlineBudgetMs` / `inline_budget_ms` (optional, default 5000)
+    - `jobProtocol` / `job_protocol` (optional explicit external job protocol)
     """
     toolsets: list[ManagedMcpToolset] = []
     for server_name, raw_cfg in mcp_servers.items():
@@ -579,6 +635,9 @@ def build_mcp_toolsets(mcp_servers: dict[str, Any], *, log_registered: bool = Tr
             progress_callback=_build_progress_callback(meta, options.progress_events),
             runtime_headers=options.runtime_headers,
             progress_events=options.progress_events,
+            long_task_proxy=options.long_task_proxy,
+            inline_budget_ms=options.inline_budget_ms,
+            job_protocol=options.job_protocol,
         )
         toolsets.append(toolset)
         if log_registered:

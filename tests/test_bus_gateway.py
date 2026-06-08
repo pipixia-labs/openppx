@@ -24,6 +24,7 @@ from openppx.runtime.heartbeat_runner import HeartbeatRunRequest
 from openppx.runtime.heartbeat_status_store import read_heartbeat_status_snapshot
 from openppx.runtime.heartbeat_utils import DEFAULT_HEARTBEAT_PROMPT
 from openppx.runtime.identity_store import IdentityStore
+from openppx.runtime.task_store import TaskEventStore, TaskStore
 from openppx.tooling.registry import SubagentSpawnRequest
 
 _LOCAL_PRINCIPAL_ID = "human:local:u1"
@@ -651,6 +652,74 @@ class GatewayLoopResilienceTests(unittest.IsolatedAsyncioTestCase):
                 await task
 
 
+class GatewayTaskDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publish_task_delivery_uses_explicit_target_and_step_metadata(self) -> None:
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                if False:
+                    yield  # pragma: no cover
+
+        bus = MessageBus()
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=bus)
+
+        await gateway._publish_task_delivery(
+            {
+                "task_id": "task_done",
+                "kind": "skill_api",
+                "status": "completed",
+                "title": "demo:finish",
+                "summary": "finished output",
+                "session_id": "unused",
+                "invocation_id": "inv_1",
+                "function_call_id": "fc_1",
+                "delivery": {"channel": "slack", "chat_id": "C123"},
+            }
+        )
+
+        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
+        self.assertEqual(outbound.channel, "slack")
+        self.assertEqual(outbound.chat_id, "C123")
+        self.assertIn("Task completed", outbound.content)
+        self.assertIn("finished output", outbound.content)
+        self.assertEqual(outbound.metadata["_event_class"], "step_update")
+        self.assertEqual(outbound.metadata["_step_phase"], "finished")
+        self.assertEqual(outbound.metadata["_step_kind"], "task")
+        self.assertEqual(outbound.metadata["_task_id"], "task_done")
+        self.assertTrue(outbound.metadata["_done"])
+
+    async def test_publish_task_delivery_falls_back_to_session_route(self) -> None:
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                if False:
+                    yield  # pragma: no cover
+
+        bus = MessageBus()
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
+            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=bus)
+
+        await gateway._publish_task_delivery(
+            {
+                "task_id": "task_old",
+                "kind": "skill_api",
+                "status": "failed",
+                "title": "demo:fail",
+                "summary": "boom",
+                "session_id": _LOCAL_SESSION_ID,
+                "delivery": {},
+            }
+        )
+
+        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=0.2)
+        self.assertEqual(outbound.channel, "local")
+        self.assertEqual(outbound.chat_id, "c1")
+        self.assertIn("Task failed", outbound.content)
+        self.assertEqual(outbound.metadata["_step_phase"], "failed")
+        self.assertTrue(outbound.metadata["_important"])
+
+
 class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_and_stop_manage_cron_and_heartbeat_service(self) -> None:
         class _FakeRunner:
@@ -661,20 +730,31 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
         fake_agent = pytypes.SimpleNamespace(name="openppx")
         fake_cron_service = pytypes.SimpleNamespace(start=AsyncMock(), stop=Mock())
         fake_heartbeat_runner = pytypes.SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+        fake_task_scheduler = pytypes.SimpleNamespace(
+            start=AsyncMock(),
+            stop=AsyncMock(),
+            status=Mock(return_value={"running": True}),
+        )
         heartbeat_waker = Mock()
         with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
             with (
                 patch("openppx.app.gateway.CronService", return_value=fake_cron_service),
                 patch("openppx.app.gateway.HeartbeatRunner", return_value=fake_heartbeat_runner),
+                patch("openppx.app.gateway.TaskWakeScheduler", return_value=fake_task_scheduler) as scheduler_factory,
                 patch("openppx.app.gateway.configure_heartbeat_waker", heartbeat_waker),
             ):
                 gateway = Gateway(agent=fake_agent, app_name="openppx", bus=MessageBus())
                 await gateway.start()
                 fake_cron_service.start.assert_awaited_once()
+                fake_task_scheduler.start.assert_awaited_once()
                 fake_heartbeat_runner.start.assert_awaited_once()
+                delivery_callback = scheduler_factory.call_args.kwargs["on_delivery"]
+                self.assertIs(delivery_callback.__self__, gateway)
+                self.assertIs(delivery_callback.__func__, gateway._publish_task_delivery.__func__)
                 heartbeat_waker.assert_any_call(gateway._request_heartbeat_wake)
                 await gateway.stop()
                 fake_cron_service.stop.assert_called_once()
+                fake_task_scheduler.stop.assert_awaited_once()
                 fake_heartbeat_runner.stop.assert_awaited_once()
                 heartbeat_waker.assert_called_with(None)
 
@@ -991,6 +1071,7 @@ class GatewayCronTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(bool(status["running"]))
         self.assertFalse(bool(status["enabled"]))
         self.assertEqual(status["last_delivery"], {})
+        self.assertFalse(bool(status["task_scheduler"]["running"]))
 
     async def test_run_cron_job_delivers_outbound_when_enabled(self) -> None:
         fake_event = pytypes.SimpleNamespace(
@@ -1112,24 +1193,32 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
                     yield subagent_event
 
         fake_agent = pytypes.SimpleNamespace(name="openppx")
-        with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=bus)
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            with (
+                patch.dict(os.environ, {"OPENPPX_TASK_DB_PATH": str(db_path)}, clear=False),
+                patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())),
+            ):
+                bus = MessageBus()
+                gateway = Gateway(agent=fake_agent, app_name="openppx", bus=bus)
 
-        request = SubagentSpawnRequest(
-            task_id="subagent-abc",
-            prompt="do work",
-            user_id="u1",
-            session_id="parent-session",
-            invocation_id="inv-1",
-            function_call_id="fc-1",
-            channel="local",
-            chat_id="c1",
-            notify_on_complete=True,
-        )
-        task = gateway._dispatch_subagent_request(request)
-        self.assertIsNotNone(task)
-        await asyncio.wait_for(task, timeout=0.5)
+                request = SubagentSpawnRequest(
+                    task_id="subagent-abc",
+                    prompt="do work",
+                    user_id="u1",
+                    session_id="parent-session",
+                    invocation_id="inv-1",
+                    function_call_id="fc-1",
+                    channel="local",
+                    chat_id="c1",
+                    notify_on_complete=True,
+                )
+                task = gateway._dispatch_subagent_request(request)
+                self.assertIsNotNone(task)
+                await asyncio.wait_for(task, timeout=0.5)
+
+            task_run = TaskStore(db_path=db_path).get_task("subagent-abc")
+            task_events = TaskEventStore(db_path=db_path).list_events("subagent-abc")
 
         started = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
         completed = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
@@ -1149,6 +1238,12 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured_calls[0]["session_id"], "subagent:subagent-abc")
         self.assertEqual(captured_calls[1]["session_id"], "parent-session")
         self.assertEqual(captured_calls[1]["invocation_id"], "inv-1")
+        self.assertIsNotNone(task_run)
+        assert task_run is not None
+        self.assertEqual(task_run.kind, "subagent")
+        self.assertEqual(task_run.status, "completed")
+        self.assertEqual(task_run.runner_payload["delivery"], {"channel": "local", "chat_id": "c1"})
+        self.assertEqual([event.event_type for event in task_events], ["task.queued", "task.running", "task.completed"])
 
     async def test_background_subagent_can_skip_notification(self) -> None:
         subagent_event = pytypes.SimpleNamespace(
@@ -1164,29 +1259,84 @@ class GatewaySubagentTests(unittest.IsolatedAsyncioTestCase):
                     yield subagent_event
 
         fake_agent = pytypes.SimpleNamespace(name="openppx")
-        with patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())):
-            bus = MessageBus()
-            gateway = Gateway(agent=fake_agent, app_name="openppx", bus=bus)
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            with (
+                patch.dict(os.environ, {"OPENPPX_TASK_DB_PATH": str(db_path)}, clear=False),
+                patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())),
+            ):
+                bus = MessageBus()
+                gateway = Gateway(agent=fake_agent, app_name="openppx", bus=bus)
 
-        request = SubagentSpawnRequest(
-            task_id="subagent-def",
-            prompt="do work",
-            user_id="u1",
-            session_id="parent-session",
-            invocation_id="inv-1",
-            function_call_id="fc-2",
-            channel="local",
-            chat_id="c1",
-            notify_on_complete=False,
-        )
-        task = gateway._dispatch_subagent_request(request)
-        self.assertIsNotNone(task)
-        await asyncio.wait_for(task, timeout=0.5)
+                request = SubagentSpawnRequest(
+                    task_id="subagent-def",
+                    prompt="do work",
+                    user_id="u1",
+                    session_id="parent-session",
+                    invocation_id="inv-1",
+                    function_call_id="fc-2",
+                    channel="local",
+                    chat_id="c1",
+                    notify_on_complete=False,
+                )
+                task = gateway._dispatch_subagent_request(request)
+                self.assertIsNotNone(task)
+                await asyncio.wait_for(task, timeout=0.5)
+
+            task_run = TaskStore(db_path=db_path).get_task("subagent-def")
 
         running = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
         self.assertEqual(running.metadata.get("_step_phase"), "running")
         with self.assertRaises(asyncio.TimeoutError):
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
+        self.assertIsNotNone(task_run)
+        assert task_run is not None
+        self.assertEqual(task_run.status, "completed")
+
+    async def test_background_subagent_failure_sets_task_run_failed(self) -> None:
+        resume_event = pytypes.SimpleNamespace(content=pytypes.SimpleNamespace(parts=[]))
+
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                if str(kwargs.get("session_id", "")).startswith("subagent:"):
+                    raise RuntimeError("subagent boom")
+                yield resume_event
+
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            with (
+                patch.dict(os.environ, {"OPENPPX_TASK_DB_PATH": str(db_path)}, clear=False),
+                patch("openppx.app.gateway.create_runner", return_value=(_FakeRunner(), object())),
+            ):
+                bus = MessageBus()
+                gateway = Gateway(agent=fake_agent, app_name="openppx", bus=bus)
+
+                request = SubagentSpawnRequest(
+                    task_id="subagent-fail",
+                    prompt="do work",
+                    user_id="u1",
+                    session_id="parent-session",
+                    invocation_id="inv-1",
+                    function_call_id="fc-3",
+                    channel="local",
+                    chat_id="c1",
+                    notify_on_complete=True,
+                )
+                task = gateway._dispatch_subagent_request(request)
+                self.assertIsNotNone(task)
+                await asyncio.wait_for(task, timeout=0.5)
+
+            task_run = TaskStore(db_path=db_path).get_task("subagent-fail")
+
+        started = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        failed = await asyncio.wait_for(bus.consume_outbound(), timeout=0.5)
+        self.assertEqual(started.metadata.get("_step_phase"), "running")
+        self.assertEqual(failed.metadata.get("_step_phase"), "failed")
+        self.assertIsNotNone(task_run)
+        assert task_run is not None
+        self.assertEqual(task_run.status, "failed")
+        self.assertIn("subagent boom", task_run.last_error)
 
     def test_subagent_runner_uses_restricted_toolset_without_spawn(self) -> None:
         def read_stub(path: str) -> str:

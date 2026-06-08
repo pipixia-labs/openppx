@@ -44,8 +44,23 @@ from ..core.logging_utils import debug_logging_enabled, emit_debug
 from ..runtime.cron_helpers import cron_store_path, format_schedule
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.cron_service import CronService
+from ..runtime.context_engine import (
+    ContextSummary,
+    GoalMirror,
+    LongTaskContextStore,
+    TaskFlow,
+    TaskFlowStep,
+    TodoItem,
+)
 from ..runtime.process_sessions import get_process_session_manager
 from ..runtime.step_events import build_step_metadata, normalize_outbound_metadata
+from ..runtime.sync_tool_proxy import SyncCancellationToken
+from ..runtime.sync_tool_proxy import run_sync_callable_with_proxy
+from ..runtime.task_execution import (
+    ProcessExecutionSupervisor,
+    TaskController,
+    TaskInvocationContext,
+)
 from ..runtime.tool_context import get_route
 from ..core.security import PathGuard, SecurityPolicy, load_security_policy, validate_network_url
 from . import file_state
@@ -1798,6 +1813,510 @@ def _resolve_process_scope(scope: str | None) -> str | None:
     return None
 
 
+def _context_attr(tool_context: Any | None, name: str) -> str:
+    """Return a string attribute from an ADK tool context-like object."""
+    value = getattr(tool_context, name, None)
+    return value if isinstance(value, str) else ""
+
+
+def _session_attr(tool_context: Any | None) -> str:
+    """Return the active ADK session id from a tool context-like object."""
+    session = getattr(tool_context, "session", None)
+    value = getattr(session, "id", None)
+    return value if isinstance(value, str) else ""
+
+
+def _task_invocation_context(tool_context: Any | None) -> TaskInvocationContext:
+    """Build long-task invocation metadata from ADK tool context."""
+    user_id = _context_attr(tool_context, "user_id")
+    session_id = _session_attr(tool_context)
+    invocation_id = _context_attr(tool_context, "invocation_id")
+    function_call_id = _context_attr(tool_context, "function_call_id")
+    route_channel, route_chat_id = get_route()
+    return TaskInvocationContext(
+        user_id=user_id,
+        session_id=session_id,
+        thread_id=session_id,
+        turn_id=invocation_id,
+        channel=route_channel,
+        chat_id=route_chat_id,
+        invocation_id=invocation_id,
+        function_call_id=function_call_id,
+        tool_call_id=function_call_id,
+        owner_key=user_id,
+    )
+
+
+def _parse_skill_args(args: Any) -> Any:
+    """Parse loose skill args from tool input."""
+    if args is None:
+        return None
+    if isinstance(args, str):
+        stripped = args.strip()
+        if not stripped:
+            return None
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return {"argv": [stripped]}
+    return args
+
+
+def invoke_skill_api(
+    skill_name: str,
+    api_name: str,
+    args: Any = None,
+    inline_budget_ms: int | None = None,
+    scope: str | None = None,
+    restartable: bool = False,
+    tool_context: Any | None = None,
+) -> str:
+    """Invoke a skill API with automatic long-task handling.
+
+    Script-backed APIs, declarative HTTP API recipes, and declarative Python
+    SDK recipes run through the supervised execution envelope. Fast calls
+    return inline output. Calls that exceed ``inline_budget_ms`` are published
+    as durable `TaskRun` records and return a `task_id`.
+    """
+    effective_scope = _resolve_process_scope(scope)
+    supervisor = ProcessExecutionSupervisor()
+    result = supervisor.invoke_skill_api(
+        skill_name=skill_name,
+        api_name=api_name,
+        args=_parse_skill_args(args),
+        inline_budget_ms=inline_budget_ms,
+        context=_task_invocation_context(tool_context),
+        scope_key=effective_scope,
+        restartable=restartable,
+    )
+    payload = result.to_payload()
+    if payload.get("task_id"):
+        _emit_feedback(
+            f"Task started: {payload['task_id']}",
+            feedback_type="status",
+            status=str(payload.get("status", "running")),
+            tool_name="invoke_skill_api",
+            task_id=str(payload["task_id"]),
+            step_title="Skill task started",
+            done=False,
+            important=True,
+            extra_metadata=_tool_step_extra_metadata(
+                tool_name="invoke_skill_api",
+                step_title="Skill task started",
+                step_phase="running",
+                step_update_kind="lifecycle",
+                task_id=str(payload["task_id"]),
+                done=False,
+                important=True,
+                content=f"Task started: {payload['task_id']}",
+            ),
+        )
+    return _ret("tool.invoke_skill_api.output", _json(payload))
+
+
+def list_tasks(limit: int = 20, session_id: str | None = None, tool_context: Any | None = None) -> str:
+    """List recent long-task records for the current or specified session."""
+    resolved_session_id = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().list_tasks(session_id=resolved_session_id or None, limit=limit)
+    return _ret("tool.list_tasks.output", _json(payload))
+
+
+def show_task(task_id: str) -> str:
+    """Show one long-task status and recent events."""
+    payload = TaskController().show_task(task_id)
+    return _ret("tool.show_task.output", _json(payload))
+
+
+def task_output(task_id: str) -> str:
+    """Return retained output for one long task."""
+    payload = TaskController().task_output(task_id)
+    return _ret("tool.task_output.output", _json(payload))
+
+
+def long_task(
+    objective: str,
+    completion_criteria: str = "",
+    current_summary: str = "",
+    goal_id: str | None = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Create or update the short-term goal mirror for the current session.
+
+    Goal mirrors keep long-running user objectives visible to the model across
+    turns. They are not durable runner state and should not be used as proof
+    that a task completed.
+    """
+    session_id = _session_attr(tool_context)
+    try:
+        goal = LongTaskContextStore().upsert_goal(
+            session_id=session_id,
+            objective=objective,
+            completion_criteria=completion_criteria,
+            current_summary=current_summary,
+            goal_id=goal_id,
+        )
+    except Exception as exc:
+        return _ret("tool.long_task.output", _json({"ok": False, "error": str(exc)}))
+    return _ret("tool.long_task.output", _json({"ok": True, "goal": _goal_payload(goal)}))
+
+
+def write_todos(
+    todos: Any,
+    goal_id: str | None = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Replace the short-term todo list for the current session or goal.
+
+    ``todos`` may be a list of strings, a list of objects with ``content`` and
+    optional ``status``, or a JSON string with either shape. The runtime keeps at
+    most one todo in ``in_progress`` status.
+    """
+    session_id = _session_attr(tool_context)
+    try:
+        items = LongTaskContextStore().replace_todos(session_id=session_id, goal_id=goal_id, items=todos)
+    except Exception as exc:
+        return _ret("tool.write_todos.output", _json({"ok": False, "error": str(exc)}))
+    return _ret("tool.write_todos.output", _json({"ok": True, "items": [_todo_payload(item) for item in items]}))
+
+
+def complete_goal(
+    goal_id: str | None = None,
+    final_summary: str = "",
+    tool_context: Any | None = None,
+) -> str:
+    """Mark the current short-term goal mirror complete."""
+    session_id = _session_attr(tool_context)
+    goal = LongTaskContextStore().complete_goal(session_id=session_id, goal_id=goal_id, final_summary=final_summary)
+    if goal is None:
+        return _ret("tool.complete_goal.output", _json({"ok": False, "error": "active goal not found"}))
+    return _ret("tool.complete_goal.output", _json({"ok": True, "goal": _goal_payload(goal)}))
+
+
+def write_task_flow(
+    goal: str,
+    steps: Any,
+    flow_id: str | None = None,
+    goal_id: str | None = None,
+    status: str = "running",
+    sync_mode: str = "managed",
+    blocked_task_id: str = "",
+    wait_payload: Any = None,
+    evidence: Any = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Create or update a durable linear TaskFlow for a multi-step goal.
+
+    TaskFlow facts describe the user goal, ordered steps, current step, waiting
+    or blocked state, and evidence. They do not execute steps and do not replace
+    TaskRun facts for actual background work.
+    """
+    session_id = _session_attr(tool_context)
+    store = LongTaskContextStore()
+    try:
+        flow, flow_steps = store.upsert_flow(
+            session_id=session_id,
+            goal=goal,
+            steps=steps,
+            flow_id=flow_id,
+            goal_id=goal_id,
+            status=status,
+            sync_mode=sync_mode,
+            blocked_task_id=blocked_task_id,
+            wait_payload=wait_payload,
+            evidence=evidence,
+        )
+    except Exception as exc:
+        return _ret("tool.write_task_flow.output", _json({"ok": False, "error": str(exc)}))
+    return _ret(
+        "tool.write_task_flow.output",
+        _json({"ok": True, "flow": _flow_payload(flow), "steps": [_flow_step_payload(step) for step in flow_steps]}),
+    )
+
+
+def show_task_flow(
+    flow_id: str | None = None,
+    session_id: str | None = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Show one TaskFlow, or the active TaskFlow for the current session."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    store = LongTaskContextStore()
+    flow = store.get_flow(flow_id or "") if (flow_id or "").strip() else store.get_active_flow(resolved_session)
+    if flow is None:
+        return _ret("tool.show_task_flow.output", _json({"ok": False, "error": "active flow not found"}))
+    steps = store.list_flow_steps(flow_id=flow.flow_id)
+    return _ret(
+        "tool.show_task_flow.output",
+        _json({"ok": True, "flow": _flow_payload(flow), "steps": [_flow_step_payload(step) for step in steps]}),
+    )
+
+
+def list_task_flows(limit: int = 10, session_id: str | None = None, tool_context: Any | None = None) -> str:
+    """List recent non-terminal TaskFlow facts for the current or specified session."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    flows = LongTaskContextStore().list_flows(session_id=resolved_session, limit=limit)
+    return _ret("tool.list_task_flows.output", _json({"ok": True, "items": [_flow_payload(flow) for flow in flows]}))
+
+
+def update_task_flow_step(
+    flow_id: str,
+    step_id: str | None = None,
+    order_index: int | None = None,
+    status: str | None = None,
+    task_id: str = "",
+    evidence: Any = None,
+    last_error: str = "",
+) -> str:
+    """Update one TaskFlow step fact without executing or resuming work."""
+    try:
+        flow, step = LongTaskContextStore().update_flow_step(
+            flow_id=flow_id,
+            step_id=step_id,
+            order_index=order_index,
+            status=status,
+            task_id=task_id,
+            evidence=evidence,
+            last_error=last_error,
+        )
+    except Exception as exc:
+        return _ret("tool.update_task_flow_step.output", _json({"ok": False, "error": str(exc)}))
+    return _ret(
+        "tool.update_task_flow_step.output",
+        _json({"ok": True, "flow": _flow_payload(flow), "step": _flow_step_payload(step)}),
+    )
+
+
+def finish_task_flow(
+    flow_id: str | None = None,
+    status: str = "completed",
+    evidence: Any = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Mark a TaskFlow terminal without running or resuming any step."""
+    session_id = _session_attr(tool_context)
+    try:
+        flow = LongTaskContextStore().finish_flow(
+            session_id=session_id,
+            flow_id=flow_id,
+            status=status,
+            evidence=evidence,
+        )
+    except Exception as exc:
+        return _ret("tool.finish_task_flow.output", _json({"ok": False, "error": str(exc)}))
+    if flow is None:
+        return _ret("tool.finish_task_flow.output", _json({"ok": False, "error": "active flow not found"}))
+    return _ret("tool.finish_task_flow.output", _json({"ok": True, "flow": _flow_payload(flow)}))
+
+
+def write_context_summary(
+    content: str,
+    title: str = "",
+    summary_id: str | None = None,
+    scope: str = "session",
+    goal_id: str | None = None,
+    flow_id: str | None = None,
+    task_id: str | None = None,
+    metadata: Any = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Write a compact staged summary fact for the current session."""
+    session_id = _session_attr(tool_context)
+    try:
+        summary = LongTaskContextStore().upsert_summary(
+            session_id=session_id,
+            content=content,
+            title=title,
+            summary_id=summary_id,
+            scope=scope,
+            goal_id=goal_id,
+            flow_id=flow_id,
+            task_id=task_id,
+            source_kind="manual",
+            metadata=metadata,
+        )
+    except Exception as exc:
+        return _ret("tool.write_context_summary.output", _json({"ok": False, "error": str(exc)}))
+    return _ret("tool.write_context_summary.output", _json({"ok": True, "summary": _summary_payload(summary)}))
+
+
+def summarize_context_text(
+    text: str,
+    title: str = "",
+    summary_id: str | None = None,
+    scope: str = "session",
+    goal_id: str | None = None,
+    flow_id: str | None = None,
+    task_id: str | None = None,
+    max_chars: int = 4000,
+    tool_context: Any | None = None,
+) -> str:
+    """Store a deterministic compact summary extracted from supplied text."""
+    session_id = _session_attr(tool_context)
+    try:
+        summary = LongTaskContextStore().summarize_text(
+            session_id=session_id,
+            text=text,
+            title=title,
+            summary_id=summary_id,
+            scope=scope,
+            goal_id=goal_id,
+            flow_id=flow_id,
+            task_id=task_id,
+            max_chars=max_chars,
+        )
+    except Exception as exc:
+        return _ret("tool.summarize_context_text.output", _json({"ok": False, "error": str(exc)}))
+    return _ret("tool.summarize_context_text.output", _json({"ok": True, "summary": _summary_payload(summary)}))
+
+
+def list_context_summaries(
+    limit: int = 5,
+    session_id: str | None = None,
+    goal_id: str | None = None,
+    flow_id: str | None = None,
+    task_id: str | None = None,
+    tool_context: Any | None = None,
+) -> str:
+    """List recent staged context summaries for a session."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    summaries = LongTaskContextStore().list_summaries(
+        session_id=resolved_session,
+        goal_id=goal_id,
+        flow_id=flow_id,
+        task_id=task_id,
+        limit=limit,
+    )
+    return _ret(
+        "tool.list_context_summaries.output",
+        _json({"ok": True, "items": [_summary_payload(summary) for summary in summaries]}),
+    )
+
+
+def _goal_payload(goal: GoalMirror) -> dict[str, Any]:
+    """Return a JSON payload for one short-term goal mirror."""
+    return {
+        "goal_id": goal.goal_id,
+        "session_id": goal.session_id,
+        "status": goal.status,
+        "objective": goal.objective,
+        "completion_criteria": goal.completion_criteria,
+        "current_summary": goal.current_summary,
+        "created_at_ms": goal.created_at_ms,
+        "updated_at_ms": goal.updated_at_ms,
+        "completed_at_ms": goal.completed_at_ms,
+    }
+
+
+def _flow_payload(flow: TaskFlow) -> dict[str, Any]:
+    """Return a JSON payload for one TaskFlow."""
+    return {
+        "flow_id": flow.flow_id,
+        "session_id": flow.session_id,
+        "goal_id": flow.goal_id,
+        "status": flow.status,
+        "sync_mode": flow.sync_mode,
+        "goal": flow.goal,
+        "current_step_id": flow.current_step_id,
+        "blocked_task_id": flow.blocked_task_id,
+        "wait_payload": flow.wait_payload,
+        "evidence": flow.evidence,
+        "revision": flow.revision,
+        "created_at_ms": flow.created_at_ms,
+        "updated_at_ms": flow.updated_at_ms,
+        "completed_at_ms": flow.completed_at_ms,
+    }
+
+
+def _flow_step_payload(step: TaskFlowStep) -> dict[str, Any]:
+    """Return a JSON payload for one TaskFlow step."""
+    return {
+        "step_id": step.step_id,
+        "flow_id": step.flow_id,
+        "session_id": step.session_id,
+        "order_index": step.order_index,
+        "title": step.title,
+        "status": step.status,
+        "task_id": step.task_id,
+        "evidence": step.evidence,
+        "last_error": step.last_error,
+        "created_at_ms": step.created_at_ms,
+        "updated_at_ms": step.updated_at_ms,
+        "completed_at_ms": step.completed_at_ms,
+    }
+
+
+def _summary_payload(summary: ContextSummary) -> dict[str, Any]:
+    """Return a JSON payload for one staged context summary."""
+    return {
+        "summary_id": summary.summary_id,
+        "session_id": summary.session_id,
+        "scope": summary.scope,
+        "goal_id": summary.goal_id,
+        "flow_id": summary.flow_id,
+        "task_id": summary.task_id,
+        "title": summary.title,
+        "content": summary.content,
+        "source_kind": summary.source_kind,
+        "metadata": summary.metadata,
+        "created_at_ms": summary.created_at_ms,
+        "updated_at_ms": summary.updated_at_ms,
+    }
+
+
+def _todo_payload(item: TodoItem) -> dict[str, Any]:
+    """Return a JSON payload for one short-term todo item."""
+    return {
+        "todo_id": item.todo_id,
+        "goal_id": item.goal_id,
+        "session_id": item.session_id,
+        "order_index": item.order_index,
+        "content": item.content,
+        "status": item.status,
+        "created_at_ms": item.created_at_ms,
+        "updated_at_ms": item.updated_at_ms,
+    }
+
+
+def resume_task(task_id: str) -> str:
+    """Rejoin or explain resume limits for one long task."""
+    payload = TaskController().resume_task(task_id)
+    return _ret("tool.resume_task.output", _json(payload))
+
+
+def restart_task(task_id: str, inline_budget_ms: int | None = None, tool_context: Any | None = None) -> str:
+    """Explicitly start a new run from a recorded restartable boundary."""
+    payload = TaskController().restart_task(
+        task_id,
+        inline_budget_ms=inline_budget_ms,
+        context=_task_invocation_context(tool_context),
+    )
+    return _ret("tool.restart_task.output", _json(payload))
+
+
+def pause_task(task_id: str) -> str:
+    """Pause a task only when its runner exposes a durable pause boundary."""
+    payload = TaskController().pause_task(task_id)
+    return _ret("tool.pause_task.output", _json(payload))
+
+
+def send_task_input(task_id: str, content: str) -> str:
+    """Record user input for a waiting long task."""
+    payload = TaskController().send_task_input(task_id, content)
+    return _ret("tool.send_task_input.output", _json(payload))
+
+
+def interrupt_task(task_id: str) -> str:
+    """Request that a running task stop at the nearest explainable boundary."""
+    payload = TaskController().interrupt_task(task_id)
+    return _ret("tool.interrupt_task.output", _json(payload))
+
+
+def cancel_task(task_id: str) -> str:
+    """Cancel a task because the user explicitly abandoned it."""
+    payload = TaskController().cancel_task(task_id)
+    return _ret("tool.cancel_task.output", _json(payload))
+
+
 def exec_command(
     command: str,
     working_dir: str | None = None,
@@ -3458,6 +3977,8 @@ def computer_use(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
+    inline_budget_ms: int | None = None,
+    tool_context: Any | None = None,
 ) -> str:
     """Execute one desktop GUI action grounded from a screenshot.
 
@@ -3467,6 +3988,7 @@ def computer_use(
         model: Optional grounding model override.
         api_key: Optional API key override.
         base_url: Optional API base URL override.
+        inline_budget_ms: Optional inline wait budget before exposing a TaskRun.
 
     Returns:
         JSON result string with execution status and screenshot paths.
@@ -3479,18 +4001,37 @@ def computer_use(
             "has_model_override": bool((model or "").strip()),
             "has_api_key_override": bool((api_key or "").strip()),
             "has_base_url_override": bool((base_url or "").strip()),
+            "inline_budget_ms": inline_budget_ms,
         },
     )
     if not (action or "").strip():
         return _ret("tool.computer_use.output", _json({"ok": False, "error": "action is required"}))
 
     try:
-        result = execute_gui_action(
-            action=action.strip(),
-            dry_run=bool(dry_run),
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
+        normalized_action = action.strip()
+        cancel_token = SyncCancellationToken()
+        result = run_sync_callable_with_proxy(
+            tool_name="computer_use",
+            title=f"GUI action: {normalized_action[:80]}",
+            kind="gui_action",
+            call=lambda: execute_gui_action(
+                action=normalized_action,
+                dry_run=bool(dry_run),
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                cancel_token=cancel_token,
+            ),
+            args_for_hash={
+                "action": normalized_action,
+                "dry_run": bool(dry_run),
+                "model": model,
+                "base_url": base_url,
+            },
+            tool_context=tool_context,
+            inline_budget_ms=inline_budget_ms,
+            runner_payload={"domain": "gui", "operation": "computer_use"},
+            cancel_token=cancel_token,
         )
         return _ret("tool.computer_use.output", _json(result))
     except Exception as exc:
@@ -3504,6 +4045,8 @@ def computer_task(
     planner_model: str | None = None,
     planner_api_key: str | None = None,
     planner_base_url: str | None = None,
+    inline_budget_ms: int | None = None,
+    tool_context: Any | None = None,
 ) -> str:
     """Run a multi-step GUI task with planner + computer_use loop.
 
@@ -3514,6 +4057,7 @@ def computer_task(
         planner_model: Optional planner model override.
         planner_api_key: Optional planner key override.
         planner_base_url: Optional planner API base URL override.
+        inline_budget_ms: Optional inline wait budget before exposing a TaskRun.
 
     Returns:
         JSON result string including step records and final message/error.
@@ -3527,18 +4071,38 @@ def computer_task(
             "has_planner_model_override": bool((planner_model or "").strip()),
             "has_planner_api_key_override": bool((planner_api_key or "").strip()),
             "has_planner_base_url_override": bool((planner_base_url or "").strip()),
+            "inline_budget_ms": inline_budget_ms,
         },
     )
     if not (task or "").strip():
         return _ret("tool.computer_task.output", _json({"ok": False, "error": "task is required"}))
     try:
-        result = execute_gui_task(
-            task=task.strip(),
-            max_steps=max_steps,
-            dry_run=bool(dry_run),
-            planner_model=planner_model,
-            planner_api_key=planner_api_key,
-            planner_base_url=planner_base_url,
+        normalized_task = task.strip()
+        cancel_token = SyncCancellationToken()
+        result = run_sync_callable_with_proxy(
+            tool_name="computer_task",
+            title=f"GUI task: {normalized_task[:80]}",
+            kind="gui_task",
+            call=lambda: execute_gui_task(
+                task=normalized_task,
+                max_steps=max_steps,
+                dry_run=bool(dry_run),
+                planner_model=planner_model,
+                planner_api_key=planner_api_key,
+                planner_base_url=planner_base_url,
+                cancel_token=cancel_token,
+            ),
+            args_for_hash={
+                "task": normalized_task,
+                "max_steps": max_steps,
+                "dry_run": bool(dry_run),
+                "planner_model": planner_model,
+                "planner_base_url": planner_base_url,
+            },
+            tool_context=tool_context,
+            inline_budget_ms=inline_budget_ms,
+            runner_payload={"domain": "gui", "operation": "computer_task"},
+            cancel_token=cancel_token,
         )
         return _ret("tool.computer_task.output", _json(result))
     except Exception as exc:

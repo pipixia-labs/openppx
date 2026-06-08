@@ -15,6 +15,7 @@ from .adk_version import assert_supported_adk_major
 from .artifact_service import create_artifact_service
 from .context_cache import build_context_cache_config
 from .debug_callbacks import build_openppx_llm_plugins
+from .long_task_context import LongTaskContextPlugin
 from .memory_service import create_memory_service
 from .memory_ingest_plugin import OpenPpxMemoryIngestPlugin
 from .runner_profiles import RunnerProfile
@@ -39,6 +40,7 @@ class RunnerProfilePolicy:
     enable_step_events: bool
     enable_memory_ingest: bool
     enable_workspace_bootstrap: bool
+    enable_long_task_context: bool
     enable_model_callbacks: bool
     enable_input_file_artifacts: bool
     enable_resumability: bool
@@ -140,6 +142,7 @@ def _runner_profile_policy(profile: RunnerProfile) -> RunnerProfilePolicy:
             enable_step_events=True,
             enable_memory_ingest=True,
             enable_workspace_bootstrap=True,
+            enable_long_task_context=True,
             enable_model_callbacks=True,
             enable_input_file_artifacts=True,
             enable_resumability=True,
@@ -155,6 +158,7 @@ def _runner_profile_policy(profile: RunnerProfile) -> RunnerProfilePolicy:
             enable_step_events=False,
             enable_memory_ingest=False,
             enable_workspace_bootstrap=False,
+            enable_long_task_context=False,
             enable_model_callbacks=False,
             enable_input_file_artifacts=False,
             enable_resumability=False,
@@ -180,6 +184,8 @@ def _build_profile_plugins(*, agent: Any, policy: RunnerProfilePolicy) -> list[A
         plugins.append(OpenPpxMemoryIngestPlugin(target_agent_name=target_agent_name))
     if policy.enable_workspace_bootstrap:
         plugins.append(OpenPpxWorkspaceBootstrapPlugin(target_agent_name=target_agent_name))
+    if policy.enable_long_task_context:
+        plugins.append(LongTaskContextPlugin(target_agent_name=target_agent_name))
     if policy.enable_model_callbacks:
         plugins.extend(
             build_openppx_llm_plugins(

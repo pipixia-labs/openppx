@@ -15,6 +15,7 @@ from openppx.runtime.debug_callbacks import (
     OpenPpxProviderCompatibilityPlugin,
     OpenPpxUsageMetricsPlugin,
 )
+from openppx.runtime.long_task_context import LongTaskContextPlugin
 from openppx.runtime.memory_ingest_plugin import OpenPpxMemoryIngestPlugin
 from openppx.runtime.runner_factory import (
     _build_events_compaction_config,
@@ -75,6 +76,7 @@ class RunnerFactoryTests(unittest.TestCase):
         self.assertTrue(policy.enable_step_events)
         self.assertTrue(policy.enable_memory_ingest)
         self.assertTrue(policy.enable_workspace_bootstrap)
+        self.assertTrue(policy.enable_long_task_context)
         self.assertTrue(policy.enable_model_callbacks)
         self.assertTrue(policy.enable_input_file_artifacts)
         self.assertTrue(policy.enable_resumability)
@@ -90,6 +92,7 @@ class RunnerFactoryTests(unittest.TestCase):
         self.assertFalse(policy.enable_step_events)
         self.assertFalse(policy.enable_memory_ingest)
         self.assertFalse(policy.enable_workspace_bootstrap)
+        self.assertFalse(policy.enable_long_task_context)
         self.assertFalse(policy.enable_model_callbacks)
         self.assertFalse(policy.enable_input_file_artifacts)
         self.assertFalse(policy.enable_resumability)
@@ -124,14 +127,15 @@ class RunnerFactoryTests(unittest.TestCase):
         self.assertIs(kwargs["session_service"], sentinel_session_service)
         self.assertIs(kwargs["app"], sentinel_app)
         app_kwargs = mocked_app.call_args.kwargs
-        self.assertEqual(len(app_kwargs["plugins"]), 7)
+        self.assertEqual(len(app_kwargs["plugins"]), 8)
         self.assertIsInstance(app_kwargs["plugins"][0], OpenPpxStepEventPlugin)
         self.assertIsInstance(app_kwargs["plugins"][1], OpenPpxMemoryIngestPlugin)
         self.assertIsInstance(app_kwargs["plugins"][2], OpenPpxWorkspaceBootstrapPlugin)
-        self.assertIsInstance(app_kwargs["plugins"][3], OpenPpxProviderCompatibilityPlugin)
-        self.assertIsInstance(app_kwargs["plugins"][4], OpenPpxUsageMetricsPlugin)
-        self.assertIsInstance(app_kwargs["plugins"][5], OpenPpxDebugTracePlugin)
-        self.assertIsInstance(app_kwargs["plugins"][6], SaveFilesAsArtifactsPlugin)
+        self.assertIsInstance(app_kwargs["plugins"][3], LongTaskContextPlugin)
+        self.assertIsInstance(app_kwargs["plugins"][4], OpenPpxProviderCompatibilityPlugin)
+        self.assertIsInstance(app_kwargs["plugins"][5], OpenPpxUsageMetricsPlugin)
+        self.assertIsInstance(app_kwargs["plugins"][6], OpenPpxDebugTracePlugin)
+        self.assertIsInstance(app_kwargs["plugins"][7], SaveFilesAsArtifactsPlugin)
 
     def test_create_runner_full_profile_golden_assembly(self) -> None:
         sentinel_session_service = object()
@@ -175,6 +179,7 @@ class RunnerFactoryTests(unittest.TestCase):
                 OpenPpxStepEventPlugin,
                 OpenPpxMemoryIngestPlugin,
                 OpenPpxWorkspaceBootstrapPlugin,
+                LongTaskContextPlugin,
                 OpenPpxProviderCompatibilityPlugin,
                 OpenPpxUsageMetricsPlugin,
                 OpenPpxDebugTracePlugin,
