@@ -324,6 +324,105 @@ def _render_step_markdown(content: str, metadata: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _feishu_debug_step_cards_enabled() -> bool:
+    """Return whether Feishu should render verbose debug step cards."""
+
+    return _env_flag("OPENPPX_FEISHU_DEBUG_STEP_CARDS", "OPENPPX_FEISHU_DEBUG_CARDS")
+
+
+def _env_flag(*keys: str) -> bool:
+    """Return True when any environment variable is enabled as a boolean flag."""
+
+    for key in keys:
+        value = os.getenv(key, "").strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _feishu_routine_step_cards_enabled() -> bool:
+    """Return whether Feishu should show routine tool lifecycle step cards."""
+
+    return _env_flag("OPENPPX_FEISHU_SHOW_ROUTINE_STEP_CARDS")
+
+
+def _compact_label_for_step_phase(step_phase: str) -> tuple[str, str]:
+    """Return a compact title prefix and Feishu header template for a step phase."""
+
+    phase = step_phase.strip().lower()
+    return {
+        "started": ("Started", "blue"),
+        "running": ("Running", "blue"),
+        "waiting": ("Waiting", "orange"),
+        "finished": ("Done", "green"),
+        "failed": ("Failed", "red"),
+        "cancelled": ("Cancelled", "red"),
+        "queued": ("Queued", "wathet"),
+    }.get(phase, ("Update", "grey"))
+
+
+def _compact_preview(text: str, *, max_chars: int = 220) -> str:
+    """Return a single compact preview suitable for chat status cards."""
+
+    collapsed = " ".join((text or "").strip().split())
+    if not collapsed:
+        return ""
+    if len(collapsed) <= max_chars:
+        return collapsed
+    return collapsed[: max_chars - 1].rstrip() + "..."
+
+
+def _build_compact_step_card(content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Build a compact user-facing Feishu card for one step event.
+
+    The verbose step metadata remains in runtime events and debug cards. The
+    default chat projection keeps only the current status, human title, a short
+    detail line, and the most useful identifier.
+    """
+
+    step_title = (
+        str(metadata.get("_step_title", "")).strip()
+        or str(metadata.get("_tool_name", "")).strip()
+        or "Step"
+    )
+    step_phase = str(metadata.get("_step_phase", "")).strip() or "update"
+    task_id = str(metadata.get("_task_id", "")).strip()
+    step_id = str(metadata.get("_step_id", "")).strip()
+    session_id = str(metadata.get("_session_id", "")).strip()
+    event_class = str(metadata.get("_event_class", "")).strip() or "step_update"
+    label, template = _compact_label_for_step_phase(step_phase)
+
+    detail = _compact_preview(content)
+    if not detail:
+        detail = f"{label} {step_title}"
+
+    context_parts: list[str] = []
+    if task_id:
+        context_parts.append(f"task {task_id}")
+    elif session_id:
+        context_parts.append(f"session {session_id}")
+    elif step_id:
+        context_parts.append(f"step {step_id}")
+    if event_class == "step_output":
+        context_parts.append("output updated")
+    context_line = " | ".join(context_parts)
+
+    elements: list[dict[str, Any]] = [
+        {"tag": "div", "text": {"tag": "plain_text", "content": detail}},
+    ]
+    if context_line:
+        elements.append({"tag": "div", "text": {"tag": "plain_text", "content": context_line}})
+
+    return {
+        "config": {"wide_screen_mode": False, "enable_forward": True},
+        "header": {
+            "template": template,
+            "title": {"tag": "plain_text", "content": f"{label}: {step_title}"},
+        },
+        "elements": elements,
+    }
+
+
 def _build_step_card(content: str, metadata: dict[str, Any]) -> dict[str, Any]:
     """Build one interactive Feishu card for a structured step event."""
 
@@ -380,6 +479,39 @@ def _build_step_card(content: str, metadata: dict[str, Any]) -> dict[str, Any]:
             body_element,
         ],
     }
+
+
+def _build_step_card_payload(content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    """Build the Feishu card payload for one step event."""
+
+    if _feishu_debug_step_cards_enabled():
+        return _build_step_card(_render_step_markdown(content, metadata), metadata)
+    return _build_compact_step_card(content, metadata)
+
+
+def _should_suppress_step_card(metadata: dict[str, Any], *, has_visible_state: bool = False) -> bool:
+    """Return True for routine step events that should not interrupt chat."""
+
+    if has_visible_state:
+        return False
+    if _feishu_debug_step_cards_enabled() or _feishu_routine_step_cards_enabled():
+        return False
+    if bool(metadata.get("_important")):
+        return False
+
+    event_class = str(metadata.get("_event_class", "")).strip().lower()
+    feedback_origin = str(metadata.get("_feedback_origin", "")).strip().lower()
+    step_kind = str(metadata.get("_step_kind", "")).strip().lower()
+    update_kind = str(metadata.get("_step_update_kind", "")).strip().lower()
+    step_phase = str(metadata.get("_step_phase", "")).strip().lower()
+
+    return (
+        event_class == "step_update"
+        and feedback_origin == "adk_plugin"
+        and step_kind == "tool"
+        and update_kind == "lifecycle"
+        and step_phase in {"started", "finished"}
+    )
 
 
 class FeishuChannel(BaseChannel):
@@ -584,9 +716,17 @@ class FeishuChannel(BaseChannel):
             return ""
         step_id = str(metadata.get("_step_id", "")).strip()
         state_key = (str(msg.chat_id), step_id) if step_id else None
-        card_payload = json.dumps(_build_step_card(content, metadata), ensure_ascii=False)
+        existing = self._step_states.get(state_key) if state_key is not None else None
+        if _should_suppress_step_card(metadata, has_visible_state=bool(existing)):
+            metadata["delivery"] = {
+                "status": "suppressed",
+                "content_type": "step",
+                "message_ids": [],
+                "reason": "routine_tool_lifecycle",
+            }
+            return ""
+        card_payload = json.dumps(_build_step_card_payload(content, metadata), ensure_ascii=False)
         if state_key is not None:
-            existing = self._step_states.get(state_key)
             if existing and str(existing.get("message_id", "")).strip():
                 self._patch_message_sync(
                     str(existing["message_id"]),
@@ -903,8 +1043,10 @@ class FeishuChannel(BaseChannel):
             return
         content = msg.content or ""
         if normalized.event_class in {"step_update", "step_output"}:
-            content = _render_step_markdown(content, metadata)
             text_id = self._send_step_cards_sync(msg, content, metadata)
+            delivery = metadata.get("delivery")
+            if isinstance(delivery, dict) and delivery.get("status") == "suppressed":
+                return
         else:
             detected_format = _detect_msg_format(content)
             if detected_format == "text":
