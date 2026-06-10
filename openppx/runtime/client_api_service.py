@@ -343,6 +343,25 @@ def _event_preview_text(event: dict[str, Any]) -> str:
     return " ".join(texts).strip()
 
 
+def _compact_session_title(text: str, *, limit: int = 64) -> str:
+    """Return a single-line session title derived from user-visible text."""
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _session_title_from_events(events: list[dict[str, Any]]) -> str:
+    """Return the first user message as the stable client-facing session title."""
+    for event in events:
+        if str(event.get("author") or "").strip().lower() != "user":
+            continue
+        title = _compact_session_title(_event_preview_text(event))
+        if title:
+            return title
+    return ""
+
+
 def _debug(tag: str, payload: Any) -> None:
     """Emit one structured debug log when client-api debugging is enabled."""
 
@@ -748,18 +767,23 @@ class ClientApiCoordinator:
             service = create_session_service(SessionConfig(db_url=_session_db_url_for_config_path(config_path)))
             async with service:
                 response = await service.list_sessions(app_name="openppx", user_id=user_id)
-            return [
-                {
-                    "id": session.id,
-                    "last_update_time": session.last_update_time,
-                    "last_preview": (
-                        _event_preview_text(session.events[-1].model_dump(mode="json"))
-                        if session.events
-                        else ""
-                    ),
-                }
-                for session in response.sessions
-            ]
+                items: list[dict[str, Any]] = []
+                for session in response.sessions:
+                    detail = await service.get_session(
+                        app_name="openppx",
+                        user_id=user_id,
+                        session_id=session.id,
+                    )
+                    events = [event.model_dump(mode="json") for event in (detail.events if detail else [])]
+                    items.append(
+                        {
+                            "id": session.id,
+                            "last_update_time": (detail.last_update_time if detail else session.last_update_time),
+                            "title": _session_title_from_events(events),
+                            "last_preview": _event_preview_text(events[-1]) if events else "",
+                        }
+                    )
+                return items
 
         return asyncio.run(_load())
 
@@ -1023,7 +1047,7 @@ class ClientApiCoordinator:
                     "id": session_id,
                     "agent_id": agent_id,
                     "subject_principal_id": subject_principal_id,
-                    "title": f"Session {session_id[:8]}",
+                    "title": str(session.get("title") or "").strip() or f"Session {session_id[:8]}",
                     "updated_at": updated_at,
                     "last_message_preview": str(session.get("last_preview") or "OpenPPX session"),
                     "archived": False,
@@ -1088,9 +1112,9 @@ class ClientApiCoordinator:
                     "id": session_id,
                     "agent_id": agent_id,
                     "subject_principal_id": requester.principal_id,
-                    "title": "New local session",
+                    "title": "新对话",
                     "updated_at": updated_at,
-                    "last_message_preview": "Start a task for this agent.",
+                    "last_message_preview": "",
                     "archived": False,
                 }
             }

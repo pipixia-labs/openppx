@@ -428,6 +428,25 @@ def test_client_api_reads_sessions_directly_without_worker(tmp_path: Path, monke
             await service.append_event(
                 session=session,
                 event=Event(
+                    invocation_id="inv-user",
+                    author="user",
+                    content=types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_text(
+                                text=(
+                                    "Current request time: 2026-06-10T16:32:17+08:00 (CST)\n"
+                                    "Use this as the reference 'now' for relative time expressions in this message.\n\n"
+                                    "帮我查一下深圳到青岛的火车和费用"
+                                )
+                            )
+                        ],
+                    ),
+                ),
+            )
+            await service.append_event(
+                session=session,
+                event=Event(
                     invocation_id="inv-1",
                     author="assistant",
                     content=types.Content(role="model", parts=[types.Part.from_text(text="Hello direct path")]),
@@ -447,10 +466,12 @@ def test_client_api_reads_sessions_directly_without_worker(tmp_path: Path, monke
     sessions = coordinator.list_sessions("writer")
     assert sessions["ok"] is True
     assert sessions["data"]["items"][0]["id"] == "writer-seeded"
+    assert sessions["data"]["items"][0]["title"] == "帮我查一下深圳到青岛的火车和费用"
 
     messages = coordinator.get_session_messages("writer-seeded")
     assert messages["ok"] is True
-    assert messages["data"]["items"][0]["parts"][0]["text"] == "Hello direct path"
+    assert messages["data"]["items"][0]["parts"][0]["text"] == "帮我查一下深圳到青岛的火车和费用"
+    assert messages["data"]["items"][1]["parts"][0]["text"] == "Hello direct path"
 
 
 def test_list_sessions_uses_short_cache(tmp_path: Path, monkeypatch) -> None:

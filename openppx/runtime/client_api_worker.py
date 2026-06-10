@@ -39,8 +39,45 @@ def _event_preview_text(event: object) -> str:
             continue
         text = getattr(part, "text", None)
         if isinstance(text, str) and text.strip():
-            texts.append(text.strip())
+            normalized_text = _strip_request_time_prefix(text)
+            if normalized_text.strip():
+                texts.append(normalized_text.strip())
     return " ".join(texts).strip()
+
+
+def _strip_request_time_prefix(text: str) -> str:
+    """Remove runtime-injected request-time guidance from persisted user text."""
+    stripped = text.strip()
+    if not stripped.startswith("Current request time: "):
+        return text
+
+    lines = stripped.splitlines()
+    if len(lines) < 2 or "Use this as the reference 'now' for relative time expressions" not in lines[1]:
+        return text
+
+    body_lines = lines[2:]
+    while body_lines and not body_lines[0].strip():
+        body_lines = body_lines[1:]
+    return "\n".join(body_lines).strip()
+
+
+def _compact_session_title(text: str, *, limit: int = 64) -> str:
+    """Return a single-line session title derived from user-visible text."""
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _session_title(events: list[object]) -> str:
+    """Return the first user message as the client-facing session title."""
+    for event in events:
+        if str(getattr(event, "author", "") or "").strip().lower() != "user":
+            continue
+        title = _compact_session_title(_event_preview_text(event))
+        if title:
+            return title
+    return ""
 
 
 async def _run() -> int:
@@ -86,20 +123,29 @@ async def _run() -> int:
 
     if args.action == "list_sessions":
         response = await session_service.list_sessions(app_name=app_name, user_id=args.user_id)
+        sessions: list[dict[str, Any]] = []
+        for session in response.sessions:
+            detail = await session_service.get_session(
+                app_name=app_name,
+                user_id=args.user_id,
+                session_id=session.id,
+            )
+            events = list(detail.events if detail else [])
+            sessions.append(
+                {
+                    "id": session.id,
+                    "app_name": session.app_name,
+                    "user_id": session.user_id,
+                    "last_update_time": detail.last_update_time if detail else session.last_update_time,
+                    "event_count": len(events),
+                    "title": _session_title(events),
+                    "last_preview": _event_preview_text(events[-1]) if events else "",
+                }
+            )
         _emit(
             {
                 "type": "session_list",
-                "sessions": [
-                    {
-                        "id": session.id,
-                        "app_name": session.app_name,
-                        "user_id": session.user_id,
-                        "last_update_time": session.last_update_time,
-                        "event_count": len(session.events),
-                        "last_preview": _event_preview_text(session.events[-1]) if session.events else "",
-                    }
-                    for session in response.sessions
-                ],
+                "sessions": sessions,
             }
         )
         return 0
