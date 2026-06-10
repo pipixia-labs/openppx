@@ -5,6 +5,8 @@
 
 ## ✨ News
 
+- 2026-06-10: v0.4 released with supervised long-task execution, persistent task runs, pause/resume/cancel controls, checkpoint and provider migration support, client API session titles based on the first user message, and lower-noise Feishu task updates.
+
 - 2026-06-02: v0.3 released with the ADK 2.1 runtime upgrade, profile-based runner lifecycle, deterministic and live eval baselines, MCP runtime headers/progress events, native high-risk tool confirmation, prompt layering with optional context cache, and ADK-native session rewind.
 
 - 2026-04-18: v0.2.1 released with Weixin and WeCom channel support, improved Feishu guidance, gateway streaming and realtime feedback, local client API service, and the new privilege-level-based agent lifecycle.
