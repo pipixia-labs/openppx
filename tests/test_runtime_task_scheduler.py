@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from openppx.runtime.checkpoint_schema import TASK_CHECKPOINT_ENVELOPE_SCHEMA, TASK_CHECKPOINT_METADATA_KEY
 from openppx.runtime.task_scheduler import TaskWakeScheduler
-from openppx.runtime.task_store import TaskDeliveryStore, TaskStore
+from openppx.runtime.task_store import TaskCheckpointStore, TaskDeliveryStore, TaskStore
 from openppx.tooling.registry import invoke_skill_api, list_tasks, show_task
 
 
@@ -175,6 +178,213 @@ class TaskWakeSchedulerTests(unittest.TestCase):
             self.assertEqual(delivered_item["delivery_summary"]["delivered_count"], 1)
             self.assertEqual(len(delivered_payloads), 1)
             self.assertEqual(delivered_payloads[0]["task_id"], task_id)
+
+    def test_drain_due_tasks_syncs_completed_gui_job_and_records_delivery_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            store = TaskStore(db_path=db_path)
+            deliveries = TaskDeliveryStore(db_path=store.db_path)
+            task = store.create_task(
+                kind="gui_task",
+                status="running",
+                title="GUI workflow",
+                external_ref="gui_job_done",
+                runner_payload={
+                    "runner": "gui_job",
+                    "job_id": "gui_job_done",
+                    "delivery": {"channel": "local", "chat_id": "tasks"},
+                },
+                runner_capabilities={"status": True, "output": True, "pause": True, "checkpoint": True},
+                resume_policy="checkpoint",
+                progress_summary="GUI job running.",
+            )
+            delivered_payloads: list[dict[str, object]] = []
+            scheduler = TaskWakeScheduler(
+                task_store=store,
+                delivery_store=deliveries,
+                lease_ms=2_000,
+                owner="test-worker",
+                on_delivery=lambda payload: delivered_payloads.append(payload),
+            )
+
+            with mock.patch(
+                "openppx.runtime.task_execution.gui_task_job_status",
+                return_value={
+                    "ok": True,
+                    "job_id": "gui_job_done",
+                    "status": "completed",
+                    "summary": "GUI job completed.",
+                    "result": {"final_summary": "GUI job completed."},
+                    "checkpoint": {},
+                },
+            ):
+                first = asyncio.run(scheduler.drain_due_tasks())
+                second = asyncio.run(scheduler.drain_due_tasks())
+
+            updated = store.get_task(task.task_id)
+            self.assertIsNotNone(updated)
+            assert updated is not None
+            self.assertEqual(updated.status, "completed")
+            self.assertEqual(first.deliveries, 1)
+            self.assertEqual(second.deliveries, 0)
+            self.assertEqual(deliveries.list_deliveries(task.task_id)[0].delivery_type, "task.completed")
+            self.assertEqual(delivered_payloads[0]["status"], "completed")
+
+    def test_drain_due_tasks_syncs_paused_gui_job_records_checkpoint_and_delivery_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            store = TaskStore(db_path=db_path)
+            deliveries = TaskDeliveryStore(db_path=store.db_path)
+            task = store.create_task(
+                kind="gui_task",
+                status="running",
+                title="GUI workflow",
+                external_ref="gui_job_paused",
+                runner_payload={
+                    "runner": "gui_job",
+                    "job_id": "gui_job_paused",
+                    "delivery": {"channel": "local", "chat_id": "tasks"},
+                },
+                runner_capabilities={"status": True, "output": True, "pause": True, "checkpoint": True, "resume": True},
+                resume_policy="checkpoint",
+                progress_summary="GUI job running.",
+            )
+            checkpoint = {
+                "task": "GUI workflow",
+                "current_plan": "continue from step 2",
+                "history": [{"step": 1, "type": "execute"}],
+                "next_step": 2,
+            }
+            delivered_payloads: list[dict[str, object]] = []
+            scheduler = TaskWakeScheduler(
+                task_store=store,
+                delivery_store=deliveries,
+                lease_ms=2_000,
+                owner="test-worker",
+                on_delivery=lambda payload: delivered_payloads.append(payload),
+            )
+
+            with mock.patch(
+                "openppx.runtime.task_execution.gui_task_job_status",
+                return_value={
+                    "ok": True,
+                    "job_id": "gui_job_paused",
+                    "status": "paused",
+                    "summary": "Paused at step 1.",
+                    "result": {},
+                    "checkpoint": checkpoint,
+                },
+            ):
+                first = asyncio.run(scheduler.drain_due_tasks())
+                second = asyncio.run(scheduler.drain_due_tasks())
+
+            updated = store.get_task(task.task_id)
+            checkpoints = TaskCheckpointStore(db_path=store.db_path).list_checkpoints(task.task_id)
+            self.assertIsNotNone(updated)
+            assert updated is not None
+            self.assertEqual(updated.status, "paused")
+            self.assertTrue(updated.checkpoint_ref)
+            self.assertEqual(first.deliveries, 1)
+            self.assertEqual(second.deliveries, 0)
+            self.assertEqual(deliveries.list_deliveries(task.task_id)[0].delivery_type, "task.paused")
+            self.assertEqual(delivered_payloads[0]["status"], "paused")
+            self.assertEqual(delivered_payloads[0]["delivery"], {"channel": "local", "chat_id": "tasks"})
+            self.assertEqual(checkpoints[0].payload["task"], checkpoint["task"])
+            self.assertEqual(checkpoints[0].payload["history"], checkpoint["history"])
+            self.assertEqual(checkpoints[0].payload["next_step"], checkpoint["next_step"])
+            self.assertEqual(
+                checkpoints[0].payload[TASK_CHECKPOINT_METADATA_KEY]["schema"],
+                TASK_CHECKPOINT_ENVELOPE_SCHEMA,
+            )
+
+    def test_drain_due_tasks_delivers_gui_job_stale_then_lost_once_each(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            store = TaskStore(db_path=db_path)
+            deliveries = TaskDeliveryStore(db_path=store.db_path)
+            task = store.create_task(
+                kind="gui_task",
+                status="running",
+                title="GUI workflow",
+                external_ref="gui_job_missing",
+                runner_payload={
+                    "runner": "gui_job",
+                    "job_id": "gui_job_missing",
+                    "delivery": {"channel": "local", "chat_id": "tasks"},
+                },
+                runner_capabilities={"status": True, "output": True, "pause": True, "checkpoint": True},
+                resume_policy="checkpoint",
+                progress_summary="GUI job running.",
+            )
+            delivered_payloads: list[dict[str, object]] = []
+            scheduler = TaskWakeScheduler(
+                task_store=store,
+                delivery_store=deliveries,
+                stale_lost_after_ms=0,
+                lease_ms=2_000,
+                owner="test-worker",
+                on_delivery=lambda payload: delivered_payloads.append(payload),
+            )
+
+            with mock.patch(
+                "openppx.runtime.task_execution.gui_task_job_status",
+                return_value={"ok": False, "error": "GUI job is not attached to this process."},
+            ):
+                first = asyncio.run(scheduler.drain_due_tasks())
+                second = asyncio.run(scheduler.drain_due_tasks())
+                third = asyncio.run(scheduler.drain_due_tasks())
+
+            updated = store.get_task(task.task_id)
+            delivery_types = [delivery.delivery_type for delivery in deliveries.list_deliveries(task.task_id)]
+            self.assertIsNotNone(updated)
+            assert updated is not None
+            self.assertEqual(updated.status, "lost")
+            self.assertEqual(first.deliveries, 1)
+            self.assertEqual(second.deliveries, 1)
+            self.assertEqual(third.deliveries, 0)
+            self.assertEqual(delivery_types, ["task.stale", "task.lost"])
+            self.assertEqual([payload["status"] for payload in delivered_payloads], ["stale", "lost"])
+
+    def test_checkpoint_retention_cleanup_runs_only_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            store = TaskStore(db_path=db_path)
+            checkpoints = TaskCheckpointStore(db_path=store.db_path)
+            task = store.create_task(kind="browser", status="paused", title="demo")
+            records = [
+                checkpoints.record_checkpoint(task_id=task.task_id, checkpoint_id=f"ckpt-{index}")
+                for index in range(1, 5)
+            ]
+            store.update_task(task.task_id, checkpoint_ref=records[0].checkpoint_id)
+            with sqlite3.connect(db_path) as conn:
+                for index, record in enumerate(records, start=1):
+                    conn.execute(
+                        "UPDATE task_checkpoints SET created_at_ms = ? WHERE checkpoint_id = ?",
+                        (index * 1000, record.checkpoint_id),
+                    )
+
+            disabled = TaskWakeScheduler(task_store=store, checkpoint_retention_enabled=False)
+            disabled_result = asyncio.run(disabled.drain_due_tasks())
+
+            self.assertEqual(disabled_result.checkpoint_retention_deleted, 0)
+            self.assertEqual(len(checkpoints.list_checkpoints(task.task_id)), 4)
+
+            enabled = TaskWakeScheduler(
+                task_store=store,
+                checkpoint_retention_enabled=True,
+                checkpoint_retention_interval_seconds=1,
+                checkpoint_retention_older_than_ms=0,
+                checkpoint_retention_keep_latest_per_task=1,
+                checkpoint_retention_batch_size=10,
+            )
+            first = asyncio.run(enabled.drain_due_tasks())
+            second = asyncio.run(enabled.drain_due_tasks())
+            remaining_ids = {checkpoint.checkpoint_id for checkpoint in checkpoints.list_checkpoints(task.task_id)}
+
+            self.assertEqual(first.checkpoint_retention_deleted, 2)
+            self.assertEqual(second.checkpoint_retention_deleted, 0)
+            self.assertEqual(enabled.status()["last_result"]["checkpoint_retention_deleted"], 0)
+            self.assertEqual(remaining_ids, {records[0].checkpoint_id, records[3].checkpoint_id})
 
     def _prepare_skill(self, tmp: str, api_name: str, script: str) -> None:
         root = Path(tmp)

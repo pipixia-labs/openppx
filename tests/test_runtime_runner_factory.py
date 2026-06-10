@@ -19,9 +19,11 @@ from openppx.runtime.long_task_context import LongTaskContextPlugin
 from openppx.runtime.memory_ingest_plugin import OpenPpxMemoryIngestPlugin
 from openppx.runtime.runner_factory import (
     _build_events_compaction_config,
+    _build_events_summarizer,
     _runner_profile_policy,
     create_runner,
 )
+from openppx.runtime.staged_events_summarizer import OpenPpxStagedEventsSummarizer
 from openppx.runtime.step_events import OpenPpxStepEventPlugin
 from openppx.runtime.workspace_bootstrap import OpenPpxWorkspaceBootstrapPlugin
 
@@ -66,6 +68,35 @@ class RunnerFactoryTests(unittest.TestCase):
         self.assertIsNotNone(cfg)
         self.assertIsNone(cfg.token_threshold)
         self.assertIsNone(cfg.event_retention_size)
+
+    def test_build_events_summarizer_defaults_to_openppx_staged(self) -> None:
+        fake_agent = type("FakeAgent", (), {"canonical_model": object()})()
+
+        summarizer = _build_events_summarizer(fake_agent)
+
+        self.assertIsInstance(summarizer, OpenPpxStagedEventsSummarizer)
+
+    def test_build_events_summarizer_allows_adk_default(self) -> None:
+        os.environ["OPENPPX_COMPACTION_SUMMARIZER"] = "adk_default"
+        fake_agent = type("FakeAgent", (), {"canonical_model": object()})()
+
+        summarizer = _build_events_summarizer(fake_agent)
+
+        self.assertIsNone(summarizer)
+
+    def test_build_events_summarizer_supports_strict_marker_quality_mode(self) -> None:
+        os.environ["OPENPPX_COMPACTION_REQUIRE_MARKERS"] = "1"
+        os.environ["OPENPPX_COMPACTION_MAX_RATIO"] = "0.7"
+        os.environ["OPENPPX_COMPACTION_QUALITY_LOG_PATH"] = "/tmp/openppx-summary-quality.jsonl"
+        fake_agent = type("FakeAgent", (), {"canonical_model": object()})()
+
+        summarizer = _build_events_summarizer(fake_agent)
+
+        self.assertIsInstance(summarizer, OpenPpxStagedEventsSummarizer)
+        assert isinstance(summarizer, OpenPpxStagedEventsSummarizer)
+        self.assertTrue(summarizer.require_marker_preservation)
+        self.assertEqual(summarizer.max_compression_ratio, 0.7)
+        self.assertEqual(summarizer.quality_log_path, "/tmp/openppx-summary-quality.jsonl")
 
     def test_full_profile_policy_enables_persistent_lifecycle(self) -> None:
         policy = _runner_profile_policy("full")

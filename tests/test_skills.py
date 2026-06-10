@@ -64,6 +64,17 @@ class SkillRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             registry.read_skill("does-not-exist")
 
+    def test_read_skill_tool_returns_structured_error_for_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_AGENT_HOME"] = tmp
+
+            payload = json.loads(read_skill("does-not-exist"))
+
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["error_type"], "ValueError")
+            self.assertIn("Skill 'does-not-exist' not found.", payload["error"])
+            self.assertIn("available_skills", payload)
+
     def test_summary_escapes_xml_sensitive_chars(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)

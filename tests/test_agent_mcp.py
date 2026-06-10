@@ -32,10 +32,11 @@ class AgentMcpTests(unittest.TestCase):
 
     def test_build_tools_keeps_builtin_gui_tools_enabled_by_default(self) -> None:
         from openppx import agent
-        from openppx.tooling.registry import computer_task, computer_use, glob, grep
+        from openppx.tooling.registry import computer_task, computer_use, glob, grep, start_gui_task
 
         with patch("openppx.app.agent.build_mcp_toolsets_from_env", return_value=[]):
             tools = agent._build_tools()
+        self.assertIn(start_gui_task, tools)
         self.assertIn(computer_task, tools)
         self.assertIn(computer_use, tools)
         self.assertIn(glob, tools)
@@ -43,11 +44,12 @@ class AgentMcpTests(unittest.TestCase):
 
     def test_build_tools_can_disable_builtin_gui_tools(self) -> None:
         from openppx import agent
-        from openppx.tooling.registry import computer_task, computer_use
+        from openppx.tooling.registry import computer_task, computer_use, start_gui_task
 
         with patch.dict(os.environ, {"OPENPPX_GUI_BUILTIN_TOOLS_ENABLED": "0"}, clear=False):
             with patch("openppx.app.agent.build_mcp_toolsets_from_env", return_value=[]):
                 tools = agent._build_tools()
+        self.assertNotIn(start_gui_task, tools)
         self.assertNotIn(computer_task, tools)
         self.assertNotIn(computer_use, tools)
 
@@ -69,7 +71,15 @@ class AgentMcpTests(unittest.TestCase):
 
     def test_build_tools_limits_low_to_read_only_tools(self) -> None:
         from openppx import agent
-        from openppx.tooling.registry import read_file, list_dir, write_file, exec_command, web_search
+        from openppx.tooling.registry import (
+            exec_command,
+            list_dir,
+            list_skill_api_runners,
+            read_file,
+            task_control_snapshot,
+            web_search,
+            write_file,
+        )
 
         with patch.dict(
             os.environ,
@@ -81,6 +91,8 @@ class AgentMcpTests(unittest.TestCase):
 
         self.assertIn(read_file, tools)
         self.assertIn(list_dir, tools)
+        self.assertIn(list_skill_api_runners, tools)
+        self.assertIn(task_control_snapshot, tools)
         self.assertNotIn(write_file, tools)
         self.assertNotIn(exec_command, tools)
         self.assertNotIn(web_search, tools)
@@ -105,7 +117,18 @@ class AgentMcpTests(unittest.TestCase):
 
     def test_build_tools_keeps_high_full_tool_access(self) -> None:
         from openppx import agent
-        from openppx.tooling.registry import exec_command, web_search, message, message_file
+        from openppx.tooling.registry import (
+            check_browser_remote_job_protocol,
+            dispatch_task_action,
+            evaluate_staged_summary_quality_cases,
+            exec_command,
+            list_skill_api_runners,
+            message,
+            message_file,
+            summarize_staged_summary_quality_log,
+            task_control_snapshot,
+            web_search,
+        )
 
         with patch.dict(
             os.environ,
@@ -120,6 +143,12 @@ class AgentMcpTests(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("message", names)
         self.assertIn("message_file", names)
+        self.assertIn(check_browser_remote_job_protocol, tools)
+        self.assertIn(dispatch_task_action, tools)
+        self.assertIn(evaluate_staged_summary_quality_cases, tools)
+        self.assertIn(list_skill_api_runners, tools)
+        self.assertIn(summarize_staged_summary_quality_log, tools)
+        self.assertIn(task_control_snapshot, tools)
 
 
 if __name__ == "__main__":

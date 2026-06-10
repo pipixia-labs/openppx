@@ -20,6 +20,11 @@ from .memory_service import create_memory_service
 from .memory_ingest_plugin import OpenPpxMemoryIngestPlugin
 from .runner_profiles import RunnerProfile
 from .session_service import create_session_service
+from .staged_events_summarizer import (
+    DEFAULT_STAGED_SUMMARY_MAX_CHARS,
+    DEFAULT_STAGED_SUMMARY_MIN_SOURCE_CHARS,
+    OpenPpxStagedEventsSummarizer,
+)
 from .step_events import OpenPpxStepEventPlugin
 from .workspace_bootstrap import OpenPpxWorkspaceBootstrapPlugin
 
@@ -83,7 +88,21 @@ def _parse_positive_int(raw: str | None) -> int | None:
     return value if value > 0 else None
 
 
-def _build_events_compaction_config() -> EventsCompactionConfig | None:
+def _parse_positive_float(raw: str | None) -> float | None:
+    """Parse a strictly positive float from env input."""
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        value = float(stripped)
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _build_events_compaction_config(*, summarizer: Any | None = None) -> EventsCompactionConfig | None:
     """Build ADK events compaction config from environment variables."""
     enabled = _parse_enabled(
         os.getenv("OPENPPX_COMPACTION_ENABLED"),
@@ -105,6 +124,8 @@ def _build_events_compaction_config() -> EventsCompactionConfig | None:
         "compaction_interval": max(1, interval),
         "overlap_size": overlap,
     }
+    if summarizer is not None:
+        kwargs["summarizer"] = summarizer
 
     token_threshold = _parse_positive_int(os.getenv("OPENPPX_COMPACTION_TOKEN_THRESHOLD"))
     event_retention_size = _parse_non_negative_int(
@@ -121,6 +142,36 @@ def _build_events_compaction_config() -> EventsCompactionConfig | None:
         kwargs["event_retention_size"] = event_retention_size
 
     return EventsCompactionConfig(**kwargs)
+
+
+def _build_events_summarizer(agent: Any) -> Any | None:
+    """Build the configured ADK event summarizer for compaction."""
+    mode = os.getenv("OPENPPX_COMPACTION_SUMMARIZER", "staged").strip().lower()
+    if mode in {"", "staged", "openppx", "openppx_staged"}:
+        llm = getattr(agent, "canonical_model", None)
+        if llm is None:
+            return None
+        max_chars = _parse_positive_int(os.getenv("OPENPPX_COMPACTION_SUMMARY_MAX_CHARS"))
+        min_source_chars = _parse_non_negative_int(
+            os.getenv("OPENPPX_COMPACTION_SUMMARY_MIN_SOURCE_CHARS"),
+            default=DEFAULT_STAGED_SUMMARY_MIN_SOURCE_CHARS,
+        )
+        require_marker_preservation = _parse_enabled(
+            os.getenv("OPENPPX_COMPACTION_REQUIRE_MARKERS"),
+            default=False,
+        )
+        max_compression_ratio = _parse_positive_float(os.getenv("OPENPPX_COMPACTION_MAX_RATIO"))
+        return OpenPpxStagedEventsSummarizer(
+            llm=llm,
+            max_summary_chars=max_chars or DEFAULT_STAGED_SUMMARY_MAX_CHARS,
+            min_source_chars=min_source_chars,
+            max_compression_ratio=max_compression_ratio or 1.0,
+            require_marker_preservation=require_marker_preservation,
+            quality_log_path=os.getenv("OPENPPX_COMPACTION_QUALITY_LOG_PATH"),
+        )
+    if mode in {"adk_default", "default", "llm_event_summarizer"}:
+        return None
+    return None
 
 
 def _normalize_runner_profile(profile: str | None) -> RunnerProfile:
@@ -206,7 +257,9 @@ def _build_profile_app(*, agent: Any, app_name: str, policy: RunnerProfilePolicy
 
     events_compaction_config = None
     if policy.enable_events_compaction:
-        events_compaction_config = _build_events_compaction_config()
+        events_compaction_config = _build_events_compaction_config(
+            summarizer=_build_events_summarizer(agent),
+        )
 
     context_cache_config = None
     if policy.enable_context_cache:

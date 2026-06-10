@@ -158,6 +158,73 @@ class Gateway:
             value = 2
         return min(max(value, 1), 16)
 
+    @staticmethod
+    def _env_bool(name: str, *, default: bool = False) -> bool:
+        """Return a boolean env value using common truthy/falsy labels."""
+        raw = os.getenv(name, "").strip().lower()
+        if not raw:
+            return default
+        if raw in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        if raw in {"0", "false", "no", "off", "disabled"}:
+            return False
+        return default
+
+    @staticmethod
+    def _env_int(name: str, *, min_value: int, max_value: int) -> int | None:
+        """Return a bounded integer env value, or None when unset/invalid."""
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            return None
+        return min(max(value, min_value), max_value)
+
+    @staticmethod
+    def _env_float(name: str, *, min_value: float, max_value: float) -> float | None:
+        """Return a bounded float env value, or None when unset/invalid."""
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return None
+        try:
+            value = float(raw)
+        except ValueError:
+            return None
+        return min(max(value, min_value), max_value)
+
+    def _task_scheduler_kwargs(self) -> dict[str, Any]:
+        """Return optional TaskWakeScheduler configuration from env."""
+        kwargs: dict[str, Any] = {
+            "on_delivery": self._publish_task_delivery,
+            "checkpoint_retention_enabled": self._env_bool("OPENPPX_CHECKPOINT_RETENTION_ENABLED"),
+        }
+        optional_values = {
+            "checkpoint_retention_interval_seconds": self._env_float(
+                "OPENPPX_CHECKPOINT_RETENTION_INTERVAL_SECONDS",
+                min_value=1.0,
+                max_value=24 * 60 * 60,
+            ),
+            "checkpoint_retention_older_than_ms": self._env_int(
+                "OPENPPX_CHECKPOINT_RETENTION_OLDER_THAN_MS",
+                min_value=0,
+                max_value=365 * 24 * 60 * 60 * 1000,
+            ),
+            "checkpoint_retention_keep_latest_per_task": self._env_int(
+                "OPENPPX_CHECKPOINT_RETENTION_KEEP_LATEST",
+                min_value=0,
+                max_value=100,
+            ),
+            "checkpoint_retention_batch_size": self._env_int(
+                "OPENPPX_CHECKPOINT_RETENTION_BATCH_SIZE",
+                min_value=1,
+                max_value=1000,
+            ),
+        }
+        kwargs.update({key: value for key, value in optional_values.items() if value is not None})
+        return kwargs
+
     def _cron_store_path(self) -> Path:
         workspace = load_security_policy().workspace_root
         return cron_store_path(workspace)
@@ -1030,7 +1097,7 @@ class Gateway:
                 is_busy=self._heartbeat_is_busy,
             )
         if self._task_scheduler is None:
-            self._task_scheduler = TaskWakeScheduler(on_delivery=self._publish_task_delivery)
+            self._task_scheduler = TaskWakeScheduler(**self._task_scheduler_kwargs())
         await self._cron_service.start()
         await self._task_scheduler.start()
         await self._heartbeat_runner.start()

@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .task_execution import TaskController
+from .task_execution import DEFAULT_CHECKPOINT_KEEP_LATEST_PER_TASK, DEFAULT_CHECKPOINT_RETENTION_MS, TaskController
 from .task_store import TASK_TERMINAL_STATUSES, TaskDelivery, TaskDeliveryStore, TaskRun, TaskStore
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ class SchedulerDrainResult:
     claimed: int
     synced: int
     deliveries: int
+    checkpoint_retention_deleted: int = 0
 
 
 class TaskWakeScheduler:
@@ -48,6 +49,11 @@ class TaskWakeScheduler:
         stale_lost_after_ms: int = DEFAULT_STALE_LOST_AFTER_MS,
         delivery_retry_base_ms: int = DEFAULT_DELIVERY_RETRY_BASE_MS,
         delivery_retry_max_ms: int = DEFAULT_DELIVERY_RETRY_MAX_MS,
+        checkpoint_retention_enabled: bool = False,
+        checkpoint_retention_interval_seconds: float = 60 * 60,
+        checkpoint_retention_older_than_ms: int = DEFAULT_CHECKPOINT_RETENTION_MS,
+        checkpoint_retention_keep_latest_per_task: int = DEFAULT_CHECKPOINT_KEEP_LATEST_PER_TASK,
+        checkpoint_retention_batch_size: int = 100,
         owner: str | None = None,
         on_delivery: DeliveryCallback | None = None,
     ) -> None:
@@ -60,11 +66,20 @@ class TaskWakeScheduler:
         self.stale_lost_after_ms = max(0, int(stale_lost_after_ms))
         self.delivery_retry_base_ms = max(0, int(delivery_retry_base_ms))
         self.delivery_retry_max_ms = max(self.delivery_retry_base_ms, int(delivery_retry_max_ms))
+        self.checkpoint_retention_enabled = bool(checkpoint_retention_enabled)
+        self.checkpoint_retention_interval_seconds = max(1.0, float(checkpoint_retention_interval_seconds))
+        self.checkpoint_retention_older_than_ms = max(0, int(checkpoint_retention_older_than_ms))
+        self.checkpoint_retention_keep_latest_per_task = max(
+            0,
+            int(checkpoint_retention_keep_latest_per_task),
+        )
+        self.checkpoint_retention_batch_size = max(1, min(int(checkpoint_retention_batch_size), 1000))
         self.owner = owner or _default_owner()
         self._on_delivery = on_delivery
         self._task: asyncio.Task[None] | None = None
         self._stop_event: asyncio.Event | None = None
         self._last_result = SchedulerDrainResult(scanned=0, claimed=0, synced=0, deliveries=0)
+        self._last_checkpoint_retention_run_ms = 0
 
     @property
     def running(self) -> bool:
@@ -81,11 +96,20 @@ class TaskWakeScheduler:
             "stale_lost_after_ms": self.stale_lost_after_ms,
             "delivery_retry_base_ms": self.delivery_retry_base_ms,
             "delivery_retry_max_ms": self.delivery_retry_max_ms,
+            "checkpoint_retention": {
+                "enabled": self.checkpoint_retention_enabled,
+                "interval_seconds": self.checkpoint_retention_interval_seconds,
+                "older_than_ms": self.checkpoint_retention_older_than_ms,
+                "keep_latest_per_task": self.checkpoint_retention_keep_latest_per_task,
+                "batch_size": self.checkpoint_retention_batch_size,
+                "last_run_at_ms": self._last_checkpoint_retention_run_ms,
+            },
             "last_result": {
                 "scanned": self._last_result.scanned,
                 "claimed": self._last_result.claimed,
                 "synced": self._last_result.synced,
                 "deliveries": self._last_result.deliveries,
+                "checkpoint_retention_deleted": self._last_result.checkpoint_retention_deleted,
             },
         }
 
@@ -158,11 +182,13 @@ class TaskWakeScheduler:
                     claim_token=claim.claim_token,
                 )
         deliveries += await self._retry_due_deliveries(now_ms=now_ms, remaining_limit=self.batch_size)
+        checkpoint_retention_deleted = self._cleanup_checkpoint_retention_if_due(now_ms=now_ms)
         self._last_result = SchedulerDrainResult(
             scanned=scanned,
             claimed=claimed,
             synced=synced,
             deliveries=deliveries,
+            checkpoint_retention_deleted=checkpoint_retention_deleted,
         )
         return self._last_result
 
@@ -245,10 +271,43 @@ class TaskWakeScheduler:
         exponent = min(max(0, delivery.attempts), 6)
         return min(self.delivery_retry_max_ms, self.delivery_retry_base_ms * (2**exponent))
 
+    def _cleanup_checkpoint_retention_if_due(self, *, now_ms: int) -> int:
+        """Run optional checkpoint retention cleanup on a bounded cadence."""
+        if not self.checkpoint_retention_enabled:
+            return 0
+        interval_ms = int(self.checkpoint_retention_interval_seconds * 1000)
+        if (
+            self._last_checkpoint_retention_run_ms
+            and now_ms - self._last_checkpoint_retention_run_ms < interval_ms
+        ):
+            return 0
+        self._last_checkpoint_retention_run_ms = now_ms
+        try:
+            result = self.controller.cleanup_checkpoint_retention(
+                older_than_ms=self.checkpoint_retention_older_than_ms,
+                keep_latest_per_task=self.checkpoint_retention_keep_latest_per_task,
+                limit=self.checkpoint_retention_batch_size,
+                dry_run=False,
+                confirm=True,
+            )
+        except Exception:
+            logger.exception("Failed running checkpoint retention cleanup")
+            return 0
+        if not result.get("ok"):
+            logger.warning("Checkpoint retention cleanup skipped: %s", result.get("message") or result)
+            return 0
+        return max(0, int(result.get("deleted_count") or 0))
+
 
 def _should_deliver(task: TaskRun) -> bool:
     """Return whether a task status should produce a once-only delivery record."""
-    return task.status in TASK_TERMINAL_STATUSES or task.status in {"interrupted", "waiting_user", "waiting_approval"}
+    return task.status in TASK_TERMINAL_STATUSES or task.status in {
+        "interrupted",
+        "paused",
+        "stale",
+        "waiting_user",
+        "waiting_approval",
+    }
 
 
 def _default_owner() -> str:

@@ -1,0 +1,41 @@
+{
+  "eval_set_id": "openppx_summary",
+  "name": "openppx long-task summary eval",
+  "description": "Long-task summary marker preservation baseline for the openppx root agent.",
+  "eval_cases": [
+    {
+      "eval_id": "preserve_long_task_markers",
+      "conversation": [
+        {
+          "invocation_id": "openppx-summary-0001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Do not call any tool. Condense this long-task state into exactly one line and preserve every identifier: TaskRun task_123 is running, checkpoint checkpoint_ckpt-7 is the latest resume boundary, artifact artifact_report-2 contains the current output, and the next action is inspect_output. Reply with exactly: task_123 running checkpoint_ckpt-7 artifact_report-2 inspect_output"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "task_123 running checkpoint_ckpt-7 artifact_report-2 inspect_output"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [],
+            "tool_responses": [],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "openppx",
+        "user_id": "eval_summary_user",
+        "state": {}
+      }
+    }
+  ]
+}

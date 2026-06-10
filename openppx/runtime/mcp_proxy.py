@@ -635,6 +635,8 @@ def _normalize_mcp_job_status(value: Any) -> str:
         "running": "running",
         "in_progress": "running",
         "processing": "running",
+        "paused": "paused",
+        "pausing": "paused",
         "completed": "completed",
         "complete": "completed",
         "succeeded": "completed",

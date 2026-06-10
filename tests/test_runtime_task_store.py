@@ -210,6 +210,46 @@ class TaskStoreTests(unittest.TestCase):
             self.assertEqual(len(listed), 1)
             self.assertEqual(listed[0].checkpoint_id, recorded.checkpoint_id)
 
+    def test_checkpoint_retention_candidates_keep_current_and_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            tasks = TaskStore(db_path=db_path)
+            checkpoints = TaskCheckpointStore(db_path=db_path)
+            task = tasks.create_task(kind="browser", status="paused", title="demo", session_id="s1")
+            records = [
+                checkpoints.record_checkpoint(task_id=task.task_id, checkpoint_id=f"ckpt-{index}")
+                for index in range(1, 5)
+            ]
+            tasks.update_task(task.task_id, checkpoint_ref=records[0].checkpoint_id)
+            with sqlite3.connect(db_path) as conn:
+                for index, record in enumerate(records, start=1):
+                    conn.execute(
+                        "UPDATE task_checkpoints SET created_at_ms = ? WHERE checkpoint_id = ?",
+                        (index * 1000, record.checkpoint_id),
+                    )
+
+            candidates = checkpoints.list_retention_candidates(
+                older_than_ms=5000,
+                keep_latest_per_task=2,
+                session_id="s1",
+                now_ms=10_000,
+            )
+            candidate_count = checkpoints.count_retention_candidates(
+                older_than_ms=5000,
+                keep_latest_per_task=2,
+                session_id="s1",
+                now_ms=10_000,
+            )
+            deleted = checkpoints.delete_retention_checkpoints([records[0].checkpoint_id, records[1].checkpoint_id])
+
+            self.assertEqual([candidate.checkpoint_id for candidate in candidates], [records[1].checkpoint_id])
+            self.assertEqual(candidate_count, 1)
+            self.assertEqual(deleted, 1)
+            self.assertIsNotNone(checkpoints.get_checkpoint(records[0].checkpoint_id))
+            self.assertIsNone(checkpoints.get_checkpoint(records[1].checkpoint_id))
+            self.assertIsNotNone(checkpoints.get_checkpoint(records[2].checkpoint_id))
+            self.assertIsNotNone(checkpoints.get_checkpoint(records[3].checkpoint_id))
+
     def test_claim_and_delivery_records_are_once_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "tasks.db"
@@ -301,6 +341,98 @@ class TaskStoreTests(unittest.TestCase):
             self.assertEqual(summary["latest"]["attempts"], 2)
             self.assertEqual(summary["latest"]["ack_status"], "provider_receipt")
             self.assertEqual(summary["latest"]["provider_message_id"], "msg-1")
+
+    def test_status_stuck_and_terminal_cleanup_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            tasks = TaskStore(db_path=db_path)
+            events = TaskEventStore(db_path=db_path)
+            inputs = TaskInputStore(db_path=db_path)
+            deliveries = TaskDeliveryStore(db_path=db_path)
+            artifacts = TaskArtifactStore(db_path=db_path)
+            checkpoints = TaskCheckpointStore(db_path=db_path)
+            calls = ToolCallRecordStore(db_path=db_path)
+
+            running = tasks.create_task(kind="skill_api", status="running", title="running", session_id="s1")
+            completed = tasks.create_task(kind="skill_api", status="completed", title="done", session_id="s1")
+            recent_failed = tasks.create_task(kind="skill_api", status="failed", title="recent", session_id="s1")
+            other_session = tasks.create_task(kind="skill_api", status="completed", title="other", session_id="s2")
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("UPDATE task_runs SET updated_at_ms = ? WHERE task_id = ?", (1000, running.task_id))
+                conn.execute("UPDATE task_runs SET updated_at_ms = ? WHERE task_id = ?", (1000, completed.task_id))
+                conn.execute("UPDATE task_runs SET updated_at_ms = ? WHERE task_id = ?", (4900, recent_failed.task_id))
+                conn.execute("UPDATE task_runs SET updated_at_ms = ? WHERE task_id = ?", (1000, other_session.task_id))
+            events.append_event(completed.task_id, "task.completed", message="done")
+            inputs.append_input(completed.task_id, "ignored after terminal")
+            deliveries.record_once(task_id=completed.task_id, delivery_type="task.completed", payload={})
+            artifacts.record_artifact(
+                task_id=completed.task_id,
+                artifact_type="process_output",
+                label="Process output",
+                media_type="text/plain",
+                path=str(Path(tmp) / "output.txt"),
+                size_bytes=1,
+            )
+            checkpoints.record_checkpoint(task_id=completed.task_id, summary="terminal checkpoint")
+            calls.create_or_get(idempotency_key="idem-cleanup", tool_name="invoke_skill_api", args_hash="abc")
+            calls.link_task("idem-cleanup", completed.task_id)
+
+            counts = tasks.count_by_status(session_id="s1")
+            stuck = tasks.list_stuck_tasks(session_id="s1", older_than_ms=2000, now_ms=5000)
+            terminal = tasks.list_terminal_tasks_older_than(session_id="s1", older_than_ms=2000, now_ms=5000)
+            deleted = tasks.delete_tasks([task.task_id for task in terminal])
+
+            self.assertEqual(counts["running"], 1)
+            self.assertEqual(counts["completed"], 1)
+            self.assertEqual(counts["failed"], 1)
+            self.assertEqual([task.task_id for task in stuck], [running.task_id])
+            self.assertEqual([task.task_id for task in terminal], [completed.task_id])
+            self.assertEqual(deleted, 1)
+            self.assertIsNone(tasks.get_task(completed.task_id))
+            self.assertEqual(events.list_events(completed.task_id), [])
+            self.assertEqual(inputs.list_inputs(completed.task_id), [])
+            self.assertEqual(deliveries.list_deliveries(completed.task_id), [])
+            self.assertEqual(artifacts.list_artifacts(completed.task_id), [])
+            self.assertEqual(checkpoints.list_checkpoints(completed.task_id), [])
+            record = calls.get_record("idem-cleanup")
+            self.assertIsNotNone(record)
+            assert record is not None
+            self.assertEqual(record.task_id, completed.task_id)
+            self.assertIsNotNone(tasks.get_task(recent_failed.task_id))
+            self.assertIsNotNone(tasks.get_task(other_session.task_id))
+
+    def test_orphaned_artifact_and_checkpoint_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "tasks.db"
+            TaskStore(db_path=db_path)
+            artifacts = TaskArtifactStore(db_path=db_path)
+            checkpoints = TaskCheckpointStore(db_path=db_path)
+            artifact_path = Path(tmp) / "orphan.txt"
+            artifact_path.write_text("orphan", encoding="utf-8")
+
+            artifact = artifacts.record_artifact(
+                task_id="missing-task",
+                artifact_type="process_output",
+                label="Orphan output",
+                media_type="text/plain",
+                path=str(artifact_path),
+                size_bytes=artifact_path.stat().st_size,
+            )
+            checkpoint = checkpoints.record_checkpoint(
+                task_id="missing-task",
+                checkpoint_type="runner_state",
+                runner_name="fake",
+                payload={"step": 2},
+            )
+
+            self.assertEqual(artifacts.count_orphaned_artifacts(), 1)
+            self.assertEqual(checkpoints.count_orphaned_checkpoints(), 1)
+            self.assertEqual(artifacts.list_orphaned_artifacts()[0].artifact_id, artifact.artifact_id)
+            self.assertEqual(checkpoints.list_orphaned_checkpoints()[0].checkpoint_id, checkpoint.checkpoint_id)
+            self.assertEqual(artifacts.delete_artifact_records([artifact.artifact_id]), 1)
+            self.assertEqual(checkpoints.delete_checkpoints([checkpoint.checkpoint_id]), 1)
+            self.assertEqual(artifacts.count_orphaned_artifacts(), 0)
+            self.assertEqual(checkpoints.count_orphaned_checkpoints(), 0)
 
 
 if __name__ == "__main__":

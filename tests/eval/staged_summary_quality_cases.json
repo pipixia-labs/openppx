@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "description": "Deterministic quality cases for openppx staged long-task summaries.",
+  "cases": [
+    {
+      "name": "preserve task and artifact markers",
+      "source": "TaskRun task_123 wrote artifact_report-1 and remains running.",
+      "summary": "task_123 wrote artifact_report-1.",
+      "max_summary_chars": 120,
+      "max_compression_ratio": 0.9,
+      "require_marker_preservation": true,
+      "must_include": ["task_123", "artifact_report-1"],
+      "must_not_include": ["completed"],
+      "expected_ok": true
+    },
+    {
+      "name": "reject missing marker in strict mode",
+      "source": "TaskRun task_123 wrote artifact_report-1 and remains running.",
+      "summary": "The task remains running.",
+      "max_summary_chars": 120,
+      "max_compression_ratio": 0.9,
+      "require_marker_preservation": true,
+      "must_include": ["task_123", "artifact_report-1"],
+      "expected_ok": false
+    },
+    {
+      "name": "reject weak compression under gray threshold",
+      "source": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "summary": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "max_summary_chars": 120,
+      "max_compression_ratio": 0.5,
+      "require_marker_preservation": false,
+      "must_not_include": ["TaskRun completed"],
+      "expected_ok": false
+    }
+  ]
+}

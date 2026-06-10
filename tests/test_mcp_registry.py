@@ -178,6 +178,44 @@ class McpRegistryTests(unittest.TestCase):
         self.assertEqual(protocol.cancel_tool, "job_cancel")
         self.assertEqual(protocol.poll_timeout_ms, 1500)
 
+    def test_build_mcp_toolsets_job_protocol_accepts_optional_pause_resume(self) -> None:
+        toolsets = build_mcp_toolsets(
+            {
+                "remote_gui": {
+                    "url": "https://example.com/mcp",
+                    "jobProtocol": {
+                        "jobIdPath": "job_id",
+                        "statusTool": "gui_task_status",
+                        "pauseTool": "gui_task_cancel",
+                        "pauseArgs": {
+                            "job_id": "{job_id}",
+                            "terminal_status": "paused",
+                        },
+                        "resumeTool": "gui_task_resume",
+                        "checkpointPath": "checkpoint",
+                        "checkpointSchema": "openppx.remote_gui_checkpoint",
+                        "checkpointSchemaVersion": 1,
+                    },
+                }
+            },
+            log_registered=False,
+        )
+
+        protocol = toolsets[0].job_protocol
+        self.assertIsNotNone(protocol)
+        assert protocol is not None
+        self.assertEqual(protocol.pause_tool, "gui_task_cancel")
+        self.assertEqual(protocol.pause_args["terminal_status"], "paused")
+        self.assertEqual(protocol.resume_tool, "gui_task_resume")
+        self.assertEqual(protocol.checkpoint_path, "checkpoint")
+        self.assertEqual(protocol.checkpoint_schema, "openppx.remote_gui_checkpoint")
+        self.assertEqual(protocol.checkpoint_schema_version, 1)
+        self.assertEqual(protocol.to_payload()["checkpoint_schema"], "openppx.remote_gui_checkpoint")
+        self.assertEqual(protocol.to_payload()["checkpoint_schema_version"], 1)
+        self.assertTrue(protocol.runner_capabilities["pause"])
+        self.assertTrue(protocol.runner_capabilities["resume"])
+        self.assertTrue(protocol.runner_capabilities["checkpoint"])
+
     def test_build_mcp_toolsets_from_env_invalid_json(self) -> None:
         with patch.dict(os.environ, {_MCP_SERVERS_ENV: "{bad json"}, clear=False):
             toolsets = build_mcp_toolsets_from_env()

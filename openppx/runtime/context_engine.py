@@ -86,6 +86,7 @@ class TaskFlowStep:
     title: str
     status: str
     task_id: str
+    depends_on: tuple[str, ...]
     evidence: dict[str, Any]
     last_error: str
     created_at_ms: int
@@ -186,6 +187,7 @@ class LongTaskContextStore:
                     title TEXT NOT NULL,
                     status TEXT NOT NULL,
                     task_id TEXT NOT NULL,
+                    depends_on_json TEXT NOT NULL DEFAULT '[]',
                     evidence_json TEXT NOT NULL,
                     last_error TEXT NOT NULL,
                     created_at_ms INTEGER NOT NULL,
@@ -193,6 +195,13 @@ class LongTaskContextStore:
                     completed_at_ms INTEGER
                 )
                 """
+            )
+            _ensure_columns(
+                conn,
+                "long_task_flow_steps",
+                {
+                    "depends_on_json": "TEXT NOT NULL DEFAULT '[]'",
+                },
             )
             conn.execute(
                 """
@@ -445,7 +454,7 @@ class LongTaskContextStore:
         wait_payload: Any = None,
         evidence: Any = None,
     ) -> tuple[TaskFlow, list[TaskFlowStep]]:
-        """Create or update the active linear TaskFlow for a session."""
+        """Create or update the active TaskFlow for a session."""
         normalized_session = _text(session_id)
         normalized_flow_id = _text(flow_id)
         existing = self.get_flow(normalized_flow_id) if normalized_flow_id else self.get_active_flow(normalized_session)
@@ -595,18 +604,19 @@ class LongTaskContextStore:
                     """
                     INSERT INTO long_task_flow_steps (
                         step_id, flow_id, session_id, order_index, title, status,
-                        task_id, evidence_json, last_error, created_at_ms,
+                        task_id, depends_on_json, evidence_json, last_error, created_at_ms,
                         updated_at_ms, completed_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        step.get("step_id") or f"step_{uuid.uuid4().hex[:16]}",
+                        step["step_id"],
                         normalized_flow_id,
                         _text(session_id),
                         index,
                         step["title"],
                         status,
                         step["task_id"],
+                        _json_dumps(list(step["depends_on"])),
                         _json_dumps(step["evidence"]),
                         step["last_error"],
                         now_ms,
@@ -651,6 +661,7 @@ class LongTaskContextStore:
         order_index: int | None = None,
         status: str | None = None,
         task_id: str = "",
+        depends_on: Any = None,
         evidence: Any = None,
         last_error: str = "",
     ) -> tuple[TaskFlow, TaskFlowStep]:
@@ -666,6 +677,34 @@ class LongTaskContextStore:
         completed_at_ms = now_ms if normalized_status in {"completed", "failed", "cancelled"} else None
         evidence_payload = _parse_json_object(evidence) or step.evidence
         task_ref = _text(task_id) or step.task_id
+        current_steps = self.list_flow_steps(flow_id=flow.flow_id, limit=200)
+        dependency_refs = _normalize_flow_dependency_refs(depends_on)
+        resolved_depends_on = (
+            _resolve_flow_dependency_refs(
+                [
+                    {
+                        "step_id": candidate.step_id,
+                        "title": candidate.title,
+                        "depends_on": (),
+                    }
+                    for candidate in current_steps
+                ],
+                dependency_refs,
+                current_step_id=step.step_id,
+            )
+            if depends_on is not None
+            else step.depends_on
+        )
+        if depends_on is not None:
+            _validate_flow_dependency_graph(
+                [
+                    {
+                        "step_id": candidate.step_id,
+                        "depends_on": resolved_depends_on if candidate.step_id == step.step_id else candidate.depends_on,
+                    }
+                    for candidate in current_steps
+                ]
+            )
         error_text = _text(last_error) or step.last_error
         with self._lock, _connect(self.db_path) as conn:
             conn.execute(
@@ -673,6 +712,7 @@ class LongTaskContextStore:
                 UPDATE long_task_flow_steps
                 SET status = ?,
                     task_id = ?,
+                    depends_on_json = ?,
                     evidence_json = ?,
                     last_error = ?,
                     updated_at_ms = ?,
@@ -682,6 +722,7 @@ class LongTaskContextStore:
                 (
                     normalized_status,
                     task_ref,
+                    _json_dumps(list(resolved_depends_on)),
                     _json_dumps(evidence_payload),
                     error_text,
                     now_ms,
@@ -720,6 +761,58 @@ class LongTaskContextStore:
         assert updated_flow is not None
         assert updated_step is not None
         return updated_flow, updated_step
+
+    def project_flow(self, *, flow_id: str) -> dict[str, Any]:
+        """Return deterministic DAG execution state for one TaskFlow."""
+        flow = self.get_flow(flow_id)
+        if flow is None:
+            raise ValueError("flow not found")
+        steps = self.list_flow_steps(flow_id=flow.flow_id, limit=200)
+        return _flow_execution_projection(flow, steps)
+
+    def advance_flow(
+        self,
+        *,
+        session_id: str,
+        flow_id: str | None = None,
+        auto_finish: bool = True,
+        start_ready: bool = True,
+    ) -> tuple[TaskFlow | None, list[TaskFlowStep], dict[str, Any]]:
+        """Advance TaskFlow DAG bookkeeping without executing external work."""
+        flow = self.get_flow(_text(flow_id)) if _text(flow_id) else self.get_active_flow(session_id)
+        if flow is None:
+            return None, [], {}
+        if start_ready:
+            self._refresh_flow_current_step(flow.flow_id)
+        steps = self.list_flow_steps(flow_id=flow.flow_id, limit=200)
+        projection = _flow_execution_projection(flow, steps)
+        if auto_finish and projection["all_steps_completed"] and flow.status not in FLOW_TERMINAL_STATUSES:
+            flow = self.finish_flow(session_id=flow.session_id, flow_id=flow.flow_id, status="completed")
+            assert flow is not None
+            steps = self.list_flow_steps(flow_id=flow.flow_id, limit=200)
+            projection = _flow_execution_projection(flow, steps)
+        elif projection["has_dependency_blocker"] and flow.status not in FLOW_TERMINAL_STATUSES:
+            now_ms = _now_ms()
+            blocked_task_id = ""
+            first_blocked = next((step for step in steps if step.step_id in projection["blocked_step_ids"]), None)
+            if first_blocked is not None:
+                blocked_task_id = first_blocked.task_id
+            with self._lock, _connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    UPDATE long_task_flows
+                    SET status = 'blocked',
+                        blocked_task_id = ?,
+                        revision = revision + 1,
+                        updated_at_ms = ?
+                    WHERE flow_id = ?
+                    """,
+                    (blocked_task_id or flow.blocked_task_id, now_ms, flow.flow_id),
+                )
+            flow = self.get_flow(flow.flow_id)
+            assert flow is not None
+            projection = _flow_execution_projection(flow, steps)
+        return flow, steps, projection
 
     def finish_flow(
         self,
@@ -877,6 +970,7 @@ class LongTaskContextStore:
         goal_id: str | None = None,
         flow_id: str | None = None,
         task_id: str | None = None,
+        scope: str | None = None,
         limit: int = 5,
     ) -> list[ContextSummary]:
         """List recent staged summaries for one session and optional scope."""
@@ -895,6 +989,10 @@ class LongTaskContextStore:
         if _text(task_id):
             clauses.append("task_id = ?")
             params.append(_text(task_id))
+        normalized_scope = _normalize_optional_summary_scope(scope)
+        if normalized_scope:
+            clauses.append("scope = ?")
+            params.append(normalized_scope)
         params.append(safe_limit)
         with _connect(self.db_path) as conn:
             rows = conn.execute(
@@ -907,6 +1005,102 @@ class LongTaskContextStore:
                 tuple(params),
             ).fetchall()
         return [_summary_from_row(row) for row in rows]
+
+    def rollup_summaries(
+        self,
+        *,
+        session_id: str,
+        target_scope: str = "session",
+        source_scope: str | None = None,
+        title: str = "",
+        summary_id: str | None = None,
+        goal_id: str | None = None,
+        flow_id: str | None = None,
+        task_id: str | None = None,
+        limit: int = 20,
+        max_chars: int = DEFAULT_SUMMARY_MAX_CHARS,
+    ) -> ContextSummary:
+        """Create a deterministic higher-level summary from lower-level summaries."""
+        normalized_session = _text(session_id)
+        if not normalized_session:
+            raise ValueError("session_id is required")
+        normalized_target_scope = _normalize_summary_scope(target_scope)
+        normalized_source_scope = _normalize_optional_summary_scope(source_scope)
+        safe_limit = max(1, min(int(limit or 20), 100))
+        sources = self._collect_rollup_sources(
+            session_id=normalized_session,
+            source_scope=normalized_source_scope,
+            goal_id=goal_id,
+            flow_id=flow_id,
+            task_id=task_id,
+            limit=safe_limit,
+            exclude_summary_id=summary_id,
+        )
+        if not sources:
+            raise ValueError("no context summaries available for rollup")
+        content = _rollup_summary_content(sources, max_chars=max_chars)
+        metadata = {
+            "rollup_version": 1,
+            "target_scope": normalized_target_scope,
+            "source_scope": normalized_source_scope or "any",
+            "source_count": len(sources),
+            "source_summary_ids": [source.summary_id for source in sources],
+        }
+        return self.upsert_summary(
+            session_id=normalized_session,
+            content=content,
+            title=_text(title) or f"{normalized_target_scope.title()} context rollup",
+            summary_id=summary_id,
+            scope=normalized_target_scope,
+            goal_id=goal_id if normalized_target_scope in {"goal", "flow", "task"} else "",
+            flow_id=flow_id if normalized_target_scope in {"flow", "task"} else "",
+            task_id=task_id if normalized_target_scope == "task" else "",
+            source_kind="summary_rollup",
+            metadata=metadata,
+            max_chars=max_chars,
+        )
+
+    def _collect_rollup_sources(
+        self,
+        *,
+        session_id: str,
+        source_scope: str,
+        goal_id: str | None,
+        flow_id: str | None,
+        task_id: str | None,
+        limit: int,
+        exclude_summary_id: str | None,
+    ) -> list[ContextSummary]:
+        """Collect unique source summaries for deterministic rollup."""
+        seen: dict[str, ContextSummary] = {}
+
+        def add(items: Iterable[ContextSummary]) -> None:
+            for item in items:
+                if _text(exclude_summary_id) and item.summary_id == _text(exclude_summary_id):
+                    continue
+                if source_scope and item.scope != source_scope:
+                    continue
+                seen[item.summary_id] = item
+
+        if _text(task_id):
+            add(self.list_summaries(session_id=session_id, task_id=task_id, scope=source_scope or None, limit=limit))
+        if _text(flow_id):
+            add(self.list_summaries(session_id=session_id, flow_id=flow_id, scope=source_scope or None, limit=limit))
+            for step in self.list_flow_steps(flow_id=_text(flow_id), limit=200):
+                if step.task_id:
+                    add(
+                        self.list_summaries(
+                            session_id=session_id,
+                            task_id=step.task_id,
+                            scope=source_scope or None,
+                            limit=limit,
+                        )
+                    )
+        if _text(goal_id):
+            add(self.list_summaries(session_id=session_id, goal_id=goal_id, scope=source_scope or None, limit=limit))
+        if not (_text(task_id) or _text(flow_id) or _text(goal_id)):
+            add(self.list_summaries(session_id=session_id, scope=source_scope or None, limit=limit))
+        return sorted(seen.values(), key=lambda item: item.updated_at_ms, reverse=True)[:limit]
 
     def summarize_text(
         self,
@@ -968,11 +1162,11 @@ class LongTaskContextStore:
         flow = self.get_flow(normalized_flow_id)
         steps = self.list_flow_steps(flow_id=normalized_flow_id, limit=200)
         current_step_id = ""
-        has_active_step = any(
-            step.status in {"in_progress", "waiting_user", "waiting_approval", "blocked", "failed"} for step in steps
-        )
-        if flow is not None and flow.status not in FLOW_TERMINAL_STATUSES and not has_active_step:
-            next_pending = next((step for step in steps if step.status == "pending"), None)
+        projection = _flow_execution_projection(flow, steps) if flow is not None else {}
+        active_step_ids = set(projection.get("active_step_ids", []))
+        if flow is not None and flow.status not in FLOW_TERMINAL_STATUSES and not active_step_ids:
+            ready_step_ids = set(projection.get("ready_step_ids", []))
+            next_pending = next((step for step in steps if step.status == "pending" and step.step_id in ready_step_ids), None)
             if next_pending is not None:
                 now_ms = _now_ms()
                 with self._lock, _connect(self.db_path) as conn:
@@ -985,11 +1179,21 @@ class LongTaskContextStore:
                         (now_ms, next_pending.step_id),
                     )
                 steps = self.list_flow_steps(flow_id=normalized_flow_id, limit=200)
+                projection = _flow_execution_projection(flow, steps)
+                active_step_ids = set(projection.get("active_step_ids", []))
         for status_group in (
             {"in_progress", "waiting_user", "waiting_approval", "blocked", "failed"},
             {"pending"},
         ):
-            match = next((step for step in steps if step.status in status_group), None)
+            match = next(
+                (
+                    step
+                    for step in steps
+                    if step.status in status_group
+                    and (step.step_id in active_step_ids or status_group == {"pending"})
+                ),
+                None,
+            )
             if match is not None:
                 current_step_id = match.step_id
                 break
@@ -1035,19 +1239,23 @@ def _normalize_flow_steps(items: Any) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for item in parsed:
         if isinstance(item, str):
+            step_id = f"step_{uuid.uuid4().hex[:16]}"
             title = _text(item)
             status = "pending"
             task_id = ""
+            raw_depends_on: tuple[Any, ...] = ()
             evidence: dict[str, Any] = {}
             last_error = ""
-            step_id = ""
         elif isinstance(item, dict):
+            step_id = _text(item.get("step_id")) or f"step_{uuid.uuid4().hex[:16]}"
             title = _text(item.get("title") or item.get("content") or item.get("text") or item.get("task"))
             status = _normalize_flow_step_status(item.get("status"))
             task_id = _text(item.get("task_id"))
+            raw_depends_on = _normalize_flow_dependency_refs(
+                item.get("depends_on") if "depends_on" in item else item.get("dependsOn", item.get("dependencies"))
+            )
             evidence = _parse_json_object(item.get("evidence"))
             last_error = _text(item.get("last_error") or item.get("error"))
-            step_id = _text(item.get("step_id"))
         else:
             continue
         if title:
@@ -1057,10 +1265,19 @@ def _normalize_flow_steps(items: Any) -> list[dict[str, Any]]:
                     "title": title,
                     "status": status,
                     "task_id": task_id,
+                    "raw_depends_on": raw_depends_on,
+                    "depends_on": (),
                     "evidence": evidence,
                     "last_error": last_error,
                 }
             )
+    for item in normalized:
+        item["depends_on"] = _resolve_flow_dependency_refs(
+            normalized,
+            item.pop("raw_depends_on", ()),
+            current_step_id=item["step_id"],
+        )
+    _validate_flow_dependency_graph(normalized)
     in_progress_seen = False
     first_pending = -1
     for index, item in enumerate(normalized):
@@ -1069,10 +1286,180 @@ def _normalize_flow_steps(items: Any) -> list[dict[str, Any]]:
                 item["status"] = "pending"
             in_progress_seen = True
         elif item["status"] == "pending" and first_pending < 0:
-            first_pending = index
+            dependencies = tuple(item.get("depends_on") or ())
+            if not dependencies:
+                first_pending = index
     if not in_progress_seen and first_pending >= 0:
         normalized[first_pending]["status"] = "in_progress"
     return normalized
+
+
+def _normalize_flow_dependency_refs(value: Any) -> tuple[Any, ...]:
+    """Normalize loose dependency input while preserving resolvable ref types."""
+    if value is None:
+        return ()
+    if isinstance(value, (str, int)):
+        raw_items: list[Any] = [value]
+    elif isinstance(value, dict):
+        raw_items = [value]
+    elif isinstance(value, Iterable):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+    normalized: list[Any] = []
+    for item in raw_items:
+        if isinstance(item, dict):
+            if "step_id" in item:
+                ref: Any = _text(item.get("step_id"))
+            elif "order_index" in item:
+                ref = item.get("order_index")
+            elif "index" in item:
+                ref = item.get("index")
+            elif "title" in item:
+                ref = _text(item.get("title"))
+            else:
+                ref = ""
+        else:
+            ref = item
+        if isinstance(ref, int):
+            normalized.append(ref)
+        else:
+            text = _text(ref)
+            if text:
+                normalized.append(text)
+    return tuple(normalized)
+
+
+def _resolve_flow_dependency_refs(
+    steps: list[dict[str, Any]],
+    refs: Iterable[Any],
+    *,
+    current_step_id: str,
+) -> tuple[str, ...]:
+    """Resolve dependency refs to step ids when possible."""
+    by_step_id = {_text(step.get("step_id")): _text(step.get("step_id")) for step in steps if _text(step.get("step_id"))}
+    title_counts: dict[str, int] = {}
+    by_title: dict[str, str] = {}
+    for step in steps:
+        title = _text(step.get("title"))
+        if not title:
+            continue
+        title_counts[title] = title_counts.get(title, 0) + 1
+        by_title[title] = _text(step.get("step_id"))
+    resolved: list[str] = []
+    for ref in refs:
+        dependency_id = ""
+        if isinstance(ref, int):
+            if 0 <= ref < len(steps):
+                dependency_id = _text(steps[ref].get("step_id"))
+        else:
+            text = _text(ref)
+            if text.isdigit():
+                index = int(text)
+                if 0 <= index < len(steps):
+                    dependency_id = _text(steps[index].get("step_id"))
+            if not dependency_id and text in by_step_id:
+                dependency_id = by_step_id[text]
+            if not dependency_id and title_counts.get(text) == 1:
+                dependency_id = by_title[text]
+            if not dependency_id:
+                dependency_id = text
+        if dependency_id and dependency_id != current_step_id and dependency_id not in resolved:
+            resolved.append(dependency_id)
+    return tuple(resolved)
+
+
+def _validate_flow_dependency_graph(steps: list[dict[str, Any]]) -> None:
+    """Reject cycles among known TaskFlow step dependencies."""
+    known_ids = {_text(step.get("step_id")) for step in steps}
+    graph = {
+        _text(step.get("step_id")): [dep for dep in tuple(step.get("depends_on") or ()) if dep in known_ids]
+        for step in steps
+        if _text(step.get("step_id"))
+    }
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(step_id: str) -> None:
+        if step_id in visited:
+            return
+        if step_id in visiting:
+            raise ValueError("task flow dependencies contain a cycle")
+        visiting.add(step_id)
+        for dependency_id in graph.get(step_id, []):
+            visit(dependency_id)
+        visiting.remove(step_id)
+        visited.add(step_id)
+
+    for step_id in graph:
+        visit(step_id)
+
+
+def _flow_execution_projection(flow: TaskFlow | None, steps: list[TaskFlowStep]) -> dict[str, Any]:
+    """Project executable DAG state from persisted TaskFlow facts."""
+    by_step_id = {step.step_id: step for step in steps}
+    ready_step_ids: list[str] = []
+    waiting_dependency_step_ids: list[str] = []
+    blocked_step_ids: list[str] = []
+    active_step_ids: list[str] = []
+    completed_step_ids: list[str] = []
+    dependency_state: dict[str, Any] = {}
+    for step in steps:
+        missing_dependencies: list[str] = []
+        waiting_dependencies: list[str] = []
+        failed_dependencies: list[str] = []
+        completed_dependencies: list[str] = []
+        for dependency_id in step.depends_on:
+            dependency = by_step_id.get(dependency_id)
+            if dependency is None:
+                missing_dependencies.append(dependency_id)
+            elif dependency.status == "completed":
+                completed_dependencies.append(dependency_id)
+            elif dependency.status in {"failed", "cancelled"}:
+                failed_dependencies.append(dependency_id)
+            else:
+                waiting_dependencies.append(dependency_id)
+        dependency_state[step.step_id] = {
+            "depends_on": list(step.depends_on),
+            "completed": completed_dependencies,
+            "waiting": waiting_dependencies,
+            "failed": failed_dependencies,
+            "missing": missing_dependencies,
+            "satisfied": not (missing_dependencies or waiting_dependencies or failed_dependencies),
+        }
+        if step.status == "completed":
+            completed_step_ids.append(step.step_id)
+        if step.status in {"in_progress", "waiting_user", "waiting_approval", "blocked", "failed"}:
+            active_step_ids.append(step.step_id)
+        if step.status != "pending":
+            continue
+        if missing_dependencies or failed_dependencies:
+            blocked_step_ids.append(step.step_id)
+        elif waiting_dependencies:
+            waiting_dependency_step_ids.append(step.step_id)
+        else:
+            ready_step_ids.append(step.step_id)
+    all_steps_completed = bool(steps) and len(completed_step_ids) == len(steps)
+    has_dependency_blocker = any(
+        dependency_state[step.step_id]["missing"] or dependency_state[step.step_id]["failed"]
+        for step in steps
+        if step.status == "pending"
+    )
+    terminal_step_ids = [
+        step.step_id for step in steps if step.status in {"completed", "failed", "cancelled"}
+    ]
+    return {
+        "flow_id": flow.flow_id if flow is not None else "",
+        "ready_step_ids": ready_step_ids,
+        "waiting_dependency_step_ids": waiting_dependency_step_ids,
+        "blocked_step_ids": blocked_step_ids,
+        "active_step_ids": active_step_ids,
+        "completed_step_ids": completed_step_ids,
+        "terminal_step_ids": terminal_step_ids,
+        "all_steps_completed": all_steps_completed,
+        "has_dependency_blocker": has_dependency_blocker,
+        "dependency_state": dependency_state,
+    }
 
 
 def _parse_items(items: Any) -> list[Any]:
@@ -1179,6 +1566,11 @@ def _normalize_summary_scope(value: Any) -> str:
     return raw if raw in {"session", "goal", "flow", "task"} else "session"
 
 
+def _normalize_optional_summary_scope(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    return raw if raw in {"session", "goal", "flow", "task"} else ""
+
+
 def _flow_status_after_step_update(current_status: str, step_status: str) -> str:
     if current_status in FLOW_TERMINAL_STATUSES:
         return current_status
@@ -1210,6 +1602,16 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False, default=str)
 
 
+def _json_loads_list(raw: str | None) -> list[Any]:
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
 def _compact_text(text: Any, *, max_chars: int) -> str:
     normalized = "\n".join(line.strip() for line in str(text or "").splitlines() if line.strip())
     if len(normalized) <= max_chars:
@@ -1230,6 +1632,18 @@ def _truncate_text(text: str, *, max_chars: int) -> str:
     return normalized[: max(0, max_chars - 3)].rstrip() + "..."
 
 
+def _rollup_summary_content(sources: list[ContextSummary], *, max_chars: int) -> str:
+    """Build a compact deterministic rollup from staged summaries."""
+    safe_max_chars = max(200, int(max_chars or DEFAULT_SUMMARY_MAX_CHARS))
+    per_source_budget = max(120, min(700, safe_max_chars // max(1, min(len(sources), 8))))
+    lines = ["Context summary rollup:"]
+    for summary in reversed(sources):
+        title = summary.title or summary.scope
+        header = f"- [{summary.scope}/{summary.source_kind}] {title}"
+        lines.append(f"{header}: {_truncate_text(summary.content, max_chars=per_source_budget)}")
+    return _compact_text("\n".join(lines), max_chars=safe_max_chars)
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     path = db_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1238,6 +1652,14 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
+
+
+def _ensure_columns(conn: sqlite3.Connection, table_name: str, columns: dict[str, str]) -> None:
+    """Add missing SQLite columns for lightweight schema evolution."""
+    existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    for column_name, definition in columns.items():
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
 def _goal_from_row(row: sqlite3.Row) -> GoalMirror:
@@ -1282,6 +1704,7 @@ def _flow_step_from_row(row: sqlite3.Row) -> TaskFlowStep:
         title=str(row["title"]),
         status=str(row["status"]),
         task_id=str(row["task_id"]),
+        depends_on=tuple(_text(item) for item in _json_loads_list(str(row["depends_on_json"])) if _text(item)),
         evidence=_json_loads_object(str(row["evidence_json"])),
         last_error=str(row["last_error"]),
         created_at_ms=int(row["created_at_ms"]),

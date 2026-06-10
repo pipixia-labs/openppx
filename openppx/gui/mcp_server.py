@@ -11,6 +11,13 @@ from mcp.server.fastmcp import FastMCP
 from ..runtime.adk_version import assert_supported_adk_major
 from ..runtime.client_api_service import ClientApiCoordinator
 from .executor import execute_gui_action
+from .job_coordinator import (
+    gui_task_job_cancel,
+    gui_task_job_output,
+    gui_task_job_status,
+    resume_gui_task_job,
+    submit_gui_task_job,
+)
 from .task_runner import execute_gui_task
 
 _SUPPORTED_TRANSPORTS = {"stdio", "sse", "streamable-http"}
@@ -66,6 +73,98 @@ def run_gui_task(
             planner_api_key=planner_api_key,
             planner_base_url=planner_base_url,
         )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def submit_gui_task(
+    *,
+    task: str,
+    max_steps: int | None = None,
+    dry_run: bool = False,
+    planner_model: str | None = None,
+    planner_api_key: str | None = None,
+    planner_base_url: str | None = None,
+) -> dict[str, Any]:
+    """Submit a multi-step desktop GUI task as a background job."""
+    normalized = (task or "").strip()
+    if not normalized:
+        return {"ok": False, "error": "task is required"}
+    try:
+        return submit_gui_task_job(
+            task=normalized,
+            max_steps=max_steps,
+            dry_run=bool(dry_run),
+            planner_model=planner_model,
+            planner_api_key=planner_api_key,
+            planner_base_url=planner_base_url,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def get_gui_task_status(*, job_id: str) -> dict[str, Any]:
+    """Return one background GUI task job status."""
+    normalized = (job_id or "").strip()
+    if not normalized:
+        return {"ok": False, "error": "job_id is required"}
+    try:
+        return gui_task_job_status(normalized)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def get_gui_task_output(*, job_id: str) -> dict[str, Any]:
+    """Return one background GUI task job output or latest checkpoint."""
+    normalized = (job_id or "").strip()
+    if not normalized:
+        return {"ok": False, "error": "job_id is required"}
+    try:
+        return gui_task_job_output(normalized)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def cancel_gui_task(
+    *,
+    job_id: str,
+    terminal_status: str = "cancelled",
+    reason: str = "",
+) -> dict[str, Any]:
+    """Request cooperative stop for one background GUI task job."""
+    normalized = (job_id or "").strip()
+    if not normalized:
+        return {"ok": False, "error": "job_id is required"}
+    try:
+        return gui_task_job_cancel(
+            normalized,
+            terminal_status=terminal_status,
+            reason=reason,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def resume_gui_task(
+    *,
+    job_id: str = "",
+    checkpoint: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resume a background GUI task from an explicit or latest job checkpoint."""
+    try:
+        resume_checkpoint = checkpoint if isinstance(checkpoint, dict) else None
+        normalized_job_id = (job_id or "").strip()
+        if resume_checkpoint is None:
+            if not normalized_job_id:
+                return {"ok": False, "error": "job_id or checkpoint is required"}
+            status = gui_task_job_status(normalized_job_id)
+            if not status.get("ok"):
+                return status
+            raw_checkpoint = status.get("checkpoint")
+            if not isinstance(raw_checkpoint, dict):
+                return {"ok": False, "error": "GUI job has no checkpoint"}
+            resume_checkpoint = raw_checkpoint
+        return resume_gui_task_job(checkpoint=resume_checkpoint)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -252,7 +351,7 @@ def build_gui_mcp_server(name: str = "openppx-gui") -> FastMCP:
         planner_model: str | None = None,
         planner_api_key: str | None = None,
         planner_base_url: str | None = None,
-        ) -> dict[str, Any]:
+    ) -> dict[str, Any]:
         return run_gui_task(
             task=task,
             max_steps=max_steps,
@@ -261,6 +360,66 @@ def build_gui_mcp_server(name: str = "openppx-gui") -> FastMCP:
             planner_api_key=planner_api_key,
             planner_base_url=planner_base_url,
         )
+
+    @server.tool(
+        name="gui_task_submit",
+        description="Submit a multi-step desktop GUI task as a background job and return job_id.",
+    )
+    def _gui_task_submit(
+        task: str,
+        max_steps: int | None = None,
+        dry_run: bool = False,
+        planner_model: str | None = None,
+        planner_api_key: str | None = None,
+        planner_base_url: str | None = None,
+    ) -> dict[str, Any]:
+        return submit_gui_task(
+            task=task,
+            max_steps=max_steps,
+            dry_run=dry_run,
+            planner_model=planner_model,
+            planner_api_key=planner_api_key,
+            planner_base_url=planner_base_url,
+        )
+
+    @server.tool(
+        name="gui_task_status",
+        description="Read one background GUI task job status by job_id.",
+    )
+    def _gui_task_status(job_id: str) -> dict[str, Any]:
+        return get_gui_task_status(job_id=job_id)
+
+    @server.tool(
+        name="gui_task_output",
+        description="Read one background GUI task job output or latest checkpoint by job_id.",
+    )
+    def _gui_task_output(job_id: str) -> dict[str, Any]:
+        return get_gui_task_output(job_id=job_id)
+
+    @server.tool(
+        name="gui_task_cancel",
+        description="Request cooperative stop for one background GUI task job.",
+    )
+    def _gui_task_cancel(
+        job_id: str,
+        terminal_status: str = "cancelled",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        return cancel_gui_task(
+            job_id=job_id,
+            terminal_status=terminal_status,
+            reason=reason,
+        )
+
+    @server.tool(
+        name="gui_task_resume",
+        description="Resume a background GUI task from an explicit or latest job checkpoint.",
+    )
+    def _gui_task_resume(
+        job_id: str = "",
+        checkpoint: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return resume_gui_task(job_id=job_id, checkpoint=checkpoint)
 
     @server.tool(
         name="agent_access_get",

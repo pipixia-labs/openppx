@@ -9,6 +9,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+from openppx.gui.checkpoint import GUI_TASK_CHECKPOINT_SCHEMA, GUI_TASK_CHECKPOINT_SCHEMA_VERSION
 from openppx.gui.executor import CapturedScreen
 from openppx.gui.task_runner import GuiTaskRunner, execute_gui_task
 from openppx.runtime.sync_tool_proxy import SyncCancellationToken
@@ -152,6 +153,88 @@ class GuiTaskRunnerTests(unittest.TestCase):
         self.assertEqual(result["steps"][0]["executor_raw_model_output"], '{"action":"left_click","coordinate":[500,500]}')
         self.assertEqual(result["steps"][0]["screenshots"]["before_path"], "/tmp/before.png")
         self.assertEqual(actions, ["click login button"])
+
+    def test_task_runner_writes_checkpoints_through_completion(self) -> None:
+        planned = [
+            '{"thinking":"remember user","action":{"type":"save_info","params":{"key":"username","value":"alice"}}}',
+            '{"thinking":"done","action":{"type":"reply","params":{"message":"saved"}}}',
+        ]
+        checkpoints: list[dict[str, object]] = []
+        runner = GuiTaskRunner(
+            planner_model="test-planner",
+            planner_api_key="test-key",
+            planner_runner=object(),
+            action_executor=lambda **_: {"ok": True},
+            runtime=_FakeRuntime(),
+        )
+
+        with unittest.mock.patch.object(
+            runner,
+            "_plan_next_adk_async",
+            new=unittest.mock.AsyncMock(side_effect=planned),
+        ):
+            result = runner.run(
+                "save login info",
+                max_steps=4,
+                checkpoint_callback=lambda state: checkpoints.append(dict(state)),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(len(checkpoints), 3)
+        self.assertEqual(checkpoints[0]["schema"], GUI_TASK_CHECKPOINT_SCHEMA)
+        self.assertEqual(checkpoints[0]["schema_version"], GUI_TASK_CHECKPOINT_SCHEMA_VERSION)
+        self.assertEqual(checkpoints[0]["next_step"], 1)
+        self.assertEqual(checkpoints[-1]["status_code"], "completed")
+        self.assertEqual(checkpoints[-1]["saved_info"], {"username": "alice"})
+        self.assertEqual(len(checkpoints[-1]["history"]), 1)
+
+    def test_task_runner_resumes_from_initial_state(self) -> None:
+        planned = ['{"thinking":"done","action":{"type":"reply","params":{"message":"continued"}}}']
+        initial_state = {
+            "task": "submit the form",
+            "max_steps": 5,
+            "dry_run": True,
+            "current_plan": "Continue from saved username.",
+            "saved_info": {"username": "alice"},
+            "history": [
+                {
+                    "step": 1,
+                    "type": "save_info",
+                    "action": "save_info:username",
+                    "ok": True,
+                }
+            ],
+            "next_step": 2,
+        }
+        checkpoints: list[dict[str, object]] = []
+        runner = GuiTaskRunner(
+            planner_model="test-planner",
+            planner_api_key="test-key",
+            planner_runner=object(),
+            action_executor=lambda **_: {"ok": True},
+            runtime=_FakeRuntime(),
+        )
+
+        with unittest.mock.patch.object(
+            runner,
+            "_plan_next_adk_async",
+            new=unittest.mock.AsyncMock(side_effect=planned),
+        ):
+            result = runner.run(
+                "submit the form",
+                max_steps=5,
+                initial_state=initial_state,
+                checkpoint_callback=lambda state: checkpoints.append(dict(state)),
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["message"], "continued")
+        self.assertEqual(result["current_plan"], "Continue from saved username.")
+        self.assertEqual(result["saved_info_snapshot"], {"username": "alice"})
+        self.assertEqual(result["step_count"], 1)
+        self.assertEqual(checkpoints[0]["schema"], GUI_TASK_CHECKPOINT_SCHEMA)
+        self.assertEqual(checkpoints[0]["schema_version"], GUI_TASK_CHECKPOINT_SCHEMA_VERSION)
+        self.assertEqual(checkpoints[0]["next_step"], 2)
 
     def test_task_runner_passes_cancel_token_to_action_executor(self) -> None:
         planned = [
@@ -365,8 +448,14 @@ class GuiTaskRunnerTests(unittest.TestCase):
             def __init__(self, **kwargs: object) -> None:
                 captured.update(kwargs)
 
-            def run(self, task: str, *, max_steps: int = 8, dry_run: bool = False) -> dict[str, object]:
-                return {"ok": True, "task": task, "max_steps": max_steps, "dry_run": dry_run}
+            def run(self, task: str, **kwargs: object) -> dict[str, object]:
+                return {
+                    "ok": True,
+                    "task": task,
+                    "max_steps": kwargs.get("max_steps"),
+                    "dry_run": kwargs.get("dry_run"),
+                    "has_checkpoint_callback": callable(kwargs.get("checkpoint_callback")),
+                }
 
         with unittest.mock.patch("openppx.gui.task_runner.GuiTaskRunner", _FakeRunner):
             with unittest.mock.patch.dict(

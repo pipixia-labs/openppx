@@ -245,6 +245,33 @@ def _ensure_columns(conn: sqlite3.Connection, table_name: str, columns: dict[str
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {name} {definition}")
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    """Return whether one SQLite table exists."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _checkpoint_retention_scope(
+    *,
+    task_id: str | None = None,
+    session_id: str | None = None,
+) -> tuple[str, list[Any]]:
+    """Build the checkpoint retention SQL scope clause."""
+    conditions: list[str] = []
+    params: list[Any] = []
+    if task_id:
+        conditions.append("task.task_id = ?")
+        params.append(str(task_id).strip())
+    if session_id:
+        conditions.append("task.session_id = ?")
+        params.append(str(session_id).strip())
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where, params
+
+
 def _task_from_row(row: sqlite3.Row) -> TaskRun:
     """Project one task row into a dataclass."""
     return TaskRun(
@@ -543,6 +570,30 @@ class TaskStore:
             row = conn.execute("SELECT * FROM task_runs WHERE task_id = ?", (task_id,)).fetchone()
         return _task_from_row(row) if row is not None else None
 
+    def get_task_by_dedupe_key(
+        self,
+        dedupe_key: str,
+        *,
+        statuses: list[str] | tuple[str, ...] | None = None,
+    ) -> TaskRun | None:
+        """Return the most recent task for one idempotency key."""
+        normalized = str(dedupe_key or "").strip()
+        if not normalized:
+            return None
+        conditions = ["dedupe_key = ?"]
+        params: list[Any] = [normalized]
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            conditions.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+        where = " AND ".join(conditions)
+        with _connect(self._db_path) as conn:
+            row = conn.execute(
+                f"SELECT * FROM task_runs WHERE {where} ORDER BY updated_at_ms DESC LIMIT 1",
+                tuple(params),
+            ).fetchone()
+        return _task_from_row(row) if row is not None else None
+
     def list_tasks(
         self,
         *,
@@ -597,6 +648,103 @@ class TaskStore:
                 (*selected_statuses, current_ms, safe_limit),
             ).fetchall()
         return [_task_from_row(row) for row in rows]
+
+    def count_by_status(self, *, session_id: str | None = None) -> dict[str, int]:
+        """Return task counts grouped by status."""
+        conditions: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        with _connect(self._db_path) as conn:
+            rows = conn.execute(
+                f"SELECT status, COUNT(*) AS count FROM task_runs {where} GROUP BY status ORDER BY status",
+                params,
+            ).fetchall()
+        return {str(row["status"]): int(row["count"]) for row in rows}
+
+    def list_stuck_tasks(
+        self,
+        *,
+        older_than_ms: int,
+        statuses: list[str] | tuple[str, ...] | None = None,
+        session_id: str | None = None,
+        now_ms: int | None = None,
+        limit: int = 50,
+    ) -> list[TaskRun]:
+        """List non-terminal tasks that have not changed within the age budget."""
+        selected_statuses = list(statuses or TASK_ACTIVE_STATUSES)
+        placeholders = ", ".join("?" for _ in selected_statuses)
+        cutoff_ms = (_now_ms() if now_ms is None else int(now_ms)) - max(0, int(older_than_ms))
+        conditions = [f"status IN ({placeholders})", "updated_at_ms <= ?"]
+        params: list[Any] = [*selected_statuses, cutoff_ms]
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        safe_limit = max(1, min(int(limit or 50), 500))
+        with _connect(self._db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM task_runs
+                WHERE {' AND '.join(conditions)}
+                ORDER BY updated_at_ms ASC
+                LIMIT ?
+                """,
+                (*params, safe_limit),
+            ).fetchall()
+        return [_task_from_row(row) for row in rows]
+
+    def list_terminal_tasks_older_than(
+        self,
+        *,
+        older_than_ms: int,
+        session_id: str | None = None,
+        now_ms: int | None = None,
+        limit: int = 100,
+    ) -> list[TaskRun]:
+        """List terminal tasks eligible for retention cleanup."""
+        cutoff_ms = (_now_ms() if now_ms is None else int(now_ms)) - max(0, int(older_than_ms))
+        conditions = [f"status IN ({', '.join('?' for _ in TASK_TERMINAL_STATUSES)})", "updated_at_ms <= ?"]
+        params: list[Any] = [*sorted(TASK_TERMINAL_STATUSES), cutoff_ms]
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        safe_limit = max(1, min(int(limit or 100), 1000))
+        with _connect(self._db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM task_runs
+                WHERE {' AND '.join(conditions)}
+                ORDER BY updated_at_ms ASC
+                LIMIT ?
+                """,
+                (*params, safe_limit),
+            ).fetchall()
+        return [_task_from_row(row) for row in rows]
+
+    def delete_tasks(self, task_ids: list[str] | tuple[str, ...]) -> int:
+        """Delete task facts and TaskRuntime child records for explicit task ids.
+
+        ToolCallRecord rows are intentionally retained because they are the
+        execution-level idempotency ledger for external side effects.
+        """
+        normalized_ids = [str(task_id or "").strip() for task_id in task_ids if str(task_id or "").strip()]
+        if not normalized_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        with self._lock, _connect(self._db_path) as conn:
+            for table in (
+                "task_events",
+                "task_inputs",
+                "task_deliveries",
+                "task_artifacts",
+                "task_checkpoints",
+            ):
+                if _table_exists(conn, table):
+                    conn.execute(f"DELETE FROM {table} WHERE task_id IN ({placeholders})", normalized_ids)
+            cursor = conn.execute(f"DELETE FROM task_runs WHERE task_id IN ({placeholders})", normalized_ids)
+        return int(cursor.rowcount or 0)
 
     def claim_task(
         self,
@@ -1277,6 +1425,49 @@ class TaskArtifactStore:
             ).fetchall()
         return [_artifact_from_row(row) for row in rows]
 
+    def count_orphaned_artifacts(self) -> int:
+        """Return task artifact index rows whose parent task no longer exists."""
+        with _connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM task_artifacts AS artifact
+                LEFT JOIN task_runs AS task ON task.task_id = artifact.task_id
+                WHERE task.task_id IS NULL
+                """
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
+    def list_orphaned_artifacts(self, *, limit: int = 100) -> list[TaskArtifact]:
+        """List task artifact index rows whose parent task no longer exists."""
+        safe_limit = max(1, min(int(limit or 100), 1000))
+        with _connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT artifact.*
+                FROM task_artifacts AS artifact
+                LEFT JOIN task_runs AS task ON task.task_id = artifact.task_id
+                WHERE task.task_id IS NULL
+                ORDER BY artifact.artifact_id ASC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+        return [_artifact_from_row(row) for row in rows]
+
+    def delete_artifact_records(self, artifact_ids: list[int] | tuple[int, ...]) -> int:
+        """Delete explicit task artifact index rows without touching files."""
+        normalized_ids = [int(artifact_id) for artifact_id in artifact_ids if int(artifact_id) > 0]
+        if not normalized_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        with self._lock, _connect(self._db_path) as conn:
+            cursor = conn.execute(
+                f"DELETE FROM task_artifacts WHERE artifact_id IN ({placeholders})",
+                normalized_ids,
+            )
+        return int(cursor.rowcount or 0)
+
 
 class TaskCheckpointStore:
     """Store durable task checkpoint facts."""
@@ -1367,3 +1558,160 @@ class TaskCheckpointStore:
                 (task_id, safe_limit),
             ).fetchall()
         return [_checkpoint_from_row(row) for row in rows]
+
+    def count_orphaned_checkpoints(self) -> int:
+        """Return checkpoint rows whose parent task no longer exists."""
+        with _connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM task_checkpoints AS checkpoint
+                LEFT JOIN task_runs AS task ON task.task_id = checkpoint.task_id
+                WHERE task.task_id IS NULL
+                """
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
+    def list_orphaned_checkpoints(self, *, limit: int = 100) -> list[TaskCheckpoint]:
+        """List checkpoint rows whose parent task no longer exists."""
+        safe_limit = max(1, min(int(limit or 100), 1000))
+        with _connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT checkpoint.*
+                FROM task_checkpoints AS checkpoint
+                LEFT JOIN task_runs AS task ON task.task_id = checkpoint.task_id
+                WHERE task.task_id IS NULL
+                ORDER BY checkpoint.created_at_ms ASC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+        return [_checkpoint_from_row(row) for row in rows]
+
+    def count_retention_candidates(
+        self,
+        *,
+        older_than_ms: int,
+        keep_latest_per_task: int = 3,
+        task_id: str | None = None,
+        session_id: str | None = None,
+        now_ms: int | None = None,
+    ) -> int:
+        """Return checkpoint rows eligible for retention cleanup."""
+        cutoff_ms = (_now_ms() if now_ms is None else int(now_ms)) - max(0, int(older_than_ms))
+        keep_latest = max(0, min(int(keep_latest_per_task or 0), 100))
+        where, params = _checkpoint_retention_scope(task_id=task_id, session_id=session_id)
+        with _connect(self._db_path) as conn:
+            row = conn.execute(
+                f"""
+                WITH ranked AS (
+                    SELECT
+                        checkpoint.checkpoint_id,
+                        checkpoint.created_at_ms,
+                        task.checkpoint_ref AS current_checkpoint_ref,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY checkpoint.task_id
+                            ORDER BY checkpoint.created_at_ms DESC, checkpoint.checkpoint_id DESC
+                        ) AS checkpoint_rank
+                    FROM task_checkpoints AS checkpoint
+                    INNER JOIN task_runs AS task ON task.task_id = checkpoint.task_id
+                    {where}
+                )
+                SELECT COUNT(*) AS count
+                FROM ranked
+                WHERE created_at_ms <= ?
+                  AND checkpoint_id != current_checkpoint_ref
+                  AND checkpoint_rank > ?
+                """,
+                (*params, cutoff_ms, keep_latest),
+            ).fetchone()
+        return int(row["count"]) if row is not None else 0
+
+    def list_retention_candidates(
+        self,
+        *,
+        older_than_ms: int,
+        keep_latest_per_task: int = 3,
+        task_id: str | None = None,
+        session_id: str | None = None,
+        now_ms: int | None = None,
+        limit: int = 100,
+    ) -> list[TaskCheckpoint]:
+        """List old non-current checkpoints that can be cleaned up.
+
+        The current `TaskRun.checkpoint_ref` is never returned, and the newest
+        `keep_latest_per_task` checkpoints for each task are kept even if old.
+        """
+        cutoff_ms = (_now_ms() if now_ms is None else int(now_ms)) - max(0, int(older_than_ms))
+        keep_latest = max(0, min(int(keep_latest_per_task or 0), 100))
+        safe_limit = max(1, min(int(limit or 100), 1000))
+        where, params = _checkpoint_retention_scope(task_id=task_id, session_id=session_id)
+        with _connect(self._db_path) as conn:
+            rows = conn.execute(
+                f"""
+                WITH ranked AS (
+                    SELECT
+                        checkpoint.*,
+                        task.checkpoint_ref AS current_checkpoint_ref,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY checkpoint.task_id
+                            ORDER BY checkpoint.created_at_ms DESC, checkpoint.checkpoint_id DESC
+                        ) AS checkpoint_rank
+                    FROM task_checkpoints AS checkpoint
+                    INNER JOIN task_runs AS task ON task.task_id = checkpoint.task_id
+                    {where}
+                )
+                SELECT *
+                FROM ranked
+                WHERE created_at_ms <= ?
+                  AND checkpoint_id != current_checkpoint_ref
+                  AND checkpoint_rank > ?
+                ORDER BY created_at_ms ASC, checkpoint_id ASC
+                LIMIT ?
+                """,
+                (*params, cutoff_ms, keep_latest, safe_limit),
+            ).fetchall()
+        return [_checkpoint_from_row(row) for row in rows]
+
+    def delete_checkpoints(self, checkpoint_ids: list[str] | tuple[str, ...]) -> int:
+        """Delete explicit checkpoint rows."""
+        normalized_ids = [
+            str(checkpoint_id or "").strip()
+            for checkpoint_id in checkpoint_ids
+            if str(checkpoint_id or "").strip()
+        ]
+        if not normalized_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        with self._lock, _connect(self._db_path) as conn:
+            cursor = conn.execute(
+                f"DELETE FROM task_checkpoints WHERE checkpoint_id IN ({placeholders})",
+                normalized_ids,
+            )
+        return int(cursor.rowcount or 0)
+
+    def delete_retention_checkpoints(self, checkpoint_ids: list[str] | tuple[str, ...]) -> int:
+        """Delete checkpoint rows while preserving any current task checkpoint refs."""
+        normalized_ids = [
+            str(checkpoint_id or "").strip()
+            for checkpoint_id in checkpoint_ids
+            if str(checkpoint_id or "").strip()
+        ]
+        if not normalized_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        with self._lock, _connect(self._db_path) as conn:
+            cursor = conn.execute(
+                f"""
+                DELETE FROM task_checkpoints
+                WHERE checkpoint_id IN ({placeholders})
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM task_runs AS task
+                    WHERE task.checkpoint_ref = task_checkpoints.checkpoint_id
+                  )
+                """,
+                normalized_ids,
+            )
+        return int(cursor.rowcount or 0)

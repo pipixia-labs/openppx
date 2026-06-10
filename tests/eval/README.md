@@ -12,12 +12,16 @@ Run from the `openppx_root` repository root:
 ```bash
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_smoke.evalset.json --config_file_path tests/eval/eval_config.json
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_quality.evalset.json --config_file_path tests/eval/eval_config.json
+adk eval tests/eval/openppx tests/eval/evalsets/openppx_summary.evalset.json --config_file_path tests/eval/eval_config.json
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_tools.evalset.json --config_file_path tests/eval/eval_config_tools.json
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_memory.evalset.json --config_file_path tests/eval/eval_config.json
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_subagent.evalset.json --config_file_path tests/eval/eval_config.json
 adk eval tests/eval/openppx tests/eval/evalsets/openppx_permissions.evalset.json --config_file_path tests/eval/eval_config.json
 OPENPPX_MCP_SERVERS_JSON='{"eval":{"command":"./.venv/bin/python","args":["tests/eval/mock_mcp_server.py"],"toolNamePrefix":"mcp_eval"}}' \
   adk eval tests/eval/openppx tests/eval/evalsets/openppx_mcp.evalset.json --config_file_path tests/eval/eval_config_tools.json
+OPENPPX_TASK_DB_PATH="$(pwd)/.tmp/openppx-continue-eval-tasks.db" ./.venv/bin/python tests/eval/seed_continue_task.py
+OPENPPX_TASK_DB_PATH="$(pwd)/.tmp/openppx-continue-eval-tasks.db" \
+  adk eval tests/eval/openppx tests/eval/evalsets/openppx_continue.evalset.json --config_file_path tests/eval/eval_config_tools.json
 ```
 
 If the local environment was installed without ADK eval extras, install the
@@ -33,8 +37,15 @@ schema, and app-name wiring; it does not run live LLM inference.
 
 `openppx_smoke` is the smallest no-tool entrypoint check. `openppx_quality`
 covers low-side-effect response, session-context, and refusal behavior.
+`openppx_summary` covers long-task marker preservation in model summaries.
 `openppx_tools` covers a safe tool-trajectory baseline and uses an `IN_ORDER`
 trajectory config so future harmless helper calls do not make the case fail.
 `openppx_memory`, `openppx_subagent`, `openppx_permissions`, and `openppx_mcp`
 extend coverage to multi-turn session memory, no-unnecessary-delegation boundaries, dangerous-tool
-refusal, and a safe mock MCP tool.
+refusal, and a safe mock MCP tool. `openppx_continue` covers the natural-language
+"continue execution" behavior against a seeded rejoinable TaskRun; it expects
+the agent to inspect task state before calling `resume_task`.
+
+`staged_summary_quality_cases.json` is a deterministic quality-policy baseline
+for staged long-task summaries. It is loaded by pytest rather than `adk eval`
+because it validates local summary quality gates, not live model behavior.

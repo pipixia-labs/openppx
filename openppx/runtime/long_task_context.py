@@ -78,7 +78,7 @@ def render_long_task_context(
         "- Large task output may be stored as artifacts; inspect artifact metadata instead of copying full logs.",
         "- Goal mirrors and todos are short-term context facts; update them when the user goal or current plan changes.",
         "- Do not treat todos as durable execution state; TaskRun facts remain the source of truth for running work.",
-        "- TaskFlow facts describe multi-step plans and current steps; they do not execute or resume work by themselves.",
+        "- TaskFlow facts describe multi-step DAG plans and current steps; they advance bookkeeping but do not execute external work by themselves.",
         "- Staged summaries are compact context facts, not proof that work completed.",
     ]
     goal = context.get_active_goal(session_id)
@@ -115,10 +115,16 @@ def render_long_task_context(
         if flow.blocked_task_id:
             lines.append(f"- blocked_task_id: {flow.blocked_task_id}")
         if flow_steps:
+            projection = context.project_flow(flow_id=flow.flow_id)
+            if projection.get("ready_step_ids"):
+                lines.append(f"- ready_step_ids: {', '.join(projection['ready_step_ids'][:5])}")
+            if projection.get("blocked_step_ids"):
+                lines.append(f"- blocked_step_ids: {', '.join(projection['blocked_step_ids'][:5])}")
             lines.append("- steps:")
             for step in flow_steps:
                 task_suffix = f" task_id={step.task_id}" if step.task_id else ""
-                lines.append(f"  - {step.order_index}. [{step.status}] {step.title}{task_suffix}")
+                dep_suffix = f" depends_on={','.join(step.depends_on)}" if step.depends_on else ""
+                lines.append(f"  - {step.order_index}. [{step.status}] {step.title}{task_suffix}{dep_suffix}")
     else:
         lines.extend(["", "Current TaskFlow: none"])
     summaries = context.list_summaries(session_id=session_id, limit=3) if session_id else []

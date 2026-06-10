@@ -18,21 +18,25 @@ from urllib.error import HTTPError
 from urllib.error import URLError
 
 from openppx.browser.service import BrowserDispatchResponse
+from openppx.runtime.checkpoint_schema import TASK_CHECKPOINT_ENVELOPE_SCHEMA, TASK_CHECKPOINT_METADATA_KEY
 from openppx.runtime.task_execution import TaskController
 from openppx.runtime.task_store import TaskStore
 from openppx.runtime.tool_context import route_context
 from openppx.tooling.tool_meta import get_tool_meta
 from openppx.tooling.registry import (
     SubagentSpawnRequest,
+    advance_task_flow,
     browser,
     cancel_task,
     complete_goal,
     computer_task,
     computer_use,
+    check_browser_remote_job_protocol,
     configure_browser_runtime,
     configure_heartbeat_waker,
     configure_subagent_dispatcher,
     cron,
+    dispatch_task_action,
     message,
     edit_file,
     exec_command,
@@ -40,18 +44,29 @@ from openppx.tooling.registry import (
     glob,
     grep,
     interrupt_task,
+    list_browser_remote_jobs,
+    list_browser_remote_providers,
     list_dir,
     list_context_summaries,
+    list_skill_api_runners,
     list_task_flows,
     long_task,
     message,
     message_file,
     message_image,
     process_session,
+    pause_task,
     read_file,
+    resume_task,
+    rollup_context_summaries,
+    show_task,
     show_task_flow,
     spawn_subagent,
+    start_gui_task,
+    evaluate_staged_summary_quality_cases,
     summarize_context_text,
+    summarize_staged_summary_quality_log,
+    task_control_snapshot,
     update_task_flow_step,
     web_fetch,
     web_search,
@@ -126,20 +141,77 @@ class ToolsTests(unittest.TestCase):
     def test_builtin_tool_metadata_marks_read_and_high_risk_tools(self) -> None:
         read_meta = get_tool_meta("read_file")
         exec_meta = get_tool_meta("exec")
+        runner_catalog_meta = get_tool_meta("list_skill_api_runners")
         pause_meta = get_tool_meta("pause_task")
+        snapshot_meta = get_tool_meta("task_control_snapshot")
+        dispatch_meta = get_tool_meta("dispatch_task_action")
+        summary_eval_meta = get_tool_meta("evaluate_staged_summary_quality_cases")
+        summary_log_meta = get_tool_meta("summarize_staged_summary_quality_log")
+        browser_contract_meta = get_tool_meta("check_browser_remote_job_protocol")
+        remediation_meta = get_tool_meta("remediate_stuck_tasks")
+        cleanup_meta = get_tool_meta("cleanup_terminal_tasks")
+        orphan_cleanup_meta = get_tool_meta("cleanup_orphan_runtime_facts")
+        checkpoint_cleanup_meta = get_tool_meta("cleanup_checkpoint_retention")
+        start_gui_meta = get_tool_meta("start_gui_task")
 
         self.assertIsNotNone(read_meta)
         self.assertIsNotNone(exec_meta)
+        self.assertIsNotNone(runner_catalog_meta)
         self.assertIsNotNone(pause_meta)
+        self.assertIsNotNone(snapshot_meta)
+        self.assertIsNotNone(dispatch_meta)
+        self.assertIsNotNone(summary_eval_meta)
+        self.assertIsNotNone(summary_log_meta)
+        self.assertIsNotNone(browser_contract_meta)
+        self.assertIsNotNone(remediation_meta)
+        self.assertIsNotNone(cleanup_meta)
+        self.assertIsNotNone(orphan_cleanup_meta)
+        self.assertIsNotNone(checkpoint_cleanup_meta)
+        self.assertIsNotNone(start_gui_meta)
         assert read_meta is not None
         assert exec_meta is not None
+        assert runner_catalog_meta is not None
         assert pause_meta is not None
+        assert snapshot_meta is not None
+        assert dispatch_meta is not None
+        assert summary_eval_meta is not None
+        assert summary_log_meta is not None
+        assert browser_contract_meta is not None
+        assert remediation_meta is not None
+        assert cleanup_meta is not None
+        assert orphan_cleanup_meta is not None
+        assert checkpoint_cleanup_meta is not None
+        assert start_gui_meta is not None
         self.assertTrue(read_meta.read_only)
         self.assertFalse(exec_meta.read_only)
         self.assertTrue(exec_meta.exclusive)
         self.assertEqual(exec_meta.risk, "high")
+        self.assertTrue(runner_catalog_meta.read_only)
+        self.assertTrue(summary_eval_meta.read_only)
+        self.assertTrue(summary_log_meta.read_only)
         self.assertFalse(pause_meta.read_only)
         self.assertEqual(pause_meta.risk, "medium")
+        self.assertTrue(snapshot_meta.read_only)
+        self.assertFalse(dispatch_meta.read_only)
+        self.assertEqual(dispatch_meta.risk, "high")
+        self.assertFalse(browser_contract_meta.read_only)
+        self.assertEqual(browser_contract_meta.risk, "high")
+        self.assertFalse(remediation_meta.read_only)
+        self.assertTrue(remediation_meta.exclusive)
+        self.assertEqual(remediation_meta.risk, "high")
+        self.assertFalse(cleanup_meta.read_only)
+        self.assertTrue(cleanup_meta.exclusive)
+        self.assertFalse(checkpoint_cleanup_meta.read_only)
+        self.assertTrue(checkpoint_cleanup_meta.exclusive)
+        self.assertEqual(checkpoint_cleanup_meta.risk, "high")
+        self.assertEqual(cleanup_meta.risk, "high")
+        self.assertFalse(orphan_cleanup_meta.read_only)
+        self.assertTrue(orphan_cleanup_meta.exclusive)
+        self.assertEqual(orphan_cleanup_meta.risk, "high")
+        self.assertFalse(start_gui_meta.read_only)
+        self.assertTrue(start_gui_meta.exclusive)
+        self.assertEqual(start_gui_meta.category, "gui")
+        self.assertEqual(start_gui_meta.risk, "high")
 
     def test_spawn_subagent_respects_delegation_policy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -154,6 +226,62 @@ class ToolsTests(unittest.TestCase):
             out = spawn_subagent(prompt="run task", tool_context=ctx)
             self.assertEqual(out["status"], "error")
             self.assertIn("delegation is disabled", out["error"])
+
+    def test_skill_api_runner_catalog_tool_lists_supported_recipe_runners(self) -> None:
+        payload = json.loads(list_skill_api_runners())
+
+        self.assertTrue(payload["ok"])
+        names = {item["name"] for item in payload["catalog"]["items"]}
+        self.assertEqual(names, {"http", "python", "node", "command"})
+        command = next(item for item in payload["catalog"]["items"] if item["name"] == "command")
+        self.assertIn(".command.json", command["suffixes"])
+
+    def test_staged_summary_eval_and_log_tools_return_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            os.environ["OPENPPX_WORKSPACE"] = str(workspace)
+            cases_dir = workspace / "tests" / "eval"
+            cases_dir.mkdir(parents=True)
+            cases_path = cases_dir / "staged_summary_quality_cases.json"
+            cases_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "cases": [
+                            {
+                                "name": "preserve task marker",
+                                "source": "Task task_1 wrote artifact_a." + ("A" * 120),
+                                "summary": "task_1 wrote artifact_a.",
+                                "max_summary_chars": 100,
+                                "max_compression_ratio": 0.9,
+                                "require_marker_preservation": True,
+                                "must_include": ["task_1", "artifact_a"],
+                                "expected_ok": True,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            log_path = workspace / "summary-quality.jsonl"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"outcome": "accepted", "reason": "ok"}),
+                        json.dumps({"outcome": "rejected", "reason": "weak_compression"}),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            eval_payload = json.loads(evaluate_staged_summary_quality_cases(str(cases_path)))
+            log_payload = json.loads(summarize_staged_summary_quality_log(str(log_path)))
+
+        self.assertTrue(eval_payload["ok"])
+        self.assertEqual(eval_payload["case_count"], 1)
+        self.assertTrue(log_payload["ok"])
+        self.assertEqual(log_payload["outcomes"]["accepted"], 1)
+        self.assertEqual(log_payload["reasons"]["weak_compression"], 1)
 
     def test_read_file_supports_file_path_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -355,6 +483,25 @@ class ToolsTests(unittest.TestCase):
         self.assertIn('"ok": true', result)
         mocked.assert_called_once()
 
+    def test_task_control_snapshot_and_dispatch_tools_return_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            task = TaskStore().create_task(
+                kind="manual",
+                status="completed",
+                title="done",
+                terminal_summary="finished output",
+                runner_capabilities={"output": True},
+            )
+
+            snapshot = json.loads(task_control_snapshot(task_id=task.task_id))
+            output = json.loads(dispatch_task_action(task.task_id, "inspect_output"))
+
+            self.assertTrue(snapshot["ok"])
+            self.assertEqual(snapshot["items"][0]["task_id"], task.task_id)
+            self.assertTrue(output["ok"])
+            self.assertIn("finished output", output["output"])
+
     def test_computer_task_materializes_long_running_builtin_gui_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
@@ -524,6 +671,171 @@ class ToolsTests(unittest.TestCase):
             self.assertEqual(failed.status, "failed")
             self.assertIn("gui failed", failed.last_error)
 
+    def test_start_gui_task_materializes_checkpointable_gui_job_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            ctx = pytypes.SimpleNamespace(
+                user_id="user-1",
+                session=pytypes.SimpleNamespace(id="session-1"),
+                invocation_id="inv-1",
+                function_call_id="fc-1",
+            )
+            job_payload = {
+                "ok": True,
+                "job_id": "gui_job_1",
+                "status": "running",
+                "checkpoint": {
+                    "task": "finish login flow",
+                    "current_plan": "finish login flow",
+                    "history": [],
+                    "next_step": 1,
+                    "summary": "GUI job checkpoint before step 1.",
+                },
+            }
+            with patch("openppx.tooling.registry.submit_gui_task_job", return_value=job_payload) as submit:
+                first = json.loads(
+                    start_gui_task(
+                        "finish login flow",
+                        max_steps=5,
+                        dry_run=True,
+                        planner_model="m",
+                        planner_api_key="k",
+                        tool_context=ctx,
+                    )
+                )
+                second = json.loads(
+                    start_gui_task(
+                        "finish login flow",
+                        max_steps=5,
+                        dry_run=True,
+                        planner_model="m",
+                        planner_api_key="k",
+                        tool_context=ctx,
+                    )
+                )
+
+            self.assertTrue(first["ok"])
+            self.assertEqual(first["mode"], "task")
+            self.assertEqual(first["status"], "running")
+            self.assertEqual(first["job_id"], "gui_job_1")
+            self.assertEqual(second["task_id"], first["task_id"])
+            self.assertTrue(second["replayed"])
+            submit.assert_called_once()
+            with patch(
+                "openppx.runtime.task_execution.gui_task_job_status",
+                return_value={
+                    "ok": True,
+                    "job_id": "gui_job_1",
+                    "status": "running",
+                    "summary": "GUI job `gui_job_1` started.",
+                    "checkpoint": job_payload["checkpoint"],
+                    "result": {},
+                },
+            ):
+                shown = TaskController(task_store=TaskStore()).show_task(first["task_id"])
+            self.assertEqual(shown["task"]["external_ref"], "gui_job_1")
+            self.assertEqual(shown["task"]["controls"]["pause_tool"], "pause_task")
+            self.assertEqual(shown["checkpoints"][0]["payload"]["next_step"], 1)
+
+    def test_start_gui_task_show_pause_resume_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            ctx = pytypes.SimpleNamespace(
+                user_id="user-1",
+                session=pytypes.SimpleNamespace(id="session-1"),
+                invocation_id="inv-1",
+                function_call_id="fc-1",
+            )
+            initial_checkpoint = {
+                "task": "finish login flow",
+                "current_plan": "finish login flow",
+                "history": [],
+                "next_step": 1,
+                "summary": "GUI job checkpoint before step 1.",
+            }
+            paused_checkpoint = {
+                "task": "finish login flow",
+                "current_plan": "continue after login click",
+                "history": [{"step": 1, "type": "execute", "action": "click login"}],
+                "next_step": 2,
+                "summary": "Paused after step 1.",
+            }
+            with patch(
+                "openppx.tooling.registry.submit_gui_task_job",
+                return_value={"ok": True, "job_id": "gui_job_old", "status": "running", "checkpoint": initial_checkpoint},
+            ):
+                started = json.loads(start_gui_task("finish login flow", max_steps=5, tool_context=ctx))
+
+            task_id = started["task_id"]
+            running_status = {
+                "ok": True,
+                "job_id": "gui_job_old",
+                "status": "running",
+                "summary": "Running step 1.",
+                "checkpoint": initial_checkpoint,
+                "result": {},
+            }
+            paused_status = {
+                "ok": True,
+                "job_id": "gui_job_old",
+                "status": "paused",
+                "summary": "Paused after step 1.",
+                "checkpoint": paused_checkpoint,
+                "result": {},
+            }
+            with patch("openppx.runtime.task_execution.gui_task_job_status", return_value=running_status):
+                shown_running = json.loads(show_task(task_id))
+
+            with patch("openppx.runtime.task_execution.gui_task_job_status", return_value=running_status):
+                with patch(
+                    "openppx.runtime.task_execution.gui_task_job_cancel",
+                    return_value={"ok": True, "job_id": "gui_job_old", "status": "stop_requested", "action": "paused"},
+                ) as cancel:
+                    paused_request = json.loads(pause_task(task_id))
+
+            with patch("openppx.runtime.task_execution.gui_task_job_status", return_value=paused_status):
+                shown_paused = json.loads(show_task(task_id))
+
+            with patch("openppx.runtime.task_execution.gui_task_job_status", return_value=paused_status):
+                with patch(
+                    "openppx.runtime.task_execution.resume_gui_task_job",
+                    return_value={"ok": True, "job_id": "gui_job_new", "status": "running"},
+                ) as resume:
+                    resumed = json.loads(resume_task(task_id))
+
+            self.assertTrue(started["ok"])
+            self.assertEqual(shown_running["task"]["status"], "running")
+            self.assertEqual(shown_running["task"]["controls"]["pause_tool"], "pause_task")
+            self.assertEqual(paused_request["action"], "pause_requested")
+            self.assertFalse(paused_request["task"]["controls"]["can_pause"])
+            self.assertEqual(shown_paused["task"]["status"], "paused")
+            self.assertEqual(shown_paused["task"]["controls"]["resume_tool"], "resume_task")
+            shown_checkpoint = shown_paused["checkpoints"][0]["payload"]
+            self.assertEqual(shown_checkpoint["task"], paused_checkpoint["task"])
+            self.assertEqual(shown_checkpoint["history"], paused_checkpoint["history"])
+            self.assertEqual(shown_checkpoint["next_step"], paused_checkpoint["next_step"])
+            self.assertEqual(
+                shown_checkpoint[TASK_CHECKPOINT_METADATA_KEY]["schema"],
+                TASK_CHECKPOINT_ENVELOPE_SCHEMA,
+            )
+            self.assertTrue(resumed["ok"])
+            self.assertEqual(resumed["action"], "resumed")
+            self.assertEqual(resumed["task"]["status"], "running")
+            self.assertEqual(resumed["task"]["external_ref"], "gui_job_new")
+            cancel.assert_called_once_with(
+                "gui_job_old",
+                terminal_status="paused",
+                reason="GUI job pause requested by user.",
+            )
+            resume_checkpoint = resume.call_args.kwargs["checkpoint"]
+            self.assertEqual(resume_checkpoint["task"], paused_checkpoint["task"])
+            self.assertEqual(resume_checkpoint["history"], paused_checkpoint["history"])
+            self.assertEqual(resume_checkpoint["next_step"], paused_checkpoint["next_step"])
+            self.assertEqual(
+                resume_checkpoint[TASK_CHECKPOINT_METADATA_KEY]["schema"],
+                TASK_CHECKPOINT_ENVELOPE_SCHEMA,
+            )
+
     def test_goal_mirror_tools_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
@@ -596,6 +908,36 @@ class ToolsTests(unittest.TestCase):
             self.assertTrue(finished["ok"])
             self.assertEqual(finished["flow"]["status"], "completed")
 
+    def test_advance_task_flow_syncs_bound_task_and_promotes_ready_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            ctx = pytypes.SimpleNamespace(session=pytypes.SimpleNamespace(id="session-1"))
+            task = TaskStore().create_task(
+                kind="skill_api",
+                status="completed",
+                title="Download data",
+                session_id="session-1",
+                terminal_summary="download complete",
+            )
+            written = json.loads(
+                write_task_flow(
+                    "Run workflow",
+                    [
+                        {"step_id": "download", "title": "Download", "status": "in_progress", "task_id": task.task_id},
+                        {"step_id": "analyze", "title": "Analyze", "depends_on": ["download"]},
+                    ],
+                    tool_context=ctx,
+                )
+            )
+
+            advanced = json.loads(advance_task_flow(flow_id=written["flow"]["flow_id"], tool_context=ctx))
+
+            self.assertTrue(advanced["ok"])
+            self.assertEqual([step["status"] for step in advanced["steps"]], ["completed", "in_progress"])
+            self.assertEqual(advanced["synced_tasks"][0]["task_status"], "completed")
+            self.assertEqual(advanced["steps"][0]["evidence"]["task_summary"], "download complete")
+            self.assertEqual(advanced["projection"]["active_step_ids"], ["analyze"])
+
     def test_context_summary_tools_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
@@ -619,6 +961,15 @@ class ToolsTests(unittest.TestCase):
                 )
             )
             listed = json.loads(list_context_summaries(flow_id="flow-1", tool_context=ctx))
+            rollup = json.loads(
+                rollup_context_summaries(
+                    target_scope="flow",
+                    source_scope="flow",
+                    flow_id="flow-1",
+                    title="Flow summary",
+                    tool_context=ctx,
+                )
+            )
 
             self.assertTrue(written["ok"])
             self.assertEqual(written["summary"]["scope"], "flow")
@@ -626,6 +977,10 @@ class ToolsTests(unittest.TestCase):
             self.assertTrue(summarized["ok"])
             self.assertIn("context summary truncated", summarized["summary"]["content"])
             self.assertEqual(listed["items"][0]["summary_id"], written["summary"]["summary_id"])
+            self.assertTrue(rollup["ok"])
+            self.assertEqual(rollup["summary"]["scope"], "flow")
+            self.assertEqual(rollup["summary"]["source_kind"], "summary_rollup")
+            self.assertIn("Keep summary separate", rollup["summary"]["content"])
 
     def test_exec_tool_requests_heartbeat_wake(self) -> None:
         reasons: list[str] = []
@@ -1607,6 +1962,168 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("timeoutMs=3500", captured["url"])
         self.assertEqual(captured["timeout"], "3.5")
         self.assertEqual(captured["token"], "node-token")
+
+    def test_browser_tool_records_remote_provider_capability(self) -> None:
+        class _DummyResponse:
+            def __init__(self, payload: str) -> None:
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload.encode("utf-8")
+
+            def __enter__(self) -> "_DummyResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            os.environ["OPENPPX_BROWSER_NODE_PROXY_URL"] = "http://user:secret@proxy.local:8787"
+            os.environ["OPENPPX_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+                {"capability": {"backend": "node-proxy", "supportedActions": ["status", "snapshot"]}}
+            )
+            with patch("openppx.tooling.registry.urlopen", return_value=_DummyResponse('{"ok":true}')):
+                payload = json.loads(browser(action="status", target="node", node="node-1"))
+
+            providers = json.loads(list_browser_remote_providers(target="node"))
+
+            self.assertTrue(payload["ok"])
+            self.assertIn("provider", payload)
+            self.assertTrue(providers["ok"])
+            self.assertEqual(len(providers["items"]), 1)
+            item = providers["items"][0]
+            self.assertEqual(item["target"], "node")
+            self.assertEqual(item["node"], "node-1")
+            self.assertEqual(item["status"], "available")
+            self.assertEqual(item["proxy_url"], "http://proxy.local:8787")
+            self.assertEqual(item["capability"]["backend"], "node-proxy")
+            self.assertEqual(item["capability"]["supported_actions"], ["status", "snapshot"])
+
+    def test_browser_tool_records_remote_job_when_proxy_declares_job_id(self) -> None:
+        class _DummyResponse:
+            def __init__(self, payload: str) -> None:
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload.encode("utf-8")
+
+            def __enter__(self) -> "_DummyResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            os.environ["OPENPPX_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+            os.environ["OPENPPX_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+                {"capability": {"backend": "node-proxy", "supportedActions": ["act", "status"]}}
+            )
+            proxy_payload = json.dumps(
+                {
+                    "ok": True,
+                    "jobId": "remote-job-1",
+                    "jobStatus": "in_progress",
+                    "summary": "Remote browser job started.",
+                }
+            )
+            with patch("openppx.tooling.registry.urlopen", return_value=_DummyResponse(proxy_payload)):
+                payload = json.loads(
+                    browser(
+                        action="act",
+                        target="node",
+                        node="node-1",
+                        request=json.dumps({"goal": "fill form"}),
+                    )
+                )
+
+            jobs = json.loads(list_browser_remote_jobs(target="node", status="running"))
+
+            self.assertTrue(payload["ok"])
+            self.assertIn("remote_job", payload)
+            self.assertEqual(payload["remote_job"]["external_job_id"], "remote-job-1")
+            self.assertEqual(payload["remote_job"]["status"], "running")
+            self.assertIn("remote_job_task_id", payload)
+            task = TaskStore().get_task(payload["remote_job_task_id"])
+            self.assertIsNotNone(task)
+            assert task is not None
+            self.assertEqual(task.kind, "browser_remote")
+            self.assertEqual(task.status, "running")
+            self.assertEqual(task.runner_payload["runner"], "browser_remote")
+            self.assertEqual(task.runner_payload["job_record_id"], payload["remote_job"]["job_record_id"])
+            self.assertEqual(task.runner_payload["external_job_id"], "remote-job-1")
+            self.assertTrue(payload["remote_job_task"]["controls"]["can_resume"])
+            self.assertFalse(payload["remote_job_task"]["controls"]["can_cancel"])
+            self.assertTrue(jobs["ok"])
+            self.assertEqual(len(jobs["items"]), 1)
+            item = jobs["items"][0]
+            self.assertEqual(item["target"], "node")
+            self.assertEqual(item["node"], "node-1")
+            self.assertEqual(item["action"], "act")
+            self.assertEqual(item["external_job_id"], "remote-job-1")
+            self.assertEqual(item["payload"]["summary"], "Remote browser job started.")
+
+    def test_browser_tool_materializes_remote_job_protocol_controls(self) -> None:
+        class _DummyResponse:
+            def __init__(self, payload: str) -> None:
+                self._payload = payload
+
+            def read(self) -> bytes:
+                return self._payload.encode("utf-8")
+
+            def __enter__(self) -> "_DummyResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
+            os.environ["OPENPPX_BROWSER_NODE_PROXY_URL"] = "http://proxy.local:8787"
+            os.environ["OPENPPX_BROWSER_NODE_CAPABILITY_JSON"] = json.dumps(
+                {
+                    "capability": {
+                        "backend": "node-proxy",
+                        "supportedActions": ["act", "status"],
+                        "jobProtocol": {
+                            "statusPath": "/jobs/{job_id}",
+                            "outputPath": "/jobs/{job_id}/output",
+                            "cancelPath": "/jobs/{job_id}/cancel",
+                        },
+                    }
+                }
+            )
+            with patch(
+                "openppx.tooling.registry.urlopen",
+                return_value=_DummyResponse(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "jobId": "remote-job-1",
+                            "jobStatus": "running",
+                            "summary": "Remote browser job started.",
+                        }
+                    )
+                ),
+            ):
+                payload = json.loads(
+                    browser(
+                        action="act",
+                        target="node",
+                        node="node-1",
+                        request=json.dumps({"goal": "fill form"}),
+                    )
+                )
+
+            task = TaskStore().get_task(payload["remote_job_task_id"])
+
+            self.assertIsNotNone(task)
+            assert task is not None
+            self.assertTrue(payload["remote_job_task"]["controls"]["can_cancel"])
+            self.assertEqual(payload["remote_job_task"]["controls"]["cancel_tool"], "cancel_task")
+            self.assertEqual(task.runner_capabilities["cancel"], True)
+            self.assertEqual(task.runner_payload["job_protocol"]["cancel_path"], "/jobs/{job_id}/cancel")
 
     def test_browser_tool_routes_sandbox_target_to_proxy_when_configured(self) -> None:
         class _DummyResponse:

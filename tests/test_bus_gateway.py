@@ -55,6 +55,27 @@ class MessageBusTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GatewayTests(unittest.TestCase):
+    def test_task_scheduler_kwargs_accept_checkpoint_retention_env(self) -> None:
+        fake_agent = pytypes.SimpleNamespace(name="openppx")
+        env = {
+            "OPENPPX_CHECKPOINT_RETENTION_ENABLED": "1",
+            "OPENPPX_CHECKPOINT_RETENTION_INTERVAL_SECONDS": "30",
+            "OPENPPX_CHECKPOINT_RETENTION_OLDER_THAN_MS": "1000",
+            "OPENPPX_CHECKPOINT_RETENTION_KEEP_LATEST": "2",
+            "OPENPPX_CHECKPOINT_RETENTION_BATCH_SIZE": "25",
+        }
+
+        with patch.dict(os.environ, env, clear=False):
+            with patch("openppx.app.gateway.create_runner", return_value=(object(), object())):
+                gateway = Gateway(agent=fake_agent, app_name="openppx", bus=MessageBus())
+                kwargs = gateway._task_scheduler_kwargs()
+
+        self.assertTrue(kwargs["checkpoint_retention_enabled"])
+        self.assertEqual(kwargs["checkpoint_retention_interval_seconds"], 30)
+        self.assertEqual(kwargs["checkpoint_retention_older_than_ms"], 1000)
+        self.assertEqual(kwargs["checkpoint_retention_keep_latest_per_task"], 2)
+        self.assertEqual(kwargs["checkpoint_retention_batch_size"], 25)
+
     def test_process_message_collects_final_text(self) -> None:
         fake_event_1 = pytypes.SimpleNamespace(content=pytypes.SimpleNamespace(parts=[]))
         fake_event_2 = pytypes.SimpleNamespace(

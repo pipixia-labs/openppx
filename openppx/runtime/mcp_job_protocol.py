@@ -12,7 +12,7 @@ import concurrent.futures
 import json
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
@@ -44,10 +44,19 @@ class McpJobProtocolConfig:
     cancel_args: dict[str, Any]
     cancel_result_path: str
     poll_timeout_ms: int
+    pause_tool: str = ""
+    pause_args: dict[str, Any] = field(default_factory=lambda: dict(_DEFAULT_JOB_ARGS))
+    pause_result_path: str = ""
+    resume_tool: str = ""
+    resume_args: dict[str, Any] = field(default_factory=lambda: dict(_DEFAULT_JOB_ARGS))
+    resume_result_path: str = ""
+    checkpoint_path: str = ""
+    checkpoint_schema: str = ""
+    checkpoint_schema_version: int | None = None
 
     def to_payload(self) -> dict[str, Any]:
         """Return a JSON-serializable protocol payload for task storage."""
-        return {
+        payload = {
             "enabled": self.enabled,
             "job_id_path": self.job_id_path,
             "status_tool": self.status_tool,
@@ -60,7 +69,19 @@ class McpJobProtocolConfig:
             "cancel_args": self.cancel_args,
             "cancel_result_path": self.cancel_result_path,
             "poll_timeout_ms": self.poll_timeout_ms,
+            "pause_tool": self.pause_tool,
+            "pause_args": self.pause_args,
+            "pause_result_path": self.pause_result_path,
+            "resume_tool": self.resume_tool,
+            "resume_args": self.resume_args,
+            "resume_result_path": self.resume_result_path,
+            "checkpoint_path": self.checkpoint_path,
         }
+        if self.checkpoint_schema:
+            payload["checkpoint_schema"] = self.checkpoint_schema
+        if self.checkpoint_schema_version is not None:
+            payload["checkpoint_schema_version"] = self.checkpoint_schema_version
+        return payload
 
     @property
     def runner_capabilities(self) -> dict[str, bool]:
@@ -72,8 +93,9 @@ class McpJobProtocolConfig:
             "output": bool(self.output_tool),
             "artifact": False,
             "rejoin": bool(self.status_tool),
-            "pause": False,
-            "checkpoint": False,
+            "pause": bool(self.pause_tool),
+            "checkpoint": bool(self.resume_tool or self.checkpoint_path),
+            "resume": bool(self.resume_tool),
         }
 
 
@@ -109,6 +131,13 @@ def normalize_mcp_job_protocol(raw: Any) -> McpJobProtocolConfig | None:
     output_args = _dict_or_default(_pick(raw, "output_args", "outputArgs", _DEFAULT_JOB_ARGS), _DEFAULT_JOB_ARGS)
     cancel_tool = _text(_pick(raw, "cancel_tool", "cancelTool", ""))
     cancel_args = _dict_or_default(_pick(raw, "cancel_args", "cancelArgs", _DEFAULT_JOB_ARGS), _DEFAULT_JOB_ARGS)
+    pause_tool = _text(_pick(raw, "pause_tool", "pauseTool", ""))
+    pause_args = _dict_or_default(_pick(raw, "pause_args", "pauseArgs", _DEFAULT_JOB_ARGS), _DEFAULT_JOB_ARGS)
+    resume_tool = _text(_pick(raw, "resume_tool", "resumeTool", ""))
+    resume_args = _dict_or_default(_pick(raw, "resume_args", "resumeArgs", _DEFAULT_JOB_ARGS), _DEFAULT_JOB_ARGS)
+    checkpoint_schema_version = _optional_int(
+        _pick(raw, "checkpoint_schema_version", "checkpointSchemaVersion", None)
+    )
     return McpJobProtocolConfig(
         enabled=True,
         job_id_path=job_id_path,
@@ -122,6 +151,15 @@ def normalize_mcp_job_protocol(raw: Any) -> McpJobProtocolConfig | None:
         cancel_args=cancel_args,
         cancel_result_path=_text(_pick(raw, "cancel_result_path", "cancelResultPath", "")),
         poll_timeout_ms=normalize_mcp_job_poll_timeout_ms(_pick(raw, "poll_timeout_ms", "pollTimeoutMs", None)),
+        pause_tool=pause_tool,
+        pause_args=pause_args,
+        pause_result_path=_text(_pick(raw, "pause_result_path", "pauseResultPath", "")),
+        resume_tool=resume_tool,
+        resume_args=resume_args,
+        resume_result_path=_text(_pick(raw, "resume_result_path", "resumeResultPath", "")),
+        checkpoint_path=_text(_pick(raw, "checkpoint_path", "checkpointPath", "")),
+        checkpoint_schema=_text(_pick(raw, "checkpoint_schema", "checkpointSchema", "")),
+        checkpoint_schema_version=checkpoint_schema_version,
     )
 
 
@@ -188,6 +226,44 @@ def mcp_job_status_snapshot(result: Any, *, default_status: str = "running") -> 
     return snapshot
 
 
+def normalize_mcp_job_checkpoint_payload(
+    *,
+    protocol: McpJobProtocolConfig,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize a provider checkpoint using the declared MCP job protocol.
+
+    The remote provider still owns the checkpoint structure. openppx only
+    normalizes explicit schema aliases and rejects declared schema conflicts so
+    future migrations do not silently interpret the wrong payload version.
+    """
+    normalized = dict(payload)
+    if "schema_version" not in normalized and "schemaVersion" in normalized:
+        parsed_alias_version = _optional_int(normalized.get("schemaVersion"))
+        if parsed_alias_version is not None:
+            normalized["schema_version"] = parsed_alias_version
+
+    declared_schema = _text(protocol.checkpoint_schema)
+    if declared_schema:
+        existing_schema = _text(normalized.get("schema"))
+        if existing_schema and existing_schema != declared_schema:
+            raise ValueError(
+                f"MCP checkpoint schema mismatch: expected {declared_schema!r}, got {existing_schema!r}"
+            )
+        normalized["schema"] = declared_schema
+
+    declared_version = protocol.checkpoint_schema_version
+    if declared_version is not None:
+        existing_version = _optional_int(normalized.get("schema_version"))
+        if existing_version is not None and existing_version != declared_version:
+            raise ValueError(
+                "MCP checkpoint schema_version mismatch: "
+                f"expected {declared_version!r}, got {normalized.get('schema_version')!r}"
+            )
+        normalized["schema_version"] = declared_version
+    return normalized
+
+
 def call_mcp_job_status(
     *,
     server_name: str,
@@ -243,6 +319,48 @@ def call_mcp_job_cancel(
         tool_name=protocol.cancel_tool,
         args_template=protocol.cancel_args,
         result_path=protocol.cancel_result_path,
+        job_id=job_id,
+        context_payload=context_payload,
+        timeout_ms=protocol.poll_timeout_ms,
+    )
+
+
+def call_mcp_job_pause(
+    *,
+    server_name: str,
+    protocol: McpJobProtocolConfig,
+    job_id: str,
+    context_payload: dict[str, Any] | None = None,
+) -> McpJobToolCallResult:
+    """Call the configured MCP job pause tool."""
+    if not protocol.pause_tool:
+        return McpJobToolCallResult(ok=False, error="MCP job pause tool is not configured.", missing_tool=True)
+    return _call_mcp_job_tool(
+        server_name=server_name,
+        tool_name=protocol.pause_tool,
+        args_template=protocol.pause_args,
+        result_path=protocol.pause_result_path,
+        job_id=job_id,
+        context_payload=context_payload,
+        timeout_ms=protocol.poll_timeout_ms,
+    )
+
+
+def call_mcp_job_resume(
+    *,
+    server_name: str,
+    protocol: McpJobProtocolConfig,
+    job_id: str,
+    context_payload: dict[str, Any] | None = None,
+) -> McpJobToolCallResult:
+    """Call the configured MCP job resume tool."""
+    if not protocol.resume_tool:
+        return McpJobToolCallResult(ok=False, error="MCP job resume tool is not configured.", missing_tool=True)
+    return _call_mcp_job_tool(
+        server_name=server_name,
+        tool_name=protocol.resume_tool,
+        args_template=protocol.resume_args,
+        result_path=protocol.resume_result_path,
         job_id=job_id,
         context_payload=context_payload,
         timeout_ms=protocol.poll_timeout_ms,
@@ -419,6 +537,15 @@ def _bool(value: Any, *, default: bool) -> bool:
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 
 def _render_payload(value: Any) -> str:

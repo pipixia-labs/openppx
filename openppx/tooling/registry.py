@@ -6,6 +6,7 @@ import datetime as dt
 import asyncio
 import difflib
 import fnmatch
+import hashlib
 import html
 import json
 import mimetypes
@@ -39,11 +40,18 @@ from ..core.env_utils import env_enabled
 from ..core.exec_policy import command_segments as _policy_command_segments
 from ..core.exec_policy import validate_exec_security as _policy_validate_exec_security
 from ..gui.executor import execute_gui_action
+from ..gui.job_coordinator import submit_gui_task_job
 from ..gui.task_runner import execute_gui_task
 from ..core.logging_utils import debug_logging_enabled, emit_debug
 from ..runtime.cron_helpers import cron_store_path, format_schedule
 from ..runtime.cron_schedule_parser import parse_schedule_input
 from ..runtime.cron_service import CronService
+from ..runtime.browser_remote_provider import (
+    BrowserRemoteProviderStore,
+    browser_remote_job_payload,
+    browser_remote_provider_payload,
+)
+from ..runtime.browser_remote_contract import run_browser_remote_job_contract
 from ..runtime.context_engine import (
     ContextSummary,
     GoalMirror,
@@ -57,10 +65,17 @@ from ..runtime.step_events import build_step_metadata, normalize_outbound_metada
 from ..runtime.sync_tool_proxy import SyncCancellationToken
 from ..runtime.sync_tool_proxy import run_sync_callable_with_proxy
 from ..runtime.task_execution import (
+    GUI_JOB_RUNNER_CAPABILITIES,
     ProcessExecutionSupervisor,
+    SkillApiRuntime,
     TaskController,
     TaskInvocationContext,
 )
+from ..runtime.staged_summary_eval import (
+    evaluate_staged_summary_eval_file,
+    summarize_staged_summary_quality_log as summarize_quality_log_file,
+)
+from ..runtime.task_store import TaskEventStore, TaskStore, ToolCallRecordStore
 from ..runtime.tool_context import get_route
 from ..core.security import PathGuard, SecurityPolicy, load_security_policy, validate_network_url
 from . import file_state
@@ -1847,6 +1862,34 @@ def _task_invocation_context(tool_context: Any | None) -> TaskInvocationContext:
     )
 
 
+def _stable_tool_args_hash(payload: Any) -> str:
+    """Return a stable hash for tool-call idempotency."""
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _tool_call_idempotency_key(
+    *,
+    context: TaskInvocationContext,
+    tool_name: str,
+    args_hash: str,
+) -> str:
+    """Build an idempotency key for a tool call under ADK invocation metadata."""
+    if context.invocation_id or context.function_call_id:
+        return ":".join(
+            [
+                "openppx",
+                context.user_id,
+                context.session_id,
+                context.invocation_id,
+                context.function_call_id,
+                tool_name,
+                args_hash,
+            ]
+        )
+    return f"openppx:{tool_name}:{args_hash}:{os.getpid()}:{uuid.uuid4().hex}"
+
+
 def _parse_skill_args(args: Any) -> Any:
     """Parse loose skill args from tool input."""
     if args is None:
@@ -1873,22 +1916,44 @@ def invoke_skill_api(
 ) -> str:
     """Invoke a skill API with automatic long-task handling.
 
-    Script-backed APIs, declarative HTTP API recipes, and declarative Python
-    SDK recipes run through the supervised execution envelope. Fast calls
+    Script-backed APIs, declarative HTTP API recipes, declarative Python SDK
+    recipes, declarative Node.js API recipes, and declarative command API
+    recipes run through the supervised execution envelope. Fast calls
     return inline output. Calls that exceed ``inline_budget_ms`` are published
     as durable `TaskRun` records and return a `task_id`.
     """
-    effective_scope = _resolve_process_scope(scope)
-    supervisor = ProcessExecutionSupervisor()
-    result = supervisor.invoke_skill_api(
-        skill_name=skill_name,
-        api_name=api_name,
-        args=_parse_skill_args(args),
-        inline_budget_ms=inline_budget_ms,
-        context=_task_invocation_context(tool_context),
-        scope_key=effective_scope,
-        restartable=restartable,
-    )
+    try:
+        effective_scope = _resolve_process_scope(scope)
+        supervisor = ProcessExecutionSupervisor()
+        result = supervisor.invoke_skill_api(
+            skill_name=skill_name,
+            api_name=api_name,
+            args=_parse_skill_args(args),
+            inline_budget_ms=inline_budget_ms,
+            context=_task_invocation_context(tool_context),
+            scope_key=effective_scope,
+            restartable=restartable,
+        )
+    except Exception as exc:
+        _debug(
+            "tool.invoke_skill_api.error",
+            {
+                "skill_name": skill_name,
+                "api_name": api_name,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        payload = {
+            "ok": False,
+            "mode": "error",
+            "status": "failed",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "skill_name": str(skill_name or "").strip(),
+            "api_name": str(api_name or "").strip(),
+        }
+        return _ret("tool.invoke_skill_api.output", _json(payload))
     payload = result.to_payload()
     if payload.get("task_id"):
         _emit_feedback(
@@ -1914,6 +1979,14 @@ def invoke_skill_api(
     return _ret("tool.invoke_skill_api.output", _json(payload))
 
 
+def list_skill_api_runners() -> str:
+    """List supported declarative skill API runner recipes."""
+    return _ret(
+        "tool.list_skill_api_runners.output",
+        _json({"ok": True, "catalog": SkillApiRuntime.api_recipe_runner_catalog()}),
+    )
+
+
 def list_tasks(limit: int = 20, session_id: str | None = None, tool_context: Any | None = None) -> str:
     """List recent long-task records for the current or specified session."""
     resolved_session_id = (session_id or "").strip() or _session_attr(tool_context)
@@ -1925,6 +1998,164 @@ def show_task(task_id: str) -> str:
     """Show one long-task status and recent events."""
     payload = TaskController().show_task(task_id)
     return _ret("tool.show_task.output", _json(payload))
+
+
+def task_control_snapshot(
+    task_id: str | None = None,
+    session_id: str | None = None,
+    limit: int = 20,
+    tool_context: Any | None = None,
+) -> str:
+    """Return UI/app-ready task control snapshots."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().task_control_snapshot(
+        task_id=(task_id or "").strip() or None,
+        session_id=resolved_session or None,
+        limit=limit,
+    )
+    return _ret("tool.task_control_snapshot.output", _json(payload))
+
+
+def task_runtime_status(
+    session_id: str | None = None,
+    stuck_after_ms: int = 30 * 60 * 1000,
+    stuck_limit: int = 10,
+    tool_context: Any | None = None,
+) -> str:
+    """Return a compact health snapshot for long-task runtime facts."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().runtime_status(
+        session_id=resolved_session or None,
+        stuck_after_ms=stuck_after_ms,
+        stuck_limit=stuck_limit,
+    )
+    return _ret("tool.task_runtime_status.output", _json(payload))
+
+
+def audit_stuck_tasks(
+    older_than_ms: int = 30 * 60 * 1000,
+    session_id: str | None = None,
+    limit: int = 50,
+    tool_context: Any | None = None,
+) -> str:
+    """List active long tasks that have not changed within the age budget."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().audit_stuck_tasks(
+        older_than_ms=older_than_ms,
+        session_id=resolved_session or None,
+        limit=limit,
+    )
+    return _ret("tool.audit_stuck_tasks.output", _json(payload))
+
+
+def remediate_stuck_tasks(
+    older_than_ms: int = 30 * 60 * 1000,
+    stale_lost_after_ms: int = 5 * 60 * 1000,
+    session_id: str | None = None,
+    limit: int = 50,
+    dry_run: bool = True,
+    confirm: bool = False,
+    tool_context: Any | None = None,
+) -> str:
+    """Conservatively synchronize stuck running/stale task facts."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().remediate_stuck_tasks(
+        older_than_ms=older_than_ms,
+        stale_lost_after_ms=stale_lost_after_ms,
+        session_id=resolved_session or None,
+        limit=limit,
+        dry_run=dry_run,
+        confirm=confirm,
+    )
+    return _ret("tool.remediate_stuck_tasks.output", _json(payload))
+
+
+def cleanup_terminal_tasks(
+    older_than_ms: int = 14 * 24 * 60 * 60 * 1000,
+    session_id: str | None = None,
+    limit: int = 100,
+    dry_run: bool = True,
+    confirm: bool = False,
+    delete_artifact_files: bool = False,
+    tool_context: Any | None = None,
+) -> str:
+    """Clean up old terminal TaskRuntime facts after explicit confirmation."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().cleanup_terminal_tasks(
+        older_than_ms=older_than_ms,
+        session_id=resolved_session or None,
+        limit=limit,
+        dry_run=dry_run,
+        confirm=confirm,
+        delete_artifact_files=delete_artifact_files,
+    )
+    return _ret("tool.cleanup_terminal_tasks.output", _json(payload))
+
+
+def audit_orphan_runtime_facts(limit: int = 100) -> str:
+    """List orphaned task artifact/checkpoint facts whose parent task is gone."""
+    payload = TaskController().audit_orphan_runtime_facts(limit=limit)
+    return _ret("tool.audit_orphan_runtime_facts.output", _json(payload))
+
+
+def cleanup_orphan_runtime_facts(
+    limit: int = 100,
+    dry_run: bool = True,
+    confirm: bool = False,
+    delete_artifact_files: bool = False,
+) -> str:
+    """Clean up orphaned task artifact/checkpoint facts after confirmation."""
+    payload = TaskController().cleanup_orphan_runtime_facts(
+        limit=limit,
+        dry_run=dry_run,
+        confirm=confirm,
+        delete_artifact_files=delete_artifact_files,
+    )
+    return _ret("tool.cleanup_orphan_runtime_facts.output", _json(payload))
+
+
+def audit_checkpoint_retention(
+    older_than_ms: int = 30 * 24 * 60 * 60 * 1000,
+    keep_latest_per_task: int = 3,
+    task_id: str | None = None,
+    session_id: str | None = None,
+    limit: int = 100,
+    tool_context: Any | None = None,
+) -> str:
+    """List old non-current checkpoints eligible for retention cleanup."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().audit_checkpoint_retention(
+        older_than_ms=older_than_ms,
+        keep_latest_per_task=keep_latest_per_task,
+        task_id=(task_id or "").strip() or None,
+        session_id=resolved_session or None,
+        limit=limit,
+    )
+    return _ret("tool.audit_checkpoint_retention.output", _json(payload))
+
+
+def cleanup_checkpoint_retention(
+    older_than_ms: int = 30 * 24 * 60 * 60 * 1000,
+    keep_latest_per_task: int = 3,
+    task_id: str | None = None,
+    session_id: str | None = None,
+    limit: int = 100,
+    dry_run: bool = True,
+    confirm: bool = False,
+    tool_context: Any | None = None,
+) -> str:
+    """Clean up old non-current checkpoints after explicit confirmation."""
+    resolved_session = (session_id or "").strip() or _session_attr(tool_context)
+    payload = TaskController().cleanup_checkpoint_retention(
+        older_than_ms=older_than_ms,
+        keep_latest_per_task=keep_latest_per_task,
+        task_id=(task_id or "").strip() or None,
+        session_id=resolved_session or None,
+        limit=limit,
+        dry_run=dry_run,
+        confirm=confirm,
+    )
+    return _ret("tool.cleanup_checkpoint_retention.output", _json(payload))
 
 
 def task_output(task_id: str) -> str:
@@ -2004,11 +2235,11 @@ def write_task_flow(
     evidence: Any = None,
     tool_context: Any | None = None,
 ) -> str:
-    """Create or update a durable linear TaskFlow for a multi-step goal.
+    """Create or update a durable TaskFlow for a multi-step goal.
 
-    TaskFlow facts describe the user goal, ordered steps, current step, waiting
-    or blocked state, and evidence. They do not execute steps and do not replace
-    TaskRun facts for actual background work.
+    TaskFlow facts describe the user goal, ordered/DAG steps, current step,
+    waiting or blocked state, and evidence. They do not execute external work
+    and do not replace TaskRun facts for actual background execution.
     """
     session_id = _session_attr(tool_context)
     store = LongTaskContextStore()
@@ -2029,7 +2260,14 @@ def write_task_flow(
         return _ret("tool.write_task_flow.output", _json({"ok": False, "error": str(exc)}))
     return _ret(
         "tool.write_task_flow.output",
-        _json({"ok": True, "flow": _flow_payload(flow), "steps": [_flow_step_payload(step) for step in flow_steps]}),
+        _json(
+            {
+                "ok": True,
+                "flow": _flow_payload(flow),
+                "steps": [_flow_step_payload(step) for step in flow_steps],
+                "projection": store.project_flow(flow_id=flow.flow_id),
+            }
+        ),
     )
 
 
@@ -2047,7 +2285,14 @@ def show_task_flow(
     steps = store.list_flow_steps(flow_id=flow.flow_id)
     return _ret(
         "tool.show_task_flow.output",
-        _json({"ok": True, "flow": _flow_payload(flow), "steps": [_flow_step_payload(step) for step in steps]}),
+        _json(
+            {
+                "ok": True,
+                "flow": _flow_payload(flow),
+                "steps": [_flow_step_payload(step) for step in steps],
+                "projection": store.project_flow(flow_id=flow.flow_id),
+            }
+        ),
     )
 
 
@@ -2064,17 +2309,20 @@ def update_task_flow_step(
     order_index: int | None = None,
     status: str | None = None,
     task_id: str = "",
+    depends_on: Any = None,
     evidence: Any = None,
     last_error: str = "",
 ) -> str:
     """Update one TaskFlow step fact without executing or resuming work."""
     try:
-        flow, step = LongTaskContextStore().update_flow_step(
+        store = LongTaskContextStore()
+        flow, step = store.update_flow_step(
             flow_id=flow_id,
             step_id=step_id,
             order_index=order_index,
             status=status,
             task_id=task_id,
+            depends_on=depends_on,
             evidence=evidence,
             last_error=last_error,
         )
@@ -2082,7 +2330,60 @@ def update_task_flow_step(
         return _ret("tool.update_task_flow_step.output", _json({"ok": False, "error": str(exc)}))
     return _ret(
         "tool.update_task_flow_step.output",
-        _json({"ok": True, "flow": _flow_payload(flow), "step": _flow_step_payload(step)}),
+        _json(
+            {
+                "ok": True,
+                "flow": _flow_payload(flow),
+                "step": _flow_step_payload(step),
+                "projection": store.project_flow(flow_id=flow.flow_id),
+            }
+        ),
+    )
+
+
+def advance_task_flow(
+    flow_id: str | None = None,
+    sync_tasks: bool = True,
+    start_ready: bool = True,
+    auto_finish: bool = True,
+    tool_context: Any | None = None,
+) -> str:
+    """Advance TaskFlow DAG bookkeeping and optionally mirror bound TaskRun statuses.
+
+    This tool does not call arbitrary APIs. It observes TaskRun facts referenced
+    by step ``task_id`` fields, updates step statuses, promotes dependency-ready
+    pending steps, and returns the deterministic DAG projection.
+    """
+    session_id = _session_attr(tool_context)
+    store = LongTaskContextStore()
+    flow = store.get_flow(flow_id or "") if (flow_id or "").strip() else store.get_active_flow(session_id)
+    if flow is None:
+        return _ret("tool.advance_task_flow.output", _json({"ok": False, "error": "active flow not found"}))
+    synced_tasks: list[dict[str, Any]] = []
+    if sync_tasks:
+        synced_tasks = _sync_task_flow_task_refs(store, flow.flow_id)
+    try:
+        flow, steps, projection = store.advance_flow(
+            session_id=session_id,
+            flow_id=flow.flow_id,
+            auto_finish=auto_finish,
+            start_ready=start_ready,
+        )
+    except Exception as exc:
+        return _ret("tool.advance_task_flow.output", _json({"ok": False, "error": str(exc)}))
+    if flow is None:
+        return _ret("tool.advance_task_flow.output", _json({"ok": False, "error": "active flow not found"}))
+    return _ret(
+        "tool.advance_task_flow.output",
+        _json(
+            {
+                "ok": True,
+                "flow": _flow_payload(flow),
+                "steps": [_flow_step_payload(step) for step in steps],
+                "projection": projection,
+                "synced_tasks": synced_tasks,
+            }
+        ),
     )
 
 
@@ -2169,12 +2470,43 @@ def summarize_context_text(
     return _ret("tool.summarize_context_text.output", _json({"ok": True, "summary": _summary_payload(summary)}))
 
 
+def evaluate_staged_summary_quality_cases(
+    case_file: str = "tests/eval/staged_summary_quality_cases.json",
+) -> str:
+    """Evaluate staged summary quality cases from a workspace JSON file."""
+    try:
+        path = _resolve_path(case_file)
+        report = evaluate_staged_summary_eval_file(path)
+    except Exception as exc:
+        return _ret(
+            "tool.evaluate_staged_summary_quality_cases.output",
+            _json({"ok": False, "error": str(exc)}),
+        )
+    return _ret("tool.evaluate_staged_summary_quality_cases.output", _json(report.payload()))
+
+
+def summarize_staged_summary_quality_log(log_path: str, recent_limit: int = 20) -> str:
+    """Summarize staged summary quality JSONL logs for observability dashboards."""
+    try:
+        if not str(log_path or "").strip():
+            raise ValueError("log_path is required")
+        path = _resolve_path(log_path)
+        payload = summarize_quality_log_file(path, recent_limit=recent_limit)
+    except Exception as exc:
+        return _ret(
+            "tool.summarize_staged_summary_quality_log.output",
+            _json({"ok": False, "error": str(exc)}),
+        )
+    return _ret("tool.summarize_staged_summary_quality_log.output", _json(payload))
+
+
 def list_context_summaries(
     limit: int = 5,
     session_id: str | None = None,
     goal_id: str | None = None,
     flow_id: str | None = None,
     task_id: str | None = None,
+    scope: str | None = None,
     tool_context: Any | None = None,
 ) -> str:
     """List recent staged context summaries for a session."""
@@ -2184,11 +2516,47 @@ def list_context_summaries(
         goal_id=goal_id,
         flow_id=flow_id,
         task_id=task_id,
+        scope=scope,
         limit=limit,
     )
     return _ret(
         "tool.list_context_summaries.output",
         _json({"ok": True, "items": [_summary_payload(summary) for summary in summaries]}),
+    )
+
+
+def rollup_context_summaries(
+    target_scope: str = "session",
+    source_scope: str | None = None,
+    title: str = "",
+    summary_id: str | None = None,
+    goal_id: str | None = None,
+    flow_id: str | None = None,
+    task_id: str | None = None,
+    limit: int = 20,
+    max_chars: int = 4000,
+    tool_context: Any | None = None,
+) -> str:
+    """Create a deterministic higher-level context summary from staged summaries."""
+    session_id = _session_attr(tool_context)
+    try:
+        summary = LongTaskContextStore().rollup_summaries(
+            session_id=session_id,
+            target_scope=target_scope,
+            source_scope=source_scope,
+            title=title,
+            summary_id=summary_id,
+            goal_id=goal_id,
+            flow_id=flow_id,
+            task_id=task_id,
+            limit=limit,
+            max_chars=max_chars,
+        )
+    except Exception as exc:
+        return _ret("tool.rollup_context_summaries.output", _json({"ok": False, "error": str(exc)}))
+    return _ret(
+        "tool.rollup_context_summaries.output",
+        _json({"ok": True, "summary": _summary_payload(summary)}),
     )
 
 
@@ -2237,6 +2605,7 @@ def _flow_step_payload(step: TaskFlowStep) -> dict[str, Any]:
         "title": step.title,
         "status": step.status,
         "task_id": step.task_id,
+        "depends_on": list(step.depends_on),
         "evidence": step.evidence,
         "last_error": step.last_error,
         "created_at_ms": step.created_at_ms,
@@ -2263,6 +2632,74 @@ def _summary_payload(summary: ContextSummary) -> dict[str, Any]:
     }
 
 
+def _sync_task_flow_task_refs(store: LongTaskContextStore, flow_id: str) -> list[dict[str, Any]]:
+    """Mirror TaskRun terminal/waiting state into TaskFlow steps."""
+    task_store = TaskStore(db_path=store.db_path)
+    controller = TaskController(task_store=task_store)
+    synced: list[dict[str, Any]] = []
+    for step in store.list_flow_steps(flow_id=flow_id, limit=200):
+        if not step.task_id:
+            continue
+        task = controller.sync_task(step.task_id) or task_store.get_task(step.task_id)
+        if task is None:
+            continue
+        next_status = _flow_step_status_from_task_status(task.status)
+        if not next_status:
+            continue
+        next_evidence = dict(step.evidence)
+        task_summary = task.terminal_summary or task.progress_summary
+        next_evidence.update(
+            {
+                "task_id": task.task_id,
+                "task_status": task.status,
+            }
+        )
+        if task_summary:
+            next_evidence["task_summary"] = task_summary
+        next_error = task.last_error if task.status in {"failed", "lost", "stale"} else step.last_error
+        if (
+            step.status == next_status
+            and step.evidence == next_evidence
+            and step.last_error == next_error
+        ):
+            continue
+        flow, updated_step = store.update_flow_step(
+            flow_id=flow_id,
+            step_id=step.step_id,
+            status=next_status,
+            evidence=next_evidence,
+            last_error=next_error,
+        )
+        _ = flow
+        synced.append(
+            {
+                "step_id": updated_step.step_id,
+                "task_id": task.task_id,
+                "task_status": task.status,
+                "step_status": updated_step.status,
+            }
+        )
+    return synced
+
+
+def _flow_step_status_from_task_status(task_status: str) -> str:
+    """Map TaskRun status to the nearest TaskFlow step status."""
+    normalized = str(task_status or "").strip().lower()
+    if normalized == "completed":
+        return "completed"
+    if normalized in {"failed", "lost"}:
+        return "failed"
+    if normalized == "cancelled":
+        return "cancelled"
+    if normalized == "waiting_user":
+        return "waiting_user"
+    if normalized == "waiting_approval":
+        return "waiting_approval"
+    if normalized in {"queued", "running", "paused", "interrupted", "stale"}:
+        return "in_progress"
+    return ""
+
+
 def _todo_payload(item: TodoItem) -> dict[str, Any]:
     """Return a JSON payload for one short-term todo item."""
     return {
@@ -2281,6 +2718,24 @@ def resume_task(task_id: str) -> str:
     """Rejoin or explain resume limits for one long task."""
     payload = TaskController().resume_task(task_id)
     return _ret("tool.resume_task.output", _json(payload))
+
+
+def dispatch_task_action(
+    task_id: str,
+    action: str,
+    content: str = "",
+    inline_budget_ms: int | None = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Dispatch a UI/app task action through the existing task control surface."""
+    payload = TaskController().dispatch_task_action(
+        task_id,
+        action,
+        content=content,
+        inline_budget_ms=inline_budget_ms,
+        context=_task_invocation_context(tool_context),
+    )
+    return _ret("tool.dispatch_task_action.output", _json(payload))
 
 
 def restart_task(task_id: str, inline_budget_ms: int | None = None, tool_context: Any | None = None) -> str:
@@ -3603,9 +4058,100 @@ def browser(
                         "status": 501,
                     }
                 ),
-            )
+        )
         capability_payload, capability_warnings = _resolve_proxy_capability(normalized_target)
         supported_actions = _resolve_supported_actions(capability_payload)
+
+        def _extract_remote_browser_job_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+            """Extract explicitly declared remote job data from a proxy response."""
+            job_node = payload.get("job")
+            source = job_node if isinstance(job_node, dict) else payload
+            raw_job_id = (
+                source.get("jobId")
+                or source.get("job_id")
+                or source.get("externalJobId")
+                or source.get("external_job_id")
+            )
+            job_id = str(raw_job_id or "").strip()
+            if not job_id:
+                return None
+            raw_status = (
+                source.get("jobStatus")
+                or source.get("job_status")
+                or source.get("state")
+                or source.get("status")
+                or payload.get("jobStatus")
+                or payload.get("job_status")
+            )
+            if isinstance(raw_status, int):
+                raw_status = ""
+            raw_payload = dict(source)
+            if source is not payload:
+                raw_payload["response"] = payload
+            return {
+                "external_job_id": job_id,
+                "status": str(raw_status or ""),
+                "payload": raw_payload,
+                "error": source.get("error") or payload.get("error"),
+            }
+
+        def _provider_status_for_payload(payload: dict[str, Any]) -> str:
+            if payload.get("ok") is True:
+                return "available"
+            status_value = payload.get("status")
+            if isinstance(status_value, int) and status_value >= 500:
+                return "unavailable"
+            return "degraded"
+
+        def _record_proxy_provider(payload: dict[str, Any]) -> dict[str, Any]:
+            """Record best-effort remote provider discovery without affecting tool results."""
+            try:
+                store = BrowserRemoteProviderStore()
+                capability = _extract_capability_for_output(payload) or _extract_capability_for_output(
+                    capability_payload
+                )
+                record = store.record_observation(
+                    target=normalized_target,
+                    node=(node or "").strip(),
+                    proxy_url=proxy_base,
+                    status=_provider_status_for_payload(payload),
+                    capability=capability or {},
+                    last_error=str(payload.get("error") or "").strip(),
+                )
+            except Exception as exc:
+                _debug("tool.browser.provider_registry_error", {"target": normalized_target, "error": str(exc)})
+                return payload
+            enriched = dict(payload)
+            job_payload = _extract_remote_browser_job_payload(payload)
+            if job_payload is not None:
+                try:
+                    job_record = store.record_job_observation(
+                        provider_id=record.provider_id,
+                        target=normalized_target,
+                        node=(node or "").strip(),
+                        proxy_url=proxy_base,
+                        action=normalized,
+                        external_job_id=str(job_payload["external_job_id"]),
+                        status=str(job_payload.get("status") or ""),
+                        payload=job_payload.get("payload") if isinstance(job_payload.get("payload"), dict) else {},
+                        last_error=str(payload.get("error") or job_payload.get("error") or "").strip(),
+                    )
+                    enriched["remote_job"] = browser_remote_job_payload(job_record)
+                    task_result = TaskController().materialize_browser_remote_job(
+                        job_record,
+                        context=TaskInvocationContext(),
+                    )
+                    if task_result.get("ok") and isinstance(task_result.get("task"), dict):
+                        task_payload = task_result["task"]
+                        enriched["remote_job_task"] = task_payload
+                        enriched["remote_job_task_id"] = task_payload.get("task_id")
+                except Exception as exc:
+                    _debug("tool.browser.remote_job_registry_error", {"target": normalized_target, "error": str(exc)})
+            if normalized in {"status", "profiles"}:
+                enriched["provider"] = browser_remote_provider_payload(record)
+                return normalize_profile_payload_aliases(enriched)
+            return normalize_profile_payload_aliases(enriched)
+
         if supported_actions and normalized not in supported_actions:
             blocked_payload = {
                 "ok": False,
@@ -3615,6 +4161,7 @@ def browser(
                 "hint": "Run action=status or action=profiles on this target to inspect available actions.",
             }
             blocked_payload = _inject_capability_warnings(blocked_payload, capability_warnings)
+            blocked_payload = _record_proxy_provider(blocked_payload)
             return _ret(
                 "tool.browser.output",
                 _json(blocked_payload),
@@ -3669,6 +4216,7 @@ def browser(
                             target_name=normalized_target,
                         )
                     payload = _inject_capability_warnings(payload, capability_warnings)
+                    payload = _record_proxy_provider(payload)
                     _maybe_request_hook_heartbeat(payload)
                 return _ret("tool.browser.output", _json(payload))
         except HTTPError as e:
@@ -3682,6 +4230,7 @@ def browser(
                     force=True,
                 )
                 payload = _inject_capability_warnings(payload, capability_warnings)
+                payload = _record_proxy_provider(payload)
             return _ret("tool.browser.output", _json(payload))
         except (TimeoutError, socket.timeout):
             payload = _proxy_unavailable_payload(TimeoutError("timed out"))
@@ -3693,6 +4242,7 @@ def browser(
                     force=True,
                 )
                 payload = _inject_capability_warnings(payload, capability_warnings)
+                payload = _record_proxy_provider(payload)
             return _ret("tool.browser.output", _json(payload))
         except URLError as e:
             payload = _proxy_unavailable_payload(e.reason)
@@ -3704,6 +4254,7 @@ def browser(
                     force=True,
                 )
                 payload = _inject_capability_warnings(payload, capability_warnings)
+                payload = _record_proxy_provider(payload)
             return _ret("tool.browser.output", _json(payload))
 
     res = get_browser_control_service().dispatch(dispatch_req)
@@ -3716,6 +4267,109 @@ def browser(
         )
         _maybe_request_hook_heartbeat(body)
     return _ret("tool.browser.output", _json(body))
+
+
+def list_browser_remote_providers(
+    target: str | None = None,
+    node: str | None = None,
+    limit: int = 20,
+) -> str:
+    """List remote browser providers discovered through browser proxy calls.
+
+    Args:
+        target: Optional remote target filter, currently ``node`` or ``sandbox``.
+        node: Optional node selector filter for ``target="node"`` providers.
+        limit: Maximum number of provider records to return.
+
+    Returns:
+        JSON payload containing recently observed providers and capabilities.
+    """
+    normalized_target = (target or "").strip().lower()
+    if normalized_target and normalized_target not in {"node", "sandbox"}:
+        return _ret(
+            "tool.list_browser_remote_providers.output",
+            _json({"ok": False, "error": "target must be node or sandbox", "status": 400}),
+        )
+    try:
+        providers = BrowserRemoteProviderStore().list_providers(
+            target=normalized_target or None,
+            node=node,
+            limit=limit,
+        )
+    except Exception as exc:
+        return _ret(
+            "tool.list_browser_remote_providers.output",
+            _json({"ok": False, "error": str(exc)}),
+        )
+    return _ret(
+        "tool.list_browser_remote_providers.output",
+        _json({"ok": True, "items": [browser_remote_provider_payload(item) for item in providers]}),
+    )
+
+
+def list_browser_remote_jobs(
+    target: str | None = None,
+    node: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+) -> str:
+    """List remote browser jobs discovered through browser proxy responses.
+
+    Args:
+        target: Optional remote target filter, currently ``node`` or ``sandbox``.
+        node: Optional node selector filter for ``target="node"`` jobs.
+        status: Optional normalized job status filter, e.g. ``running`` or ``completed``.
+        limit: Maximum number of remote job records to return.
+
+    Returns:
+        JSON payload containing recently observed remote browser jobs.
+    """
+    normalized_target = (target or "").strip().lower()
+    if normalized_target and normalized_target not in {"node", "sandbox"}:
+        return _ret(
+            "tool.list_browser_remote_jobs.output",
+            _json({"ok": False, "error": "target must be node or sandbox", "status": 400}),
+        )
+    try:
+        jobs = BrowserRemoteProviderStore().list_jobs(
+            target=normalized_target or None,
+            node=node,
+            status=status,
+            limit=limit,
+        )
+    except Exception as exc:
+        return _ret(
+            "tool.list_browser_remote_jobs.output",
+            _json({"ok": False, "error": str(exc)}),
+        )
+    return _ret(
+        "tool.list_browser_remote_jobs.output",
+        _json({"ok": True, "items": [browser_remote_job_payload(item) for item in jobs]}),
+    )
+
+
+def check_browser_remote_job_protocol(
+    proxy_url: str,
+    job_id: str,
+    job_protocol: dict[str, Any],
+    checkpoint_payload: dict[str, Any] | None = None,
+    include_control_steps: bool = False,
+    token: str = "",
+) -> str:
+    """Run a browser remote provider protocol contract check.
+
+    Control steps (pause/resume/cancel) are side-effecting and run only when
+    ``include_control_steps`` is true.
+    """
+    report = run_browser_remote_job_contract(
+        proxy_url=proxy_url,
+        job_id=job_id,
+        protocol_payload=job_protocol,
+        token=token,
+        include_control_steps=include_control_steps,
+        checkpoint_payload=checkpoint_payload,
+    )
+    return _ret("tool.check_browser_remote_job_protocol.output", _json(report.to_payload()))
 
 
 def web_search(query: str, count: int = 5, provider: str | None = None) -> str:
@@ -4107,6 +4761,198 @@ def computer_task(
         return _ret("tool.computer_task.output", _json(result))
     except Exception as exc:
         return _ret("tool.computer_task.output", _json({"ok": False, "error": str(exc)}))
+
+
+def start_gui_task(
+    task: str,
+    max_steps: int | None = None,
+    dry_run: bool = False,
+    planner_model: str | None = None,
+    planner_api_key: str | None = None,
+    planner_base_url: str | None = None,
+    tool_context: Any | None = None,
+) -> str:
+    """Start a checkpointable GUI job and register it as a TaskRun.
+
+    This is the durable GUI-job entrypoint. It does not replace
+    ``computer_task``'s legacy inline/sync-proxy behavior; it exists for UI/app
+    workflows that need explicit pause/resume controls.
+    """
+    _debug(
+        "tool.start_gui_task.input",
+        {
+            "task": task,
+            "max_steps": max_steps,
+            "dry_run": dry_run,
+            "has_planner_model_override": bool((planner_model or "").strip()),
+            "has_planner_api_key_override": bool((planner_api_key or "").strip()),
+            "has_planner_base_url_override": bool((planner_base_url or "").strip()),
+        },
+    )
+    normalized_task = (task or "").strip()
+    if not normalized_task:
+        return _ret("tool.start_gui_task.output", _json({"ok": False, "error": "task is required"}))
+
+    context = _task_invocation_context(tool_context)
+    task_store = TaskStore()
+    event_store = TaskEventStore(db_path=task_store.db_path)
+    tool_call_store = ToolCallRecordStore(db_path=task_store.db_path)
+    args_hash = _stable_tool_args_hash(
+        {
+            "task": normalized_task,
+            "max_steps": max_steps,
+            "dry_run": bool(dry_run),
+            "planner_model": planner_model,
+            "planner_base_url": planner_base_url,
+        }
+    )
+    idempotency_key = _tool_call_idempotency_key(
+        context=context,
+        tool_name="start_gui_task",
+        args_hash=args_hash,
+    )
+    record, created = tool_call_store.create_or_get(
+        idempotency_key=idempotency_key,
+        tool_name="start_gui_task",
+        args_hash=args_hash,
+    )
+    if not created:
+        if record.task_id:
+            existing = task_store.get_task(record.task_id)
+            if existing is not None:
+                return _ret(
+                    "tool.start_gui_task.output",
+                    _json(
+                        {
+                            "ok": True,
+                            "mode": "task",
+                            "status": existing.status,
+                            "task_id": existing.task_id,
+                            "job_id": existing.external_ref,
+                            "title": existing.title,
+                            "progress_summary": existing.progress_summary,
+                            "replayed": True,
+                        }
+                    ),
+                )
+        if record.status == "completed" and record.result:
+            replayed = dict(record.result)
+            replayed["replayed"] = True
+            return _ret("tool.start_gui_task.output", _json(replayed))
+
+    try:
+        job = submit_gui_task_job(
+            task=normalized_task,
+            max_steps=max_steps,
+            dry_run=bool(dry_run),
+            planner_model=planner_model,
+            planner_api_key=planner_api_key,
+            planner_base_url=planner_base_url,
+        )
+    except Exception as exc:
+        tool_call_store.settle(idempotency_key, status="failed", error=str(exc))
+        return _ret("tool.start_gui_task.output", _json({"ok": False, "error": str(exc)}))
+    if not job.get("ok"):
+        error = str(job.get("error") or "failed to submit GUI job")
+        tool_call_store.settle(idempotency_key, status="failed", result=job, error=error)
+        return _ret("tool.start_gui_task.output", _json(job))
+
+    job_id = str(job.get("job_id") or "").strip()
+    progress = f"GUI job `{job_id}` started."
+    runner_payload = {
+        "runner": "gui_job",
+        "job_id": job_id,
+        "domain": "gui",
+        "operation": "start_gui_task",
+        "request": {
+            "task": normalized_task,
+            "max_steps": max_steps,
+            "dry_run": bool(dry_run),
+            "planner_model": planner_model,
+            "planner_base_url": planner_base_url,
+        },
+        "delivery": {
+            "channel": context.channel,
+            "chat_id": context.chat_id,
+        },
+        "status_snapshot": {
+            "status": "running",
+            "summary": progress,
+        },
+    }
+    checkpoint = job.get("checkpoint")
+    if isinstance(checkpoint, dict):
+        runner_payload["latest_checkpoint"] = checkpoint
+
+    task_run = task_store.create_task(
+        kind="gui_task",
+        status="running",
+        title=f"GUI task: {normalized_task[:80]}",
+        owner_key=context.owner_key or context.user_id,
+        user_id=context.user_id,
+        thread_id=context.thread_id or context.session_id,
+        session_id=context.session_id,
+        turn_id=context.turn_id or context.invocation_id,
+        invocation_id=context.invocation_id,
+        function_call_id=context.function_call_id,
+        tool_call_id=context.tool_call_id,
+        dedupe_key=f"gui_job:{args_hash}",
+        external_ref=job_id,
+        runner_payload=runner_payload,
+        runner_capabilities=GUI_JOB_RUNNER_CAPABILITIES,
+        resume_policy="checkpoint",
+        stop_policy="pause_task",
+        cancel_policy="cooperative_cancel",
+        progress_summary=progress,
+    )
+    event_store.append_event(
+        task_run.task_id,
+        "task.started",
+        message=progress,
+        payload={"runner": "gui_job", "job_id": job_id, "job": job},
+    )
+    if isinstance(checkpoint, dict) and checkpoint:
+        TaskController(task_store=task_store, event_store=event_store).record_task_checkpoint(
+            task_run.task_id,
+            checkpoint_type="gui_runner_state",
+            runner_name="gui_job",
+            checkpoint_payload=checkpoint,
+            summary=str(checkpoint.get("summary") or progress),
+            resume_policy="checkpoint",
+        )
+        task_run = task_store.get_task(task_run.task_id) or task_run
+
+    payload = {
+        "ok": True,
+        "mode": "task",
+        "status": task_run.status,
+        "task_id": task_run.task_id,
+        "job_id": job_id,
+        "title": task_run.title,
+        "progress_summary": task_run.progress_summary,
+    }
+    tool_call_store.link_task(idempotency_key, task_run.task_id, status="running")
+    _emit_feedback(
+        f"GUI task started: {task_run.task_id}",
+        feedback_type="status",
+        status=task_run.status,
+        tool_name="start_gui_task",
+        task_id=task_run.task_id,
+        step_title="GUI task started",
+        done=False,
+        important=True,
+        extra_metadata=_tool_step_extra_metadata(
+            tool_name="start_gui_task",
+            step_title="GUI task started",
+            step_phase="running",
+            step_update_kind="lifecycle",
+            task_id=task_run.task_id,
+            done=False,
+            important=True,
+            content=f"GUI task started: {task_run.task_id}",
+        ),
+    )
+    return _ret("tool.start_gui_task.output", _json(payload))
 
 
 def configure_outbound_publisher(

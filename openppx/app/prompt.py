@@ -55,14 +55,20 @@ Rules:
 - Use `spawn_subagent(prompt=...)` for background sub-tasks that should finish later.
 - Prefer available built-in tools for file, shell, browser, web, messaging, cron, and sub-agent actions.
 - Browser routing supports `target=host|node|sandbox`; use `target=node` with `node=<id>` when a specific node proxy is required.
-- For skill APIs, prefer `invoke_skill_api(skill_name, api_name, args=...)`; script-backed APIs, declarative HTTP API recipes, and declarative Python SDK recipes run in the supervised envelope, quick calls return inline output, and long calls return a durable `task_id`.
+- Use `list_browser_remote_providers` and `list_browser_remote_jobs` to inspect recently observed remote browser provider/job facts; when a proxy explicitly returns a job id, openppx materializes a `browser_remote` TaskRun, and `show_task`/`list_tasks` remain the source of truth for task status. Live status/output/cancel/pause/resume/checkpoint controls are available only when the proxy declares an explicit browser job protocol. Use `check_browser_remote_job_protocol` for explicit provider contract checks; leave side-effecting controls disabled unless the user is intentionally testing pause/resume/cancel.
+- For skill APIs, prefer `invoke_skill_api(skill_name, api_name, args=...)`; call `list_skill_api_runners` when you need the supported declarative recipe catalog. Script-backed APIs, declarative HTTP API recipes, declarative Python SDK recipes, declarative Node.js API recipes, and declarative command API recipes run in the supervised envelope, quick calls return inline output, and long calls return a durable `task_id`.
 - For multi-turn goals, use `long_task` to mirror the current objective and completion criteria, and `write_todos` to keep a short current plan with exactly one active step when work remains.
-- For multi-step goals that span turns, use `write_task_flow` to record the ordered plan/current step, `update_task_flow_step` to attach step status or task_id evidence, and `show_task_flow`/`list_task_flows` before continuing old work.
-- Use `write_context_summary` or `summarize_context_text` to preserve compact context for long work; summaries help continuity but are not proof that work finished.
+- For multi-step goals that span turns, use `write_task_flow` to record the ordered/DAG plan, `update_task_flow_step` to attach step status or task_id evidence, `advance_task_flow` to mirror bound TaskRun status and promote dependency-ready steps, and `show_task_flow`/`list_task_flows` before continuing old work.
+- Use `write_context_summary` or `summarize_context_text` to preserve compact task/flow/session context for long work; use `rollup_context_summaries` to aggregate lower-level summaries into flow/session summaries before long pauses. ADK event compaction may use the openppx staged summarizer, but summaries help continuity and are not proof that work finished. `evaluate_staged_summary_quality_cases` and `summarize_staged_summary_quality_log` provide observability/eval evidence only.
 - Use `complete_goal` only when the user's objective is actually satisfied; goal mirrors and todos are short-term context facts, not long-term memory and not proof that TaskRuns completed.
-- Use `finish_task_flow` only when the flow is genuinely completed, failed, or cancelled. TaskFlow facts do not execute steps or resume runners; TaskRun facts remain the source of truth for actual execution.
-- Use `list_tasks`, `show_task`, and `task_output` to inspect long tasks.
-- Use task `controls` from `show_task`/`list_tasks` to decide which task actions are actually available.
+- Use `finish_task_flow` only when the flow is genuinely completed, failed, or cancelled. TaskFlow facts do not execute external APIs or resume runners; TaskRun facts remain the source of truth for actual execution.
+- Use `list_tasks`, `show_task`, and `task_output` to inspect long tasks. Use `task_control_snapshot` for UI/app-ready task cards and button descriptors.
+- Use `task_runtime_status` and `audit_stuck_tasks` for long-task runtime health checks.
+- Use `remediate_stuck_tasks` in dry-run mode first when stuck running/stale task facts need conservative synchronization; it is not a cancel, restart, or resume tool.
+- Use `audit_orphan_runtime_facts` before cleaning orphan task artifact/checkpoint facts.
+- Use `audit_checkpoint_retention` before cleaning old non-current checkpoint facts.
+- Use `cleanup_terminal_tasks`, `cleanup_orphan_runtime_facts`, and `cleanup_checkpoint_retention` in dry-run mode first; only delete runtime facts or artifact files after explicit user confirmation.
+- Use task `controls` from `show_task`/`list_tasks` to decide which task actions are actually available; `controls.actions` is the stable UI/app button descriptor and must not be inferred from task kind alone. Use `dispatch_task_action` only when a user or app explicitly selected an action.
 - Large task outputs may be returned as artifacts; reference the artifact metadata/path instead of copying full logs into the answer.
 - Use `resume_task` only after inspecting task facts; it may rejoin a still-running task or explain why this runner cannot resume.
 - Use `restart_task` only when task controls expose an explicit restart boundary; restart starts a new run and is not the same as rejoining a running task.
@@ -70,7 +76,8 @@ Rules:
 - Treat `checkpoint_ref` as runner-specific state; it is useful only when task controls and the runner adapter expose checkpoint resume.
 - Use `send_task_input` when a task is waiting for user input; it records the input and does not by itself prove the runner consumed it.
 - Treat user stop/pause requests as `interrupt_task` by default. Use `cancel_task` only when the user clearly wants to abandon the task.
-- When the user says "continue", inspect current tasks before starting duplicate work.
+- When the user says "continue", "resume", "继续", or "继续执行", inspect current TaskRuns first with `list_tasks` / `show_task`; if task controls expose `resume_task`, call `resume_task` instead of starting duplicate work.
+- For desktop GUI workflows that may take multiple steps or need stop/continue controls, use `start_gui_task` so the runtime creates a checkpointable TaskRun.
 - For long-running shell tasks, use `exec(background=true|yield_ms=...)` and follow-up with `process(...)`.
 - For relative scheduling, use the per-request time injected with the user message as `now`.
 """
@@ -91,7 +98,8 @@ def _build_gui_tool_guidance() -> str:
     )
     if gui_builtin_tools_enabled():
         guidance += (
-            "- Fallback (legacy builtin): use `computer_task(task=..., max_steps=...)` when MCP GUI tools are unavailable.\n"
+            "- Builtin durable GUI: use `start_gui_task(task=..., max_steps=...)` for multi-step desktop GUI workflows that need visible status, stop, or continue controls.\n"
+            "- Fallback (legacy inline builtin): use `computer_task(task=..., max_steps=...)` only for short compatibility workflows when durable pause/resume is not needed.\n"
             "- Use `computer_use(action=...)` only for single-step builtin GUI actions.\n"
         )
     return guidance.rstrip()

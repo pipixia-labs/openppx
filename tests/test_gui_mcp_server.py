@@ -10,14 +10,19 @@ from unittest.mock import patch
 from openppx.gui.mcp_server import (
     add_agent_participant,
     build_gui_mcp_server,
+    cancel_gui_task,
     get_agent_access,
+    get_gui_task_output,
+    get_gui_task_status,
     list_agent_access_audit,
     list_agent_memory_audit,
     main,
     remove_agent_participant,
+    resume_gui_task,
     run_gui_action,
     run_gui_task,
     set_agent_owner,
+    submit_gui_task,
 )
 
 
@@ -66,6 +71,55 @@ class GuiMcpServerTests(unittest.TestCase):
             planner_api_key=None,
             planner_base_url=None,
         )
+
+    def test_submit_gui_task_delegates_to_job_coordinator(self) -> None:
+        expected = {"ok": True, "job_id": "gui_job_1", "status": "running"}
+        with patch("openppx.gui.mcp_server.submit_gui_task_job", return_value=expected) as mocked:
+            result = submit_gui_task(task="open browser", max_steps=5, dry_run=True)
+
+        self.assertEqual(result, expected)
+        mocked.assert_called_once_with(
+            task="open browser",
+            max_steps=5,
+            dry_run=True,
+            planner_model=None,
+            planner_api_key=None,
+            planner_base_url=None,
+        )
+
+    def test_gui_task_job_wrappers_require_job_id(self) -> None:
+        self.assertFalse(get_gui_task_status(job_id=" ")["ok"])
+        self.assertFalse(get_gui_task_output(job_id=" ")["ok"])
+        self.assertFalse(cancel_gui_task(job_id=" ")["ok"])
+
+    def test_gui_task_job_wrappers_delegate(self) -> None:
+        with patch("openppx.gui.mcp_server.gui_task_job_status", return_value={"ok": True, "status": "running"}) as status:
+            self.assertEqual(get_gui_task_status(job_id="gui_job_1")["status"], "running")
+        with patch("openppx.gui.mcp_server.gui_task_job_output", return_value={"ok": True, "output": "done"}) as output:
+            self.assertEqual(get_gui_task_output(job_id="gui_job_1")["output"], "done")
+        with patch("openppx.gui.mcp_server.gui_task_job_cancel", return_value={"ok": True, "action": "cancelled"}) as cancel:
+            self.assertEqual(cancel_gui_task(job_id="gui_job_1", terminal_status="cancelled")["action"], "cancelled")
+
+        status.assert_called_once_with("gui_job_1")
+        output.assert_called_once_with("gui_job_1")
+        cancel.assert_called_once_with("gui_job_1", terminal_status="cancelled", reason="")
+
+    def test_resume_gui_task_uses_latest_checkpoint_from_job(self) -> None:
+        checkpoint = {"task": "continue", "history": [{"step": 1}]}
+        with patch(
+            "openppx.gui.mcp_server.gui_task_job_status",
+            return_value={"ok": True, "checkpoint": checkpoint},
+        ) as status:
+            with patch(
+                "openppx.gui.mcp_server.resume_gui_task_job",
+                return_value={"ok": True, "job_id": "gui_job_2"},
+            ) as resume:
+                result = resume_gui_task(job_id="gui_job_1")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["job_id"], "gui_job_2")
+        status.assert_called_once_with("gui_job_1")
+        resume.assert_called_once_with(checkpoint=checkpoint)
 
     def test_get_agent_access_requires_agent_id(self) -> None:
         result = get_agent_access(agent_id=" ")
@@ -140,6 +194,11 @@ class GuiMcpServerTests(unittest.TestCase):
         names = {tool.name for tool in tools}
         self.assertIn("gui_action", names)
         self.assertIn("gui_task", names)
+        self.assertIn("gui_task_submit", names)
+        self.assertIn("gui_task_status", names)
+        self.assertIn("gui_task_output", names)
+        self.assertIn("gui_task_cancel", names)
+        self.assertIn("gui_task_resume", names)
         self.assertIn("agent_access_get", names)
         self.assertIn("agent_access_audit_list", names)
         self.assertIn("agent_memory_audit_list", names)

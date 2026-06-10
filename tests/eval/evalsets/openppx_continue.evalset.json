@@ -1,0 +1,61 @@
+{
+  "eval_set_id": "openppx_continue",
+  "name": "openppx continue/resume eval",
+  "description": "Tool-trajectory baseline for natural-language continue execution over a seeded rejoinable TaskRun.",
+  "eval_cases": [
+    {
+      "eval_id": "continue_execution_inspects_task_before_resume",
+      "conversation": [
+        {
+          "invocation_id": "openppx-continue-0001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "继续执行 task_continue_eval。For this eval, first call list_tasks with exactly session_id=\"continue_eval_session\" and limit=20, then call show_task for task_continue_eval, then call resume_task for task_continue_eval. After the resume result, reply with exactly: OPENPPX_CONTINUE_RESUME_OK"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "OPENPPX_CONTINUE_RESUME_OK"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "list_tasks",
+                "args": {
+                  "limit": 20,
+                  "session_id": "continue_eval_session"
+                }
+              },
+              {
+                "name": "show_task",
+                "args": {
+                  "task_id": "task_continue_eval"
+                }
+              },
+              {
+                "name": "resume_task",
+                "args": {
+                  "task_id": "task_continue_eval"
+                }
+              }
+            ],
+            "tool_responses": [],
+            "intermediate_responses": []
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "openppx",
+        "user_id": "eval_continue_user",
+        "state": {}
+      }
+    }
+  ]
+}

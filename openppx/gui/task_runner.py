@@ -22,6 +22,12 @@ from .executor import (
     _check_cancelled,
     execute_gui_action,
 )
+from .checkpoint import (
+    build_gui_task_checkpoint,
+    normalize_gui_history,
+    normalize_gui_saved_info,
+    normalize_gui_task_checkpoint,
+)
 from .prompts import load_planner_system_prompt
 
 
@@ -336,6 +342,8 @@ class GuiTaskRunner:
         max_steps: int = 8,
         dry_run: bool = False,
         cancel_token: Any | None = None,
+        initial_state: dict[str, Any] | None = None,
+        checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Run task loop until reply or max steps."""
         _debug(
@@ -350,9 +358,16 @@ class GuiTaskRunner:
                 "max_repeat_actions": self._max_repeat_actions,
             },
         )
-        history: list[dict[str, Any]] = []
-        current_plan = task
-        saved_info: dict[str, str] = {}
+        state = normalize_gui_task_checkpoint(
+            initial_state if isinstance(initial_state, dict) else None,
+            task=task,
+            max_steps=max_steps,
+            dry_run=dry_run,
+            include_schema=False,
+        )
+        history = normalize_gui_history(state.get("history"))
+        current_plan = str(state.get("current_plan") or task)
+        saved_info = normalize_gui_saved_info(state.get("saved_info"))
 
         def _final_summary() -> str:
             if saved_info:
@@ -360,6 +375,22 @@ class GuiTaskRunner:
             else:
                 saved_info_text = "none"
             return f"plan={current_plan}; saved_info={saved_info_text}; steps={len(history)}"
+
+        def _checkpoint(next_step: int, *, status_code: str = "running") -> None:
+            if checkpoint_callback is None:
+                return
+            checkpoint_callback(
+                build_gui_task_checkpoint(
+                    task=task,
+                    max_steps=max_steps,
+                    dry_run=dry_run,
+                    current_plan=current_plan,
+                    saved_info=saved_info,
+                    history=history,
+                    next_step=next_step,
+                    status_code=status_code,
+                )
+            )
 
         def _result(
             *,
@@ -389,7 +420,8 @@ class GuiTaskRunner:
                 payload["error"] = error
             return payload
 
-        for step in range(1, max_steps + 1):
+        _checkpoint(len(history) + 1)
+        for step in range(len(history) + 1, max_steps + 1):
             _check_cancelled(cancel_token)
             planned = self._plan_next(task, current_plan, saved_info, history)
             _check_cancelled(cancel_token)
@@ -407,6 +439,7 @@ class GuiTaskRunner:
 
             if action_type == "reply":
                 message = str(params.get("message", "Task finished")).strip() or "Task finished"
+                _checkpoint(step, status_code="completed")
                 return _result(
                     ok=True,
                     finished=True,
@@ -418,6 +451,7 @@ class GuiTaskRunner:
                 key = str(params.get("key", "")).strip()
                 value = str(params.get("value", "")).strip()
                 if not key:
+                    _checkpoint(step, status_code="failed")
                     return _result(
                         ok=False,
                         finished=False,
@@ -439,11 +473,13 @@ class GuiTaskRunner:
                         "error": None,
                     }
                 )
+                _checkpoint(step + 1)
                 continue
 
             if action_type == "modify_plan":
                 new_plan = str(params.get("new_plan", "")).strip()
                 if not new_plan:
+                    _checkpoint(step, status_code="failed")
                     return _result(
                         ok=False,
                         finished=False,
@@ -465,9 +501,11 @@ class GuiTaskRunner:
                         "error": None,
                     }
                 )
+                _checkpoint(step + 1)
                 continue
 
             if action_type != "execute":
+                _checkpoint(step, status_code="failed")
                 return _result(
                     ok=False,
                     finished=False,
@@ -478,6 +516,7 @@ class GuiTaskRunner:
 
             action_text = str(params.get("action", "")).strip()
             if not action_text:
+                _checkpoint(step, status_code="failed")
                 return _result(
                     ok=False,
                     finished=False,
@@ -519,8 +558,9 @@ class GuiTaskRunner:
                 },
             )
             if not step_record["ok"]:
+                _checkpoint(step + 1, status_code="failed")
                 return _result(
-                       ok=False,
+                    ok=False,
                     finished=False,
                     status_code="failed",
                     error=f"computer_use failed at step {step}: {step_record.get('error')}",
@@ -537,6 +577,7 @@ class GuiTaskRunner:
                 else:
                     break
             if no_progress_count >= self._max_no_progress_steps:
+                _checkpoint(step + 1, status_code="no_progress")
                 return _result(
                     ok=False,
                     finished=False,
@@ -557,6 +598,7 @@ class GuiTaskRunner:
                 else:
                     break
             if repeated_action_count >= self._max_repeat_actions:
+                _checkpoint(step + 1, status_code="no_progress")
                 return _result(
                     ok=False,
                     finished=False,
@@ -568,6 +610,9 @@ class GuiTaskRunner:
                     last_error_type="repeated_action_stall",
                 )
 
+            _checkpoint(step + 1)
+
+        _checkpoint(max_steps + 1, status_code="max_steps")
         return _result(
             ok=False,
             finished=False,
@@ -586,6 +631,8 @@ def execute_gui_task(
     planner_api_key: str | None = None,
     planner_base_url: str | None = None,
     cancel_token: Any | None = None,
+    initial_state: dict[str, Any] | None = None,
+    checkpoint_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Run a multi-step GUI task using environment-resolved planner settings."""
     planner_provider = canonical_provider_name(
@@ -645,9 +692,14 @@ def execute_gui_task(
         max_no_progress_steps=max_no_progress_steps,
         max_repeat_actions=max_repeat_actions,
     )
-    if cancel_token is None:
-        return runner.run(task, max_steps=resolved_max_steps, dry_run=dry_run)
-    return runner.run(task, max_steps=resolved_max_steps, dry_run=dry_run, cancel_token=cancel_token)
+    return runner.run(
+        task,
+        max_steps=resolved_max_steps,
+        dry_run=dry_run,
+        cancel_token=cancel_token,
+        initial_state=initial_state,
+        checkpoint_callback=checkpoint_callback,
+    )
 
 
 def _run_action_executor(

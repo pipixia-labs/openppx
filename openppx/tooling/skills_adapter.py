@@ -197,7 +197,21 @@ def list_skills() -> str:
 
 def read_skill(name: str) -> str:
     """ADK tool: read a specific SKILL.md by name."""
-    content = get_registry().read_skill(name)
+    registry = get_registry()
+    try:
+        content = registry.read_skill(name)
+    except ValueError as exc:
+        available = [info.name for info in registry.list_skills()]
+        payload = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "available_skills": available,
+        }
+        output = json.dumps(payload, ensure_ascii=False, indent=2)
+        if _debug_enabled():
+            logger.debug("[DEBUG] {}: {}", "tool.read_skill.output", _debug_body(payload))
+        return output
     if _debug_enabled():
         logger.debug(
             "[DEBUG] {}: {}",
