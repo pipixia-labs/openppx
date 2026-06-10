@@ -1,5 +1,5 @@
 # Runtime dependencies installed by `pip install -e .` (from pyproject [project.dependencies])
-google-adk>=2.1.0,<3.0.0
+google-adk>=2.1.0
 mcp>=1.24,<2
 greenlet>=3.1.1
 lark-oapi>=1.4.15
