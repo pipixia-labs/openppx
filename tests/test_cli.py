@@ -1303,6 +1303,8 @@ class CLITests(unittest.TestCase):
         self.assertIn("installPrereqs", payload)
         self.assertIn("heartbeat", payload)
         self.assertIn("runtime", payload)
+        self.assertIn("sandbox", payload)
+        self.assertEqual(payload["sandbox"]["backend"], "none")
         self.assertTrue(payload["runtime"]["adk"]["supported"])
 
     def test_doctor_runtime_status_reports_adk_storage_and_context_cache(self) -> None:
@@ -2026,6 +2028,7 @@ class CLITests(unittest.TestCase):
         lines = [call.args[0] for call in mocked_print.call_args_list if call.args]
         self.assertTrue(any("Heartbeat: last_status=ran, last_reason=exec:foreground" in line for line in lines))
         self.assertTrue(any("GUI runtime: mode=builtin_only" in line for line in lines))
+        self.assertTrue(any("Sandbox: backend=none" in line for line in lines))
         self.assertTrue(any("Environment looks good." in line for line in lines))
 
     def test_cmd_doctor_text_output_includes_install_prereqs(self) -> None:

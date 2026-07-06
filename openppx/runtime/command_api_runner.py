@@ -6,37 +6,74 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from openppx.runtime.sandbox import (
+    WorkspaceDockerSandbox,
+    build_workspace_docker_sandbox,
+    cleanup_docker_sandbox_container,
+    resolve_backend,
+)
+
 
 _DEFAULT_OUTPUT_MAX_BYTES = 2 * 1024 * 1024
+_DEFAULT_SANDBOX_TIMEOUT_CAP_SECONDS = 3600
 _TEMPLATE_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
 _FULL_TEMPLATE_RE = re.compile(r"^\{([A-Za-z_][A-Za-z0-9_.-]*)\}$")
 
 
 def main() -> int:
     """Execute one command API recipe and mirror command output."""
+    docker_sandbox: WorkspaceDockerSandbox | None = None
     try:
         recipe = _load_recipe()
         args_payload = _load_args()
+        sandbox_backend = _recipe_sandbox_backend(recipe)
         argv = _render_argv(recipe, args_payload)
-        env = _render_env(recipe, args_payload)
         stdin = _render_stdin(recipe, args_payload)
         timeout = _timeout_seconds(recipe)
         output_max_bytes = _output_max_bytes(recipe)
-        returncode = _run_streaming_command(
-            argv=argv,
-            stdin=stdin,
-            env=env,
-            timeout=timeout,
-            output_max_bytes=output_max_bytes,
-        )
+        if sandbox_backend == "docker":
+            docker_sandbox = build_workspace_docker_sandbox(
+                command_argv=argv,
+                workspace=Path(os.getcwd()),
+                cwd=Path(os.getcwd()),
+                timeout_seconds=timeout,
+                timeout_cap_seconds=_sandbox_timeout_cap_seconds(),
+                stdin=stdin,
+                env=_render_env(recipe, args_payload, inherit_host_env=False),
+                labels={"openppx.tool": "command_api", "openppx.runner": "command_api"},
+            )
+            returncode = _run_streaming_command(
+                argv=docker_sandbox.argv,
+                stdin=docker_sandbox.stdin.decode("utf-8", errors="replace")
+                if isinstance(docker_sandbox.stdin, bytes)
+                else docker_sandbox.stdin,
+                env=os.environ.copy(),
+                timeout=docker_sandbox.timeout_seconds,
+                output_max_bytes=output_max_bytes,
+            )
+        else:
+            returncode = _run_streaming_command(
+                argv=argv,
+                stdin=stdin,
+                env=_render_env(recipe, args_payload),
+                timeout=timeout,
+                output_max_bytes=output_max_bytes,
+            )
         if returncode != 0 and bool(recipe.get("fail_on_nonzero", True)):
             return int(returncode)
         return 0
     except subprocess.TimeoutExpired as exc:
+        if docker_sandbox is not None:
+            cleanup_docker_sandbox_container(docker_sandbox.docker_bin, docker_sandbox.container_name)
         _emit_response(ok=False, error=f"command timed out after {exc.timeout} seconds", error_type="TimeoutExpired")
         return 124
     except Exception as exc:
@@ -92,8 +129,8 @@ def _resolve_executable(argv: list[str], *, allow_system_executable: bool) -> li
     return [str(resolved), *argv[1:]]
 
 
-def _render_env(recipe: dict[str, Any], args_payload: Any) -> dict[str, str]:
-    env = os.environ.copy()
+def _render_env(recipe: dict[str, Any], args_payload: Any, *, inherit_host_env: bool = True) -> dict[str, str]:
+    env = os.environ.copy() if inherit_host_env else {}
     raw_env = recipe.get("env")
     if raw_env is None:
         return env
@@ -114,6 +151,50 @@ def _render_stdin(recipe: dict[str, Any], args_payload: Any) -> str | None:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
     return str(value)
+
+
+def _recipe_sandbox_backend(recipe: dict[str, Any]) -> str:
+    raw = recipe.get("sandbox")
+    if raw in (None, False):
+        return ""
+    if isinstance(raw, str) and raw.strip().lower() in {"", "0", "false", "none", "off"}:
+        return ""
+    if raw is True:
+        requested = "docker"
+        sandbox_options: dict[str, Any] = {}
+    elif isinstance(raw, str):
+        requested = raw.strip().lower()
+        sandbox_options = {}
+    elif isinstance(raw, dict):
+        sandbox_options = raw
+        required = bool(raw.get("required", False))
+        requested = str(raw.get("backend", "") or ("docker" if required else "")).strip().lower()
+        if not requested:
+            return ""
+    else:
+        raise ValueError("Command API recipe sandbox must be a string, boolean, or object")
+
+    if str(sandbox_options.get("network", "disabled") or "disabled").strip().lower() not in {"disabled", "none"}:
+        raise ValueError("Command API sandbox network enablement requires approval and is not implemented")
+    if str(sandbox_options.get("image", "") or "").strip():
+        raise ValueError("Command API recipe sandbox.image is not supported yet")
+
+    configured = os.getenv("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
+    backend = resolve_backend(configured_backend=configured, requested_backend=requested)
+    if backend != "docker":
+        raise ValueError("Command API sandbox currently supports only docker")
+    return backend
+
+
+def _sandbox_timeout_cap_seconds() -> int:
+    raw = os.getenv("OPENPPX_SANDBOX_TIMEOUT_MAX_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_SANDBOX_TIMEOUT_CAP_SECONDS
+    try:
+        value = int(float(raw))
+    except Exception:
+        return _DEFAULT_SANDBOX_TIMEOUT_CAP_SECONDS
+    return max(1, min(value, 24 * 60 * 60))
 
 
 def _run_streaming_command(

@@ -196,6 +196,70 @@ def _doctor_runtime_status() -> dict[str, Any]:
     }
 
 
+def _doctor_sandbox_status() -> dict[str, Any]:
+    """Build sandbox diagnostics for doctor output."""
+    from ..runtime.sandbox import build_sandbox_diagnostics, list_docker_sandbox_containers
+
+    backend = os.getenv("OPENPPX_SANDBOX_BACKEND", "none").strip() or "none"
+    docker_bin = os.getenv("OPENPPX_SANDBOX_DOCKER_BIN", "docker").strip() or "docker"
+    image = os.getenv("OPENPPX_SANDBOX_IMAGE", "openppx-sandbox:dev").strip() or "openppx-sandbox:dev"
+    diagnostics = build_sandbox_diagnostics(
+        backend=backend,
+        docker_bin=docker_bin,
+        image=image,
+    ).to_payload()
+    containers: tuple[str, ...] = ()
+    if diagnostics["backend"] == "docker" and diagnostics["docker_cli_available"]:
+        containers = list_docker_sandbox_containers(docker_bin=docker_bin)
+        if containers:
+            warnings = list(diagnostics.get("warnings", []))
+            warnings.append(f"{len(containers)} openppx sandbox container(s) found; run `ppx sandbox prune` to remove stale containers")
+            diagnostics["warnings"] = warnings
+    diagnostics["containers"] = {"openppx_sandbox": list(containers), "count": len(containers)}
+    return diagnostics
+
+
+def _sandbox_dockerfile_path() -> Path:
+    """Return the repository-local sandbox Dockerfile path."""
+    return Path(__file__).resolve().parents[2] / "docker" / "sandbox" / "Dockerfile"
+
+
+def _cmd_sandbox_build_image(*, image: str, docker_bin: str, no_cache: bool = False) -> int:
+    """Build the local Docker sandbox image."""
+    dockerfile = _sandbox_dockerfile_path()
+    if not dockerfile.is_file():
+        _stdout_line(f"Sandbox Dockerfile not found: {dockerfile}")
+        return 1
+    argv = [docker_bin, "build", "-t", image, "-f", str(dockerfile)]
+    if no_cache:
+        argv.append("--no-cache")
+    argv.append(str(dockerfile.parents[2]))
+    _stdout_line(f"Building sandbox image {image} from {dockerfile}")
+    try:
+        completed = subprocess.run(argv, check=False)
+    except FileNotFoundError:
+        _stdout_line(f"Docker CLI not found: {docker_bin}")
+        return 1
+    return int(completed.returncode)
+
+
+def _cmd_sandbox_prune(*, docker_bin: str) -> int:
+    """Remove Docker containers labeled as openppx sandbox runs."""
+    from ..runtime.sandbox import list_docker_sandbox_containers, prune_docker_sandbox_containers
+
+    containers = list_docker_sandbox_containers(docker_bin=docker_bin)
+    if not containers:
+        _stdout_line("No openppx sandbox containers found.")
+        return 0
+    removed, errors = prune_docker_sandbox_containers(docker_bin=docker_bin, containers=containers)
+    for name in removed:
+        _stdout_line(f"Removed sandbox container: {name}")
+    for item in errors:
+        _stdout_line(f"Failed to remove sandbox container: {item}")
+    _stdout_line(f"Sandbox prune summary: removed={len(removed)}, failed={len(errors)}")
+    return 1 if errors else 0
+
+
 def _parse_enabled_channels(raw: str | None) -> list[str]:
     from ..channels.factory import parse_enabled_channels
 
@@ -1346,6 +1410,12 @@ def _cmd_doctor(
             issues.append(bridge_issue)
     heartbeat_snapshot = read_heartbeat_status_snapshot(registry.workspace)
     install_prereqs = _install_prereq_lines()
+    sandbox_status = _doctor_sandbox_status()
+    if sandbox_status["backend"] == "docker" and not sandbox_status["docker_cli_available"]:
+        issues.append(
+            "Docker sandbox backend is configured but Docker CLI is not available. "
+            "Install Docker or set OPENPPX_SANDBOX_BACKEND=none."
+        )
     web_enabled = env_enabled("OPENPPX_WEB_ENABLED", default=True)
     web_search_enabled = env_enabled("OPENPPX_WEB_SEARCH_ENABLED", default=True)
     web_search_provider = os.getenv("OPENPPX_WEB_SEARCH_PROVIDER", "brave").strip().lower() or "brave"
@@ -1430,6 +1500,7 @@ def _cmd_doctor(
             "allow_network": security_policy.allow_network,
             "exec_allowlist": list(security_policy.exec_allowlist),
         },
+        "sandbox": sandbox_status,
         "mcp": {
             "configured": mcp_summaries,
             "health": mcp_probe_results,
@@ -1491,6 +1562,14 @@ def _cmd_doctor(
             f"allow_exec={security_policy.allow_exec}, "
             f"allow_network={security_policy.allow_network}, "
             f"exec_allowlist={list(security_policy.exec_allowlist)}"
+        ),
+        (
+            "Sandbox: "
+            f"backend={sandbox_status['backend']}, "
+            f"status={sandbox_status['status']}, "
+            f"docker_cli={sandbox_status['docker_cli_available']}, "
+            f"image={sandbox_status['image']}, "
+            f"containers={sandbox_status.get('containers', {}).get('count', 0)}"
         ),
         (
             "GUI execution: "
@@ -1590,6 +1669,16 @@ def _cmd_doctor(
         f"action_tool={gui_action_tool or '-'}, "
         f"hint={gui_hint}"
     )
+    _stdout_line(
+        "Sandbox: "
+        f"backend={sandbox_status['backend']}, "
+        f"status={sandbox_status['status']}, "
+        f"docker_cli={'available' if sandbox_status['docker_cli_available'] else 'missing'}, "
+        f"image={sandbox_status['image']}, "
+        f"containers={sandbox_status.get('containers', {}).get('count', 0)}"
+    )
+    for warning in sandbox_status.get("warnings", []):
+        _stdout_line(_warn(f"Sandbox warning: {warning}"))
 
     if issues:
         _stdout_line(_section("Issues:"))
@@ -4243,7 +4332,7 @@ def _should_require_agent_config_for_gateway(args: argparse.Namespace) -> bool:
 def _should_bootstrap_single_agent_env(args: argparse.Namespace) -> bool:
     """Return true when startup should hydrate one explicit config into process env."""
 
-    if args.command in {"install", "create", "client-api"}:
+    if args.command in {"install", "create", "client-api", "sandbox"}:
         return False
     return True
 
@@ -4341,6 +4430,33 @@ def main(argv: list[str] | None = None) -> None:
         "--no-color",
         action="store_true",
         help="Disable colorized doctor text output.",
+    )
+    sandbox_parser = subparsers.add_parser("sandbox", help="Sandbox helper commands.")
+    sandbox_subparsers = sandbox_parser.add_subparsers(dest="sandbox_action", required=True)
+    sandbox_build_parser = sandbox_subparsers.add_parser("build-image", help="Build the local Docker sandbox image.")
+    sandbox_build_parser.add_argument(
+        "--image",
+        default=os.getenv("OPENPPX_SANDBOX_IMAGE", "openppx-sandbox:dev"),
+        help="Docker image tag to build. Defaults to OPENPPX_SANDBOX_IMAGE or openppx-sandbox:dev.",
+    )
+    sandbox_build_parser.add_argument(
+        "--docker-bin",
+        default=os.getenv("OPENPPX_SANDBOX_DOCKER_BIN", "docker"),
+        help="Docker CLI binary. Defaults to OPENPPX_SANDBOX_DOCKER_BIN or docker.",
+    )
+    sandbox_build_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Pass --no-cache to docker build.",
+    )
+    sandbox_prune_parser = sandbox_subparsers.add_parser(
+        "prune",
+        help="Remove Docker containers labeled as openppx sandbox runs.",
+    )
+    sandbox_prune_parser.add_argument(
+        "--docker-bin",
+        default=os.getenv("OPENPPX_SANDBOX_DOCKER_BIN", "docker"),
+        help="Docker CLI binary. Defaults to OPENPPX_SANDBOX_DOCKER_BIN or docker.",
     )
 
     run_parser = subparsers.add_parser("run", help="Run `adk run` for this agent.")
@@ -4932,6 +5048,15 @@ def main(argv: list[str] | None = None) -> None:
                 fix_dry_run=args.fix_dry_run,
                 no_color=args.no_color,
             ),
+            "sandbox": lambda: _cmd_sandbox_build_image(
+                image=args.image,
+                docker_bin=args.docker_bin,
+                no_cache=args.no_cache,
+            )
+            if args.sandbox_action == "build-image"
+            else _cmd_sandbox_prune(docker_bin=args.docker_bin)
+            if args.sandbox_action == "prune"
+            else 2,
             "run": lambda: _cmd_run(args.adk_args),
             "rewind": lambda: _cmd_rewind(
                 user_id=args.user_id,

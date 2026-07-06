@@ -42,6 +42,7 @@ packages = ["openppx"]
 
 [tool.hatch.build]
 include = [
+    "docker/**",
     "openppx/**/*.py",
     "openppx/bridge/**",
     "openppx/skills/**",

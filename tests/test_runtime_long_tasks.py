@@ -14,11 +14,13 @@ from pathlib import Path
 from unittest import mock
 
 from openppx.runtime.browser_remote_provider import BrowserRemoteProviderStore
+from openppx.runtime import checkpoint_migration_catalog
 from openppx.runtime.long_task_context import render_long_task_context
 from openppx.runtime.context_engine import LongTaskContextStore
 from openppx.runtime.checkpoint_schema import (
     CheckpointMigrationSpec,
     CheckpointSchemaSpec,
+    DEFAULT_CHECKPOINT_SCHEMA_REGISTRY,
     TASK_CHECKPOINT_ENVELOPE_SCHEMA,
     TASK_CHECKPOINT_METADATA_KEY,
 )
@@ -59,11 +61,45 @@ from openppx.tooling.registry import (
 )
 
 
+_BASELINE_CHECKPOINT_CATALOG_ENTRIES = dict(
+    checkpoint_migration_catalog.DEFAULT_CHECKPOINT_MIGRATION_CATALOG._entries
+)
+_BASELINE_CHECKPOINT_CATALOG_APPLIED = checkpoint_migration_catalog._DEFAULT_BROWSER_REMOTE_CATALOG_APPLIED
+_BASELINE_CHECKPOINT_REGISTRY_SPECS = dict(DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._specs)
+_BASELINE_CHECKPOINT_REGISTRY_SCHEMA_SPECS = dict(DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._schema_specs)
+_BASELINE_CHECKPOINT_REGISTRY_MIGRATIONS = {
+    key: {version: list(items) for version, items in outgoing.items()}
+    for key, outgoing in DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._migrations.items()
+}
+
+
+def _restore_checkpoint_registry_baseline() -> None:
+    """Restore global checkpoint registries mutated by migration tests."""
+    checkpoint_migration_catalog.DEFAULT_CHECKPOINT_MIGRATION_CATALOG._entries.clear()
+    checkpoint_migration_catalog.DEFAULT_CHECKPOINT_MIGRATION_CATALOG._entries.update(
+        _BASELINE_CHECKPOINT_CATALOG_ENTRIES
+    )
+    checkpoint_migration_catalog._DEFAULT_BROWSER_REMOTE_CATALOG_APPLIED = _BASELINE_CHECKPOINT_CATALOG_APPLIED
+    DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._specs.clear()
+    DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._specs.update(_BASELINE_CHECKPOINT_REGISTRY_SPECS)
+    DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._schema_specs.clear()
+    DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._schema_specs.update(_BASELINE_CHECKPOINT_REGISTRY_SCHEMA_SPECS)
+    DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._migrations.clear()
+    DEFAULT_CHECKPOINT_SCHEMA_REGISTRY._migrations.update(
+        {
+            key: {version: list(items) for version, items in outgoing.items()}
+            for key, outgoing in _BASELINE_CHECKPOINT_REGISTRY_MIGRATIONS.items()
+        }
+    )
+
+
 class LongTaskRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._env_backup = dict(os.environ)
+        _restore_checkpoint_registry_baseline()
 
     def tearDown(self) -> None:
+        _restore_checkpoint_registry_baseline()
         os.environ.clear()
         os.environ.update(self._env_backup)
 

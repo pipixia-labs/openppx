@@ -6,6 +6,7 @@ import json
 from io import BytesIO
 import os
 import re
+import subprocess
 import tempfile
 import threading
 import time
@@ -465,6 +466,106 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("bwrap", " ".join(str(part) for part in argv))
         self.assertIn("ok", out)
 
+    def test_exec_tool_configured_docker_backend_does_not_auto_sandbox(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run(*args, **kwargs):
+            captured["argv"] = args[0]
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
+        with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+            out = exec_command("echo hello")
+
+        self.assertIn("ok", out)
+        self.assertEqual(captured["argv"], ["echo", "hello"])
+
+    def test_exec_tool_blocks_backend_downgrade_to_bwrap(self) -> None:
+        os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
+        with patch("openppx.tooling.registry.subprocess.run") as mocked_run:
+            out = exec_command("echo hello", sandbox="bwrap")
+
+        self.assertIn("downgrade", out.lower())
+        mocked_run.assert_not_called()
+
+    def test_exec_tool_builds_explicit_docker_sandbox_command(self) -> None:
+        calls: list[tuple[list[str], dict[str, object]]] = []
+
+        def _fake_run(args, **kwargs):
+            calls.append((list(args), kwargs))
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            resolved_workspace = workspace.resolve(strict=False)
+            (workspace / ".git").mkdir()
+            (workspace / ".env").write_text("SECRET=1\n", encoding="utf-8")
+            (workspace / ".ssh").mkdir()
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+                out = exec_command("echo hello", sandbox="docker")
+
+        self.assertIn("ok", out)
+        argv = calls[0][0]
+        self.assertEqual(argv[:2], ["docker", "run"])
+        self.assertIn("--network", argv)
+        self.assertEqual(argv[argv.index("--network") + 1], "none")
+        self.assertIn("openppx-sandbox:dev", argv)
+        self.assertEqual(argv[-2:], ["echo", "hello"])
+        mounts = [argv[index + 1] for index, item in enumerate(argv) if item == "--mount"]
+        self.assertIn(f"type=bind,src={resolved_workspace},dst={resolved_workspace}", mounts)
+        self.assertIn(
+            f"type=bind,src={resolved_workspace / '.git'},dst={resolved_workspace / '.git'},readonly",
+            mounts,
+        )
+        self.assertIn(f"type=bind,src=/dev/null,dst={resolved_workspace / '.env'},readonly", mounts)
+        self.assertIn(
+            f"type=tmpfs,dst={resolved_workspace / '.ssh'},tmpfs-mode=0700,tmpfs-size=1m",
+            mounts,
+        )
+
+    def test_exec_tool_docker_sandbox_uses_container_shell(self) -> None:
+        calls: list[list[str]] = []
+
+        def _fake_run(args, **kwargs):
+            calls.append(list(args))
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+                out = exec_command("export OPENPPX_EXEC_TEST=hello && echo $OPENPPX_EXEC_TEST", sandbox="docker")
+
+        self.assertIn("ok", out)
+        argv = calls[0]
+        image_index = argv.index("openppx-sandbox:dev")
+        self.assertEqual(argv[image_index + 1 : image_index + 3], ["/bin/sh", "-lc"])
+
+    def test_exec_tool_docker_sandbox_rejects_session_modes(self) -> None:
+        out = exec_command("echo hello", sandbox="docker", background=True)
+        self.assertIn("foreground exec only", out.lower())
+
+    def test_exec_tool_docker_sandbox_timeout_cleans_container(self) -> None:
+        calls: list[list[str]] = []
+
+        def _fake_run(args, **kwargs):
+            argv = list(args)
+            calls.append(argv)
+            if argv[:2] == ["docker", "run"]:
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+            return pytypes.SimpleNamespace(stdout="", stderr="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+                out = exec_command("echo hello", sandbox="docker")
+
+        container_name = calls[0][calls[0].index("--name") + 1]
+        self.assertIn("timed out", out.lower())
+        self.assertIn("cleanup requested", out.lower())
+        self.assertEqual(calls[1], ["docker", "kill", container_name])
+        self.assertEqual(calls[2], ["docker", "rm", "-f", container_name])
+
     def test_computer_use_tool_calls_executor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["OPENPPX_TASK_DB_PATH"] = str(Path(tmp) / "tasks.db")
@@ -660,10 +761,13 @@ class ToolsTests(unittest.TestCase):
 
             store = TaskStore()
             failed = None
+            controller = TaskController(task_store=store)
             for _ in range(30):
                 time.sleep(0.02)
                 failed = store.get_task(result["task_id"])
-                if failed is not None and failed.status == "failed":
+                events = controller.event_store.list_events(result["task_id"]) if failed is not None else []
+                event_types = {event.event_type for event in events}
+                if failed is not None and failed.status == "failed" and "task.failed" in event_types:
                     break
 
             self.assertIsNotNone(failed)

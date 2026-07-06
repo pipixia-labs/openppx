@@ -61,6 +61,13 @@ from ..runtime.context_engine import (
     TodoItem,
 )
 from ..runtime.process_sessions import get_process_session_manager
+from ..runtime.sandbox import (
+    SandboxValidationError,
+    WorkspaceDockerSandbox,
+    build_workspace_docker_sandbox,
+    cleanup_docker_sandbox_container,
+    resolve_backend,
+)
 from ..runtime.step_events import build_step_metadata, normalize_outbound_metadata
 from ..runtime.sync_tool_proxy import SyncCancellationToken
 from ..runtime.sync_tool_proxy import run_sync_callable_with_proxy
@@ -1641,6 +1648,16 @@ def _wrap_command_with_sandbox(sandbox: str, command: str, workspace: str, cwd: 
     raise ValueError(f"Unknown sandbox backend {sandbox!r}. Available: ['bwrap']")
 
 
+def _resolve_exec_sandbox_name(sandbox: str | None) -> str:
+    """Resolve explicit exec sandbox opt-in without enabling sandbox by default."""
+    raw = sandbox if sandbox is not None else os.getenv("OPENPPX_EXEC_SANDBOX", "")
+    normalized = raw.strip().lower()
+    if normalized in {"", "0", "false", "none", "off"}:
+        return ""
+    configured = os.getenv("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
+    return resolve_backend(configured_backend=configured, requested_backend=normalized)
+
+
 def _validate_exec_security(
     command: str,
     argv: list[str],
@@ -2854,32 +2871,59 @@ def exec_command(
     if path_guard_error:
         return _ret("tool.exec.output", path_guard_error)
 
+    try:
+        sandbox_name = _resolve_exec_sandbox_name(sandbox)
+    except SandboxValidationError as exc:
+        return _ret("tool.exec.output", f"Error: failed to validate sandbox request: {exc}")
+    docker_sandbox: WorkspaceDockerSandbox | None = None
     command_argv = argv
     effective_command = cmd
-    # Keep common `python -c ...` style commands working in venv-only setups
-    # where `python` may be absent but the current interpreter is available.
-    if command_argv and command_argv[0] == "python" and shutil.which("python") is None:
-        command_argv = [sys.executable, *command_argv[1:]]
-    if _should_use_shell(argv):
-        shell_argv = _build_shell_argv(effective_command)
-        if not shell_argv:
-            return _ret("tool.exec.output", "Error: no compatible shell found for command execution")
-        command_argv = shell_argv
-    sandbox_name = (sandbox or os.getenv("OPENPPX_EXEC_SANDBOX", "")).strip()
-    if sandbox_name:
-        try:
-            effective_command = _wrap_command_with_sandbox(
-                sandbox_name,
-                effective_command,
-                str(_workspace(policy)),
-                str(cwd),
+    if sandbox_name == "docker":
+        if background or pty or yield_ms is not None:
+            return _ret(
+                "tool.exec.output",
+                "Error: docker sandbox currently supports foreground exec only; background, pty, and yield_ms are not supported",
             )
+        if _should_use_shell(argv):
+            command_argv = ["/bin/sh", "-lc", effective_command]
+        try:
+            docker_sandbox = build_workspace_docker_sandbox(
+                command_argv=command_argv,
+                workspace=_workspace(policy),
+                cwd=cwd,
+                timeout_seconds=timeout,
+                timeout_cap_seconds=60,
+                labels={"openppx.tool": "exec"},
+            )
+            command_argv = docker_sandbox.argv
+        except SandboxValidationError as exc:
+            return _ret("tool.exec.output", f"Error: failed to validate sandbox plan: {exc}")
         except Exception as exc:
             return _ret("tool.exec.output", f"Error: failed to configure sandbox: {exc}")
-        shell_argv = _build_shell_argv(effective_command)
-        if not shell_argv:
-            return _ret("tool.exec.output", "Error: no compatible shell found for sandbox execution")
-        command_argv = shell_argv
+    else:
+        # Keep common `python -c ...` style commands working in venv-only setups
+        # where `python` may be absent but the current interpreter is available.
+        if command_argv and command_argv[0] == "python" and shutil.which("python") is None:
+            command_argv = [sys.executable, *command_argv[1:]]
+        if _should_use_shell(argv):
+            shell_argv = _build_shell_argv(effective_command)
+            if not shell_argv:
+                return _ret("tool.exec.output", "Error: no compatible shell found for command execution")
+            command_argv = shell_argv
+        if sandbox_name:
+            try:
+                effective_command = _wrap_command_with_sandbox(
+                    sandbox_name,
+                    effective_command,
+                    str(_workspace(policy)),
+                    str(cwd),
+                )
+            except Exception as exc:
+                return _ret("tool.exec.output", f"Error: failed to configure sandbox: {exc}")
+            shell_argv = _build_shell_argv(effective_command)
+            if not shell_argv:
+                return _ret("tool.exec.output", "Error: no compatible shell found for sandbox execution")
+            command_argv = shell_argv
 
     _emit_feedback(
         f"Starting command: {cmd[:200]}",
@@ -2907,6 +2951,7 @@ def exec_command(
     )
 
     if not background and yield_ms is None and not pty:
+        run_timeout = docker_sandbox.timeout_seconds if docker_sandbox is not None else timeout
         try:
             completed = subprocess.run(
                 command_argv,
@@ -2914,10 +2959,16 @@ def exec_command(
                 cwd=str(cwd),
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=run_timeout,
             )
         except subprocess.TimeoutExpired:
-            return _ret("tool.exec.output", f"Error: Command timed out after {timeout} seconds")
+            if docker_sandbox is not None:
+                cleanup_docker_sandbox_container(docker_sandbox.docker_bin, docker_sandbox.container_name)
+                return _ret(
+                    "tool.exec.output",
+                    f"Error: Command timed out after {run_timeout} seconds; docker sandbox container cleanup requested",
+                )
+            return _ret("tool.exec.output", f"Error: Command timed out after {run_timeout} seconds")
         except Exception as exc:
             return _ret("tool.exec.output", f"Error executing command: {exc}")
 
@@ -2953,10 +3004,10 @@ def exec_command(
     effective_scope = _resolve_process_scope(scope)
     try:
         session, warnings = manager.start_session(
-                command=effective_command,
-                argv=command_argv,
-                cwd=cwd,
-                env=os.environ.copy(),
+            command=effective_command,
+            argv=command_argv,
+            cwd=cwd,
+            env=os.environ.copy(),
             use_pty=pty,
             scope_key=effective_scope,
         )
