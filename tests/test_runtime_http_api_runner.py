@@ -66,6 +66,30 @@ class HttpApiRunnerTests(unittest.TestCase):
         self.assertFalse(emitted["ok"])
         self.assertIn("http or https", emitted["error"])
 
+    def test_main_loads_combined_payload_from_env(self) -> None:
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        fake_response = _FakeResponse(status=200, headers=headers, body=b'{"ok": true}')
+        payload = {
+            "recipe": {
+                "method": "GET",
+                "url": "https://api.example.test/items/{item_id}",
+            },
+            "args": {"item_id": "42"},
+        }
+        os.environ["OPENPPX_API_RUNNER_PAYLOAD_JSON"] = json.dumps(payload)
+        out = StringIO()
+
+        with patch.object(http_api_runner, "urlopen", return_value=fake_response) as mocked_urlopen:
+            with patch("sys.stdout", out):
+                exit_code = http_api_runner.main()
+
+        request = mocked_urlopen.call_args.args[0]
+        emitted = json.loads(out.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(request.full_url, "https://api.example.test/items/42")
+        self.assertTrue(emitted["ok"])
+
 
 class _FakeResponse:
     def __init__(self, *, status: int, headers: Message, body: bytes) -> None:

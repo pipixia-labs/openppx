@@ -21,6 +21,7 @@ from ..gui.job_coordinator import gui_task_job_output
 from ..gui.job_coordinator import gui_task_job_status
 from ..gui.job_coordinator import resume_gui_task_job
 from .artifact_service import load_artifact_config
+from .api_runner_payload import PAYLOAD_JSON_ENV, build_api_runner_payload_json
 from .browser_remote_provider import BrowserRemoteJob
 from .browser_remote_provider import BrowserRemoteProviderStore
 from .browser_remote_provider import browser_remote_job_payload
@@ -331,6 +332,7 @@ class SkillApiRuntime:
         env[spec.env_var] = json.dumps(recipe, ensure_ascii=False, default=str)
         if args is not None:
             env["OPENPPX_SKILL_ARGS_JSON"] = json.dumps(args, ensure_ascii=False, default=str)
+        env[PAYLOAD_JSON_ENV] = build_api_runner_payload_json(recipe=recipe, args=args)
         argv = [sys.executable, str(Path(__file__).with_name(spec.runner_filename))]
         return ExecutionRecipe(
             title=f"{skill_name}:{api_name}",

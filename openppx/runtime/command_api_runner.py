@@ -15,6 +15,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from openppx.runtime.api_runner_payload import (
+    load_api_runner_payload,
+    load_args_from_payload_or_env,
+    load_recipe_from_payload_or_env,
+)
 from openppx.runtime.sandbox import (
     WorkspaceDockerSandbox,
     build_workspace_docker_sandbox,
@@ -33,8 +38,9 @@ def main() -> int:
     """Execute one command API recipe and mirror command output."""
     docker_sandbox: WorkspaceDockerSandbox | None = None
     try:
-        recipe = _load_recipe()
-        args_payload = _load_args()
+        payload = load_api_runner_payload()
+        recipe = _load_recipe(payload)
+        args_payload = _load_args(payload)
         sandbox_backend = _recipe_sandbox_backend(recipe)
         argv = _render_argv(recipe, args_payload)
         stdin = _render_stdin(recipe, args_payload)
@@ -81,21 +87,16 @@ def main() -> int:
         return 1
 
 
-def _load_recipe() -> dict[str, Any]:
-    raw = os.getenv("OPENPPX_COMMAND_API_RECIPE_JSON", "").strip()
-    if not raw:
-        raise ValueError("OPENPPX_COMMAND_API_RECIPE_JSON is required")
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise ValueError("Command API recipe must be a JSON object")
-    return parsed
+def _load_recipe(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return load_recipe_from_payload_or_env(
+        payload=payload,
+        env_var="OPENPPX_COMMAND_API_RECIPE_JSON",
+        runner_name="Command",
+    )
 
 
-def _load_args() -> Any:
-    raw = os.getenv("OPENPPX_SKILL_ARGS_JSON", "").strip()
-    if not raw:
-        return {}
-    return json.loads(raw)
+def _load_args(payload: dict[str, Any] | None = None) -> Any:
+    return load_args_from_payload_or_env(payload)
 
 
 def _render_argv(recipe: dict[str, Any], args_payload: Any) -> list[str]:

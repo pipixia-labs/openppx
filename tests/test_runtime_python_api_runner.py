@@ -77,6 +77,33 @@ class PythonApiRunnerTests(unittest.TestCase):
         self.assertEqual(emitted["result"]["keys"], ["limit", "query"])
         self.assertEqual(emitted["result"]["limit_type"], "int")
 
+    def test_main_loads_combined_payload_from_stdin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "payload_sdk.py").write_text(
+                "def add(a, b):\n"
+                "    return {'sum': a + b}\n",
+                encoding="utf-8",
+            )
+            payload = {
+                "recipe": {"module": "payload_sdk", "function": "add"},
+                "args": {"a": 4, "b": 5},
+            }
+            os.environ["OPENPPX_API_RUNNER_PAYLOAD_STDIN"] = "1"
+            out = StringIO()
+
+            with (
+                patch("sys.stdin", StringIO(json.dumps(payload))),
+                patch("sys.stdout", out),
+                patch("os.getcwd", return_value=str(root)),
+            ):
+                exit_code = python_api_runner.main()
+
+        emitted = json.loads(out.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(emitted["ok"])
+        self.assertEqual(emitted["result"]["sum"], 9)
+
     def test_main_rejects_unsafe_module_name(self) -> None:
         os.environ["OPENPPX_PYTHON_API_RECIPE_JSON"] = json.dumps(
             {"module": "../demo_sdk", "function": "run"}

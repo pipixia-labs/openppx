@@ -11,6 +11,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+try:
+    from .api_runner_payload import load_api_runner_payload
+    from .api_runner_payload import load_args_from_payload_or_env
+    from .api_runner_payload import load_recipe_from_payload_or_env
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from api_runner_payload import load_api_runner_payload
+    from api_runner_payload import load_args_from_payload_or_env
+    from api_runner_payload import load_recipe_from_payload_or_env
+
 
 DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_RESPONSE_MAX_BYTES = 512 * 1024
@@ -20,8 +29,10 @@ _TEMPLATE_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
 def main() -> int:
     """Execute one HTTP API recipe and print a JSON result."""
     try:
-        recipe = _load_recipe()
-        args = _load_args()
+        payload = load_api_runner_payload()
+        recipe = _load_recipe(payload)
+        os.environ["OPENPPX_HTTP_API_RECIPE_JSON"] = json.dumps(recipe, ensure_ascii=False, default=str)
+        args = _load_args(payload)
         request = _build_request(recipe, args=args)
         timeout = _timeout_seconds(recipe)
         max_bytes = _response_max_bytes(recipe)
@@ -51,14 +62,12 @@ def main() -> int:
         return 1
 
 
-def _load_recipe() -> dict[str, Any]:
-    raw = os.getenv("OPENPPX_HTTP_API_RECIPE_JSON", "").strip()
-    if not raw:
-        raise ValueError("OPENPPX_HTTP_API_RECIPE_JSON is required")
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise ValueError("HTTP API recipe must be a JSON object")
-    return parsed
+def _load_recipe(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return load_recipe_from_payload_or_env(
+        payload=payload,
+        env_var="OPENPPX_HTTP_API_RECIPE_JSON",
+        runner_name="HTTP",
+    )
 
 
 def _safe_recipe() -> dict[str, Any]:
@@ -68,11 +77,8 @@ def _safe_recipe() -> dict[str, Any]:
         return {}
 
 
-def _load_args() -> Any:
-    raw = os.getenv("OPENPPX_SKILL_ARGS_JSON", "").strip()
-    if not raw:
-        return {}
-    return json.loads(raw)
+def _load_args(payload: dict[str, Any] | None = None) -> Any:
+    return load_args_from_payload_or_env(payload)
 
 
 def _build_request(recipe: dict[str, Any], *, args: Any) -> Request:

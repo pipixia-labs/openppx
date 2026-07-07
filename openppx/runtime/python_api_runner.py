@@ -11,6 +11,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+try:
+    from .api_runner_payload import load_api_runner_payload
+    from .api_runner_payload import load_args_from_payload_or_env
+    from .api_runner_payload import load_recipe_from_payload_or_env
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from api_runner_payload import load_api_runner_payload
+    from api_runner_payload import load_args_from_payload_or_env
+    from api_runner_payload import load_recipe_from_payload_or_env
+
 
 _TEMPLATE_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_.-]*)\}")
 _FULL_TEMPLATE_RE = re.compile(r"^\{([A-Za-z_][A-Za-z0-9_.-]*)\}$")
@@ -20,8 +29,9 @@ _DOTTED_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*
 def main() -> int:
     """Execute one Python API recipe and print a JSON result."""
     try:
-        recipe = _load_recipe()
-        args_payload = _load_args()
+        payload = load_api_runner_payload()
+        recipe = _load_recipe(payload)
+        args_payload = _load_args(payload)
         module_name, function_path = _callable_ref(recipe)
         _validate_dotted_name(module_name, label="module")
         _validate_dotted_name(function_path, label="function")
@@ -38,21 +48,16 @@ def main() -> int:
         return 1
 
 
-def _load_recipe() -> dict[str, Any]:
-    raw = os.getenv("OPENPPX_PYTHON_API_RECIPE_JSON", "").strip()
-    if not raw:
-        raise ValueError("OPENPPX_PYTHON_API_RECIPE_JSON is required")
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise ValueError("Python API recipe must be a JSON object")
-    return parsed
+def _load_recipe(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return load_recipe_from_payload_or_env(
+        payload=payload,
+        env_var="OPENPPX_PYTHON_API_RECIPE_JSON",
+        runner_name="Python",
+    )
 
 
-def _load_args() -> Any:
-    raw = os.getenv("OPENPPX_SKILL_ARGS_JSON", "").strip()
-    if not raw:
-        return {}
-    return json.loads(raw)
+def _load_args(payload: dict[str, Any] | None = None) -> Any:
+    return load_args_from_payload_or_env(payload)
 
 
 def _callable_ref(recipe: dict[str, Any]) -> tuple[str, str]:

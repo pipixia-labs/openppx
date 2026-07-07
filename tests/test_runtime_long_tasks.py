@@ -195,6 +195,7 @@ class LongTaskRuntimeTests(unittest.TestCase):
                 scope_key="scope-1",
             )
             recipe_payload = json.loads(recipe.env["OPENPPX_PYTHON_API_RECIPE_JSON"])
+            combined_payload = json.loads(recipe.env["OPENPPX_API_RUNNER_PAYLOAD_JSON"])
 
             self.assertEqual(recipe.task_kind, "api_call")
             self.assertEqual(recipe.scope_key, "scope-1")
@@ -204,6 +205,8 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertEqual(recipe.cwd.name, "demo")
             self.assertEqual(recipe_payload["module"], "demo_sdk")
             self.assertEqual(json.loads(recipe.env["OPENPPX_SKILL_ARGS_JSON"]), {"a": 2, "b": 3})
+            self.assertEqual(combined_payload["recipe"]["module"], "demo_sdk")
+            self.assertEqual(combined_payload["args"], {"a": 2, "b": 3})
             self.assertTrue(recipe.argv[-1].endswith("python_api_runner.py"))
             self.assertTrue(SkillApiRuntime._is_python_recipe_name("add.python.json"))
 
@@ -223,6 +226,7 @@ class LongTaskRuntimeTests(unittest.TestCase):
                 scope_key="scope-1",
             )
             recipe_payload = json.loads(recipe.env["OPENPPX_NODE_API_RECIPE_JSON"])
+            combined_payload = json.loads(recipe.env["OPENPPX_API_RUNNER_PAYLOAD_JSON"])
 
             self.assertEqual(recipe.task_kind, "api_call")
             self.assertEqual(recipe.scope_key, "scope-1")
@@ -232,6 +236,8 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertEqual(recipe.cwd.name, "demo")
             self.assertEqual(recipe_payload["module"], "demo_node.cjs")
             self.assertEqual(json.loads(recipe.env["OPENPPX_SKILL_ARGS_JSON"]), {"a": 2, "b": 3})
+            self.assertEqual(combined_payload["recipe"]["module"], "demo_node.cjs")
+            self.assertEqual(combined_payload["args"], {"a": 2, "b": 3})
             self.assertTrue(recipe.argv[-1].endswith("node_api_runner.py"))
 
     def test_skill_api_runtime_resolves_command_recipe_without_length_hint(self) -> None:
@@ -252,6 +258,7 @@ class LongTaskRuntimeTests(unittest.TestCase):
                 scope_key="scope-1",
             )
             recipe_payload = json.loads(recipe.env["OPENPPX_COMMAND_API_RECIPE_JSON"])
+            combined_payload = json.loads(recipe.env["OPENPPX_API_RUNNER_PAYLOAD_JSON"])
 
             self.assertEqual(recipe.task_kind, "api_call")
             self.assertEqual(recipe.scope_key, "scope-1")
@@ -261,6 +268,8 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertEqual(recipe.cwd.name, "demo")
             self.assertEqual(recipe_payload["allow_system_executable"], True)
             self.assertEqual(json.loads(recipe.env["OPENPPX_SKILL_ARGS_JSON"]), {"value": "Ada"})
+            self.assertEqual(combined_payload["recipe"]["allow_system_executable"], True)
+            self.assertEqual(combined_payload["args"], {"value": "Ada"})
             self.assertTrue(recipe.argv[-1].endswith("command_api_runner.py"))
 
     def test_invoke_skill_api_returns_inline_for_fast_python_recipe(self) -> None:

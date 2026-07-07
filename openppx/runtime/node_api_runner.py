@@ -5,6 +5,16 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from typing import Any
+
+try:
+    from .api_runner_payload import load_api_runner_payload
+    from .api_runner_payload import load_args_from_payload_or_env
+    from .api_runner_payload import load_recipe_from_payload_or_env
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from api_runner_payload import load_api_runner_payload
+    from api_runner_payload import load_args_from_payload_or_env
+    from api_runner_payload import load_recipe_from_payload_or_env
 
 
 _BRIDGE_JS = r"""
@@ -156,8 +166,22 @@ def main() -> int:
     if not node_bin:
         _emit_response(ok=False, error="Node.js executable was not found on PATH.", error_type="NodeNotFound")
         return 1
+    _prepare_payload_env()
     os.execvp(node_bin, [node_bin, "-e", _BRIDGE_JS])
     return 1
+
+
+def _prepare_payload_env(payload: dict[str, Any] | None = None) -> None:
+    """Normalize combined runner payload into the Node bridge env contract."""
+    resolved_payload = load_api_runner_payload() if payload is None else payload
+    recipe = load_recipe_from_payload_or_env(
+        payload=resolved_payload,
+        env_var="OPENPPX_NODE_API_RECIPE_JSON",
+        runner_name="Node",
+    )
+    args = load_args_from_payload_or_env(resolved_payload)
+    os.environ["OPENPPX_NODE_API_RECIPE_JSON"] = json.dumps(recipe, ensure_ascii=False, default=str)
+    os.environ["OPENPPX_SKILL_ARGS_JSON"] = json.dumps(args, ensure_ascii=False, default=str)
 
 
 def _emit_response(*, ok: bool, error: str = "", error_type: str = "") -> None:

@@ -85,6 +85,30 @@ class CommandApiRunnerTests(unittest.TestCase):
         self.assertFalse(emitted["ok"])
         self.assertIn("network enablement", emitted["error"])
 
+    def test_main_loads_combined_payload_from_env(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run_streaming_command(**kwargs):
+            captured.update(kwargs)
+            return 0
+
+        payload = {
+            "recipe": {
+                "argv": ["echo", "{value}"],
+                "allow_system_executable": True,
+                "stdin": "{args}",
+            },
+            "args": {"value": "Ada"},
+        }
+        os.environ["OPENPPX_API_RUNNER_PAYLOAD_JSON"] = json.dumps(payload)
+
+        with patch("openppx.runtime.command_api_runner._run_streaming_command", side_effect=_fake_run_streaming_command):
+            exit_code = command_api_runner.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["argv"], ["echo", "Ada"])
+        self.assertEqual(json.loads(str(captured["stdin"])), {"value": "Ada"})
+
     def test_main_cleans_docker_container_after_sandbox_timeout(self) -> None:
         captured: dict[str, object] = {}
 
