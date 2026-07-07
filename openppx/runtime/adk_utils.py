@@ -59,6 +59,19 @@ async def _maybe_await(value: Awaitable[None] | None) -> None:
         await value
 
 
+def _event_error_text(event: Any) -> str:
+    """Return a readable ADK event error, or an empty string for normal events."""
+    raw_code = getattr(event, "error_code", None)
+    raw_message = getattr(event, "error_message", None)
+    code = str(raw_code or "").strip()
+    message = str(raw_message or "").strip()
+    if not code and not message:
+        return ""
+    if code and message:
+        return f"{code}: {message}"
+    return code or message
+
+
 async def run_text_async(
     runner: Any,
     *,
@@ -77,6 +90,9 @@ async def run_text_async(
     async for event in runner.run_async(**run_kwargs):
         if on_event is not None:
             await _maybe_await(on_event(event))
+        error_text = _event_error_text(event)
+        if error_text:
+            raise RuntimeError(error_text)
         text = extract_text(getattr(event, "content", None))
         merged = merge_text_stream(final, text)
         if merged and merged != final and on_text_update is not None:

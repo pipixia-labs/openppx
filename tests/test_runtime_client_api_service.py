@@ -265,6 +265,47 @@ def test_create_run_streams_replayable_events(tmp_path: Path, monkeypatch) -> No
     assert "run.finished" in events
 
 
+def test_create_run_treats_empty_final_as_failed_message(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "global_config.json").write_text(
+        json.dumps({"agents": [{"name": "writer", "enabled": True}]}),
+        encoding="utf-8",
+    )
+    agent_dir = tmp_path / "writer"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({"agent": {"workspace": "workspace/writer"}}), encoding="utf-8")
+
+    stdout_lines = json.dumps({"type": "final", "text": ""})
+
+    monkeypatch.setattr(
+        "openppx.runtime.client_api_service.subprocess.Popen",
+        lambda *args, **kwargs: _FakeProcess(stdout_lines),
+    )
+
+    coordinator = ClientApiCoordinator(data_dir=tmp_path)
+    payload = coordinator.create_run("writer", "session_empty_final", "hi")
+    assert payload["ok"] is True
+
+    run_id = payload["data"]["run"]["id"]
+    handle = coordinator._runs[run_id]
+    assert handle.done.wait(timeout=1.0)
+
+    subscriber = coordinator.stream_run_events(run_id)
+    assert subscriber is not None
+
+    events = []
+    while True:
+        item = subscriber.get(timeout=1.0)
+        if item is None:
+            break
+        events.append((item.event, item.payload))
+
+    by_event = {name: payload for name, payload in events}
+    assert "message.completed" not in by_event
+    assert by_event["message.failed"]["status"] == "failed"
+    assert by_event["message.failed"]["error"]["text"]
+    assert by_event["run.finished"]["status"] == "failed"
+
+
 def test_create_run_emits_normalized_event_context(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "global_config.json").write_text(
         json.dumps({"agents": [{"name": "writer", "enabled": True}]}),

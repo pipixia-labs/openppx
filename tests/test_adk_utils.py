@@ -101,6 +101,18 @@ class AdkUtilsTests(unittest.TestCase):
 
         self.assertEqual(final, "(empty)")
 
+    def test_run_text_async_raises_on_adk_error_event(self) -> None:
+        class _FakeRunner:
+            async def run_async(self, **kwargs):
+                yield pytypes.SimpleNamespace(
+                    error_code="CODEX_ERROR",
+                    error_message="peer closed connection",
+                    content=None,
+                )
+
+        with self.assertRaisesRegex(RuntimeError, "CODEX_ERROR: peer closed connection"):
+            asyncio.run(run_text_async(_FakeRunner()))
+
 
 if __name__ == "__main__":
     unittest.main()

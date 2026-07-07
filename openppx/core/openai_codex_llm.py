@@ -23,6 +23,8 @@ from loguru import logger
 
 DEFAULT_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "openppx"
+CODEX_TRANSIENT_RETRY_ATTEMPTS = 3
+CODEX_TRANSIENT_RETRY_BASE_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -88,7 +90,7 @@ class OpenAICodexLlm(BaseLlm):
 
             url = self.codex_url
             try:
-                text, tool_calls, finish_reason = await _request_codex(
+                text, tool_calls, finish_reason = await _request_codex_with_retries(
                     url=url,
                     headers=headers,
                     body=body,
@@ -99,7 +101,7 @@ class OpenAICodexLlm(BaseLlm):
                 if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
                     raise
                 logger.warning("Codex SSL verification failed; retrying with verify=False")
-                text, tool_calls, finish_reason = await _request_codex(
+                text, tool_calls, finish_reason = await _request_codex_with_retries(
                     url=url,
                     headers=headers,
                     body=body,
@@ -313,6 +315,46 @@ async def _request_codex(
                 raise RuntimeError(_friendly_error(response.status_code, text))
             events = [event async for event in _iter_sse(response)]
     return _consume_codex_events(events)
+
+
+def _is_transient_codex_error(exc: Exception) -> bool:
+    """Return whether a Codex request error is safe to retry."""
+    if isinstance(exc, (httpx.RemoteProtocolError, httpx.ReadError, httpx.ReadTimeout)):
+        return True
+    message = str(exc).lower()
+    return "incomplete chunked read" in message or "peer closed connection" in message
+
+
+async def _request_codex_with_retries(
+    *,
+    url: str,
+    headers: dict[str, str],
+    body: dict[str, Any],
+    timeout_seconds: float,
+    verify: bool,
+) -> tuple[str, list[_CodexToolCall], types.FinishReason]:
+    """Execute one Codex request with bounded retries for stream transport failures."""
+    for attempt in range(1, CODEX_TRANSIENT_RETRY_ATTEMPTS + 1):
+        try:
+            return await _request_codex(
+                url=url,
+                headers=headers,
+                body=body,
+                timeout_seconds=timeout_seconds,
+                verify=verify,
+            )
+        except Exception as exc:
+            if not _is_transient_codex_error(exc) or attempt >= CODEX_TRANSIENT_RETRY_ATTEMPTS:
+                raise
+            delay_seconds = CODEX_TRANSIENT_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+            logger.warning(
+                "Codex transient transport error; retrying request",
+                attempt=attempt,
+                max_attempts=CODEX_TRANSIENT_RETRY_ATTEMPTS,
+                error=str(exc),
+            )
+            await asyncio.sleep(delay_seconds)
+    raise RuntimeError("Codex retry loop exited unexpectedly")
 
 
 async def _iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], None]:

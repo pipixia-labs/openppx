@@ -6,6 +6,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import httpx
 from google.adk.models.llm_request import LlmRequest
 from google.genai import types
 
@@ -121,6 +122,34 @@ class OpenAICodexLlmTests(unittest.TestCase):
         self.assertEqual(events[0].finish_reason, types.FinishReason.STOP)
         self.assertIsNotNone(events[0].content)
         self.assertEqual(events[0].content.parts[0].text, "hello world")
+
+    def test_generate_content_async_retries_transient_codex_transport_error(self) -> None:
+        """Transient stream disconnects should retry before surfacing an error event."""
+        llm = OpenAICodexLlm(model="openai-codex/gpt-5.1-codex")
+        llm_request = LlmRequest(
+            model="openai-codex/gpt-5.1-codex",
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text="hello")])],
+            config=types.GenerateContentConfig(system_instruction="system"),
+        )
+
+        request_mock = AsyncMock(
+            side_effect=[
+                httpx.RemoteProtocolError("peer closed connection without sending complete message body"),
+                ("retry ok", [], types.FinishReason.STOP),
+            ]
+        )
+        fake_token = type("Token", (), {"account_id": "acc_1", "access": "tok_1"})()
+        with patch("openppx.core.openai_codex_llm._get_codex_token", return_value=fake_token):
+            with patch("openppx.core.openai_codex_llm._request_codex", new=request_mock):
+                with patch("openppx.core.openai_codex_llm.asyncio.sleep", new=AsyncMock()):
+                    async def _collect():
+                        return [event async for event in llm.generate_content_async(llm_request, stream=False)]
+
+                    events = asyncio.run(_collect())
+
+        self.assertEqual(request_mock.await_count, 2)
+        self.assertEqual(events[0].content.parts[0].text, "retry ok")
+        self.assertFalse(getattr(events[0], "error_code", None))
 
 
 if __name__ == "__main__":

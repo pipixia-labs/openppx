@@ -1976,6 +1976,36 @@ class ClientApiCoordinator:
 
         assert handle.process.stdout is not None
         final_text = ""
+
+        def _publish_run_failure(error_message: str, *, code: str = "RUN_FAILED") -> None:
+            handle.failed = True
+            _debug(
+                "client_api.message.failed",
+                {
+                    "run_id": handle.run_id,
+                    "message": error_message,
+                },
+            )
+            handle.publish(
+                "message.failed",
+                {
+                    "run_id": handle.run_id,
+                    "agent_id": handle.agent_id,
+                    "session_id": handle.session_id,
+                    "message_id": handle.assistant_message_id,
+                    "status": "failed",
+                    "error": _error_part_payload(code=code, text=error_message),
+                },
+            )
+            handle.publish(
+                "error",
+                {
+                    "run_id": handle.run_id,
+                    "code": code,
+                    "message": error_message,
+                },
+            )
+
         for line in handle.process.stdout:
             line = line.strip()
             if not line:
@@ -2093,6 +2123,12 @@ class ClientApiCoordinator:
                 )
             elif event_type == "final":
                 final_text = str(payload.get("text") or final_text)
+                if not final_text.strip():
+                    _publish_run_failure(
+                        "Worker finished without returning a final reply.",
+                        code="RUN_EMPTY_FINAL",
+                    )
+                    continue
                 _debug(
                     "client_api.message.completed",
                     {
@@ -2118,34 +2154,8 @@ class ClientApiCoordinator:
                     },
                 )
             elif event_type == "error":
-                handle.failed = True
                 error_message = str(payload.get("message") or "Unknown worker error")
-                _debug(
-                    "client_api.message.failed",
-                    {
-                        "run_id": handle.run_id,
-                        "message": error_message,
-                    },
-                )
-                handle.publish(
-                    "message.failed",
-                    {
-                        "run_id": handle.run_id,
-                        "agent_id": handle.agent_id,
-                        "session_id": handle.session_id,
-                        "message_id": handle.assistant_message_id,
-                        "status": "failed",
-                        "error": _error_part_payload(code="RUN_FAILED", text=error_message),
-                    },
-                )
-                handle.publish(
-                    "error",
-                    {
-                        "run_id": handle.run_id,
-                        "code": "RUN_FAILED",
-                        "message": error_message,
-                    },
-                )
+                _publish_run_failure(error_message)
         exit_code = handle.process.wait()
         stderr_text = handle.stderr_text()
         _debug(
@@ -2158,13 +2168,9 @@ class ClientApiCoordinator:
             },
         )
         if exit_code != 0 and not handle.failed:
-            handle.publish(
-                "error",
-                {
-                    "run_id": handle.run_id,
-                    "code": "WORKER_EXIT_ERROR",
-                    "message": stderr_text or "worker exited unexpectedly",
-                },
+            _publish_run_failure(
+                stderr_text or "worker exited unexpectedly",
+                code="WORKER_EXIT_ERROR",
             )
         _debug(
             "client_api.run.finished",
