@@ -1649,14 +1649,60 @@ def _wrap_command_with_sandbox(sandbox: str, command: str, workspace: str, cwd: 
     raise ValueError(f"Unknown sandbox backend {sandbox!r}. Available: ['bwrap']")
 
 
-def _resolve_exec_sandbox_name(sandbox: str | None) -> str:
-    """Resolve explicit exec sandbox opt-in without enabling sandbox by default."""
-    raw = sandbox if sandbox is not None else os.getenv("OPENPPX_EXEC_SANDBOX", "")
+_EXEC_SANDBOX_DISABLED_VALUES = {"", "0", "false", "none", "off"}
+_EXEC_SANDBOX_BACKEND_RANK = {"none": 0, "bwrap": 1, "docker": 2}
+
+
+def _configured_exec_sandbox_backend() -> str:
+    """Return the configured minimum sandbox backend."""
+    raw = os.getenv("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
+    if raw not in _EXEC_SANDBOX_BACKEND_RANK:
+        raise SandboxValidationError(f"unknown sandbox backend: {raw!r}")
+    return raw
+
+
+def _requested_exec_sandbox_backend(sandbox: str | None) -> tuple[str, bool]:
+    """Return the requested backend and whether it was explicitly requested."""
+    if sandbox is None:
+        env_request = os.getenv("OPENPPX_EXEC_SANDBOX", "")
+        if not env_request.strip():
+            return "none", False
+        raw = env_request
+    else:
+        raw = sandbox
     normalized = raw.strip().lower()
-    if normalized in {"", "0", "false", "none", "off"}:
+    if normalized in _EXEC_SANDBOX_DISABLED_VALUES:
+        return "none", True
+    if normalized not in _EXEC_SANDBOX_BACKEND_RANK:
+        raise SandboxValidationError(f"unknown sandbox backend: {raw!r}")
+    return normalized, True
+
+
+def _exec_sandbox_weakening_error(sandbox: str | None) -> str | None:
+    """Return an approval error when an explicit request weakens the baseline."""
+    try:
+        requested, explicit = _requested_exec_sandbox_backend(sandbox)
+        configured = _configured_exec_sandbox_backend()
+    except SandboxValidationError:
+        return None
+    if not explicit:
+        return None
+    if _EXEC_SANDBOX_BACKEND_RANK[requested] >= _EXEC_SANDBOX_BACKEND_RANK[configured]:
+        return None
+    action = "sandbox disable" if requested == "none" else "sandbox backend downgrade"
+    return f"Error: approval required for {action}: configured={configured}, requested={requested}"
+
+
+def _resolve_exec_sandbox_name(sandbox: str | None, *, allow_backend_downgrade: bool = False) -> str:
+    """Resolve explicit exec sandbox opt-in without enabling sandbox by default."""
+    requested, explicit = _requested_exec_sandbox_backend(sandbox)
+    if not explicit:
         return ""
-    configured = os.getenv("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
-    return resolve_backend(configured_backend=configured, requested_backend=normalized)
+    if allow_backend_downgrade:
+        return "" if requested == "none" else requested
+    configured = _configured_exec_sandbox_backend()
+    resolved = resolve_backend(configured_backend=configured, requested_backend=requested)
+    return "" if resolved == "none" else resolved
 
 
 def _validate_exec_security(
@@ -1676,12 +1722,14 @@ def _validate_exec_security(
     )
 
 
-def exec_command_requires_confirmation(command: str, **_kwargs: Any) -> bool:
+def exec_command_requires_confirmation(command: str, sandbox: str | None = None, **_kwargs: Any) -> bool:
     """Return whether an exec command should request ADK confirmation."""
     cmd = (command or "").strip()
     if not cmd:
         return False
     policy = _security_policy()
+    if not policy.allow_exec:
+        return False
     try:
         argv = shlex.split(cmd, posix=True)
     except ValueError:
@@ -1689,7 +1737,9 @@ def exec_command_requires_confirmation(command: str, **_kwargs: Any) -> bool:
     if not argv:
         return False
     security_error = _validate_exec_security(cmd, argv, policy)
-    return bool(security_error and "approval required" in security_error.lower())
+    if security_error:
+        return "approval required" in security_error.lower()
+    return _exec_sandbox_weakening_error(sandbox) is not None
 
 
 def _format_exec_output(stdout: str, stderr: str, exit_code: int | None) -> str:
@@ -2950,14 +3000,19 @@ def exec_command(
     if not argv:
         return _ret("tool.exec.output", "Error: command is empty")
 
+    confirmation_received = _tool_context_confirmed(tool_context)
     security_error = _validate_exec_security(
         cmd,
         argv,
         policy,
-        confirmation_received=_tool_context_confirmed(tool_context),
+        confirmation_received=confirmation_received,
     )
     if security_error:
         return _ret("tool.exec.output", security_error)
+
+    sandbox_weakening_error = _exec_sandbox_weakening_error(sandbox)
+    if sandbox_weakening_error and not confirmation_received:
+        return _ret("tool.exec.output", sandbox_weakening_error)
 
     lower = cmd.lower()
     for pattern in _DENY_PATTERNS:
@@ -2974,7 +3029,10 @@ def exec_command(
         return _ret("tool.exec.output", path_guard_error)
 
     try:
-        sandbox_name = _resolve_exec_sandbox_name(sandbox)
+        sandbox_name = _resolve_exec_sandbox_name(
+            sandbox,
+            allow_backend_downgrade=bool(sandbox_weakening_error and confirmation_received),
+        )
     except SandboxValidationError as exc:
         return _ret("tool.exec.output", f"Error: failed to validate sandbox request: {exc}")
     docker_sandbox: WorkspaceDockerSandbox | None = None

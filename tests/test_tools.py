@@ -483,13 +483,65 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("ok", out)
         self.assertEqual(captured["argv"], ["echo", "hello"])
 
-    def test_exec_tool_blocks_backend_downgrade_to_bwrap(self) -> None:
+    def test_exec_tool_requires_confirmation_for_backend_downgrade_to_bwrap(self) -> None:
         os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
         with patch("openppx.tooling.registry.subprocess.run") as mocked_run:
             out = exec_command("echo hello", sandbox="bwrap")
 
+        self.assertIn("approval required", out.lower())
         self.assertIn("downgrade", out.lower())
         mocked_run.assert_not_called()
+
+    def test_exec_tool_requires_confirmation_for_env_sandbox_downgrade(self) -> None:
+        os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
+        os.environ["OPENPPX_EXEC_SANDBOX"] = "bwrap"
+        with patch("openppx.tooling.registry.subprocess.run") as mocked_run:
+            out = exec_command("echo hello")
+
+        self.assertIn("approval required", out.lower())
+        self.assertIn("downgrade", out.lower())
+        mocked_run.assert_not_called()
+
+    def test_exec_tool_allows_confirmed_backend_downgrade_to_bwrap(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run(*args, **kwargs):
+            captured["argv"] = args[0]
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
+        tool_context = pytypes.SimpleNamespace(tool_confirmation=pytypes.SimpleNamespace(confirmed=True))
+        with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+            out = exec_command("echo hello", sandbox="bwrap", tool_context=tool_context)
+
+        argv = captured.get("argv")
+        self.assertIsInstance(argv, list)
+        self.assertIn("bwrap", " ".join(str(part) for part in argv))
+        self.assertIn("ok", out)
+
+    def test_exec_tool_requires_confirmation_for_explicit_sandbox_disable(self) -> None:
+        os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
+        with patch("openppx.tooling.registry.subprocess.run") as mocked_run:
+            out = exec_command("echo hello", sandbox="none")
+
+        self.assertIn("approval required", out.lower())
+        self.assertIn("sandbox disable", out.lower())
+        mocked_run.assert_not_called()
+
+    def test_exec_tool_allows_confirmed_explicit_sandbox_disable(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run(*args, **kwargs):
+            captured["argv"] = args[0]
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
+        tool_context = pytypes.SimpleNamespace(tool_confirmation=pytypes.SimpleNamespace(confirmed=True))
+        with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+            out = exec_command("echo hello", sandbox="none", tool_context=tool_context)
+
+        self.assertIn("ok", out)
+        self.assertEqual(captured["argv"], ["echo", "hello"])
 
     def test_exec_tool_builds_explicit_docker_sandbox_command(self) -> None:
         calls: list[dict[str, object]] = []
@@ -1687,6 +1739,19 @@ class ToolsTests(unittest.TestCase):
         os.environ["OPENPPX_EXEC_ASK"] = "on-miss"
         out = exec_command("echo hello")
         self.assertIn("hello", out.lower())
+
+    def test_exec_tool_requires_confirmation_for_sandbox_weakening(self) -> None:
+        os.environ["OPENPPX_SANDBOX_BACKEND"] = "docker"
+
+        self.assertTrue(exec_registry.exec_command_requires_confirmation("echo hello", sandbox="bwrap"))
+        self.assertTrue(exec_registry.exec_command_requires_confirmation("echo hello", sandbox="none"))
+        self.assertFalse(exec_registry.exec_command_requires_confirmation("echo hello", sandbox="docker"))
+        self.assertFalse(exec_registry.exec_command_requires_confirmation("echo hello"))
+        os.environ["OPENPPX_EXEC_SANDBOX"] = "bwrap"
+        self.assertTrue(exec_registry.exec_command_requires_confirmation("echo hello"))
+        os.environ["OPENPPX_EXEC_SANDBOX"] = ""
+        os.environ["OPENPPX_ALLOW_EXEC"] = "0"
+        self.assertFalse(exec_registry.exec_command_requires_confirmation("echo hello", sandbox="bwrap"))
 
     def test_exec_tool_is_disabled_when_allow_exec_is_off(self) -> None:
         os.environ["OPENPPX_ALLOW_EXEC"] = "0"
