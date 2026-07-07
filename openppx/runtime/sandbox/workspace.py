@@ -52,6 +52,7 @@ def build_workspace_docker_sandbox(
     image: str | None = None,
     network_mode: NetworkMode | None = None,
     network_approved: bool = False,
+    tty: bool = False,
 ) -> WorkspaceDockerSandbox:
     """Build a validated Docker sandbox command for a workspace execution."""
     root = workspace.resolve(strict=False)
@@ -102,7 +103,12 @@ def build_workspace_docker_sandbox(
     resolved_image = image or os.getenv("OPENPPX_SANDBOX_IMAGE", "").strip() or "openppx-sandbox:dev"
     spec = build_docker_run_spec(
         validated,
-        config=DockerSandboxConfig(docker_bin=resolved_docker_bin, image=resolved_image),
+        config=DockerSandboxConfig(
+            docker_bin=resolved_docker_bin,
+            image=resolved_image,
+            stdin_open=tty,
+            tty=tty,
+        ),
     )
     return WorkspaceDockerSandbox(
         argv=list(spec.argv),

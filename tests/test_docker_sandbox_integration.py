@@ -120,6 +120,29 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
             containers_after = set(list_docker_sandbox_containers(docker_bin=self.docker_bin))
             self.assertTrue(containers_after.issubset(containers_before))
 
+    def test_real_docker_exec_pty_outputs_fast_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            os.environ["OPENPPX_WORKSPACE"] = str(workspace)
+            os.environ["OPENPPX_SANDBOX_DOCKER_BIN"] = self.docker_bin
+            os.environ["OPENPPX_SANDBOX_IMAGE"] = self.image
+
+            output = exec_command("python -c \"print('PTY_OK')\"", sandbox="docker", pty=True, yield_ms=2_000)
+
+            if "PTY_OK" not in output:
+                matched = re.search(r"session ([0-9a-f-]+)", output)
+                self.assertIsNotNone(matched)
+                session_id = matched.group(1) if matched else ""
+                deadline = time.time() + 5
+                while time.time() < deadline:
+                    polled = process_session("poll", session_id=session_id, timeout_ms=200)
+                    if "PTY_OK" in polled or "Process exited with code" in polled:
+                        break
+                output = process_session("log", session_id=session_id)
+                process_session("remove", session_id=session_id)
+
+        self.assertIn("PTY_OK", output)
+
     def test_real_docker_python_api_sandbox_runs_runner_and_masks_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare_python_api_skill(

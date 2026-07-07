@@ -3053,11 +3053,6 @@ def exec_command(
     command_argv = argv
     effective_command = cmd
     if sandbox_name == "docker":
-        if pty:
-            return _ret(
-                "tool.exec.output",
-                "Error: docker sandbox currently supports non-PTY exec only; pty is not supported",
-            )
         if _should_use_shell(argv):
             command_argv = ["/bin/sh", "-lc", effective_command]
         try:
@@ -3068,6 +3063,7 @@ def exec_command(
                 timeout_seconds=timeout,
                 timeout_cap_seconds=_exec_sandbox_timeout_cap_seconds(),
                 labels={"openppx.tool": "exec"},
+                tty=pty,
             )
             command_argv = docker_sandbox.argv
         except SandboxValidationError as exc:

@@ -642,10 +642,39 @@ class ToolsTests(unittest.TestCase):
         image_index = argv.index("openppx-sandbox:dev")
         self.assertEqual(argv[image_index + 1 : image_index + 3], ["/bin/sh", "-lc"])
 
-    def test_exec_tool_docker_sandbox_rejects_pty_mode(self) -> None:
-        pty_out = exec_command("echo hello", sandbox="docker", pty=True)
+    def test_exec_tool_docker_sandbox_pty_starts_interactive_session_with_cleanup(self) -> None:
+        captured: dict[str, object] = {}
 
-        self.assertIn("pty is not supported", pty_out.lower())
+        class _DummyManager:
+            def start_session(self, **kwargs):
+                captured.update(kwargs)
+                return pytypes.SimpleNamespace(session_id="session-pty", process=pytypes.SimpleNamespace(pid=4321)), []
+
+            def mark_backgrounded(self, session_id, *, scope_key):
+                captured["backgrounded"] = (session_id, scope_key)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            with (
+                patch("openppx.tooling.registry.get_process_session_manager", return_value=_DummyManager()),
+                patch("openppx.tooling.registry.cleanup_docker_sandbox_container") as mocked_cleanup,
+            ):
+                out = exec_command("sh", sandbox="docker", pty=True, background=True)
+                callback = captured["terminate_callback"]
+                self.assertTrue(callable(callback))
+                callback()
+
+        argv = captured["argv"]
+        self.assertIsInstance(argv, list)
+        assert isinstance(argv, list)
+        self.assertEqual(argv[:2], ["docker", "run"])
+        self.assertIn("-i", argv)
+        self.assertIn("-t", argv)
+        self.assertTrue(captured["use_pty"])
+        container_name = argv[argv.index("--name") + 1]
+        self.assertIn("session session-pty", out)
+        self.assertEqual(captured["backgrounded"], ("session-pty", None))
+        mocked_cleanup.assert_called_once_with("docker", container_name)
 
     def test_exec_tool_docker_sandbox_background_starts_session_with_cleanup(self) -> None:
         captured: dict[str, object] = {}

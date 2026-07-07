@@ -21,6 +21,8 @@ class DockerSandboxConfig:
     uid: int | None = None
     gid: int | None = None
     home: str = "/tmp/openppx-home"
+    stdin_open: bool = False
+    tty: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +83,10 @@ def build_docker_run_spec(
     )
     if plan.stdin is not None:
         argv.append("-i")
+    elif cfg.stdin_open:
+        argv.append("-i")
+    if cfg.tty:
+        argv.append("-t")
     env = {"HOME": cfg.home, "TMPDIR": "/tmp", **{str(k): str(v) for k, v in plan.env.items()}}
     for key in sorted(env):
         argv.extend(["--env", f"{key}={env[key]}"])

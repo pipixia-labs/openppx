@@ -57,6 +57,26 @@ class SandboxPhaseOneTests(unittest.TestCase):
         self.assertIn("type=bind,src=/dev/null,dst=" + str(workspace / ".env") + ",readonly", argv)
         self.assertEqual(argv[-3:], ["openppx-sandbox:test", "python", "--version"])
 
+    def test_docker_argv_can_request_interactive_tty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            plan = _workspace_plan(workspace)
+
+            spec = build_docker_run_spec(
+                ValidatedSandboxExecutionPlan.from_plan(plan),
+                config=DockerSandboxConfig(
+                    image="openppx-sandbox:test",
+                    uid=501,
+                    gid=20,
+                    stdin_open=True,
+                    tty=True,
+                ),
+            )
+
+        argv = list(spec.argv)
+        self.assertIn("-i", argv)
+        self.assertIn("-t", argv)
+
     def test_mount_must_be_covered_by_profile_grant(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp, "workspace").resolve()
