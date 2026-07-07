@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -12,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from openppx.runtime.sandbox import list_docker_sandbox_containers
-from openppx.tooling.registry import exec_command, process_session
+from openppx.tooling.registry import exec_command, invoke_skill_api, process_session
 
 
 def _docker_integration_enabled() -> bool:
@@ -118,6 +119,97 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
 
             containers_after = set(list_docker_sandbox_containers(docker_bin=self.docker_bin))
             self.assertTrue(containers_after.issubset(containers_before))
+
+    def test_real_docker_python_api_sandbox_runs_runner_and_masks_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_python_api_skill(
+                tmp,
+                "inspect",
+                {"module": "demo_sdk", "function": "inspect", "sandbox": {"required": True}},
+                (
+                    "from pathlib import Path\n"
+                    "def inspect(a, b):\n"
+                    "    env_text = Path('.env').read_text(encoding='utf-8')\n"
+                    "    return {'sum': a + b, 'env_secret_visible': 'SECRET_VALUE' in env_text}\n"
+                ),
+            )
+            os.environ["OPENPPX_SANDBOX_DOCKER_BIN"] = self.docker_bin
+            os.environ["OPENPPX_SANDBOX_IMAGE"] = self.image
+
+            payload = json.loads(
+                invoke_skill_api("demo", "inspect", args={"a": 2, "b": 3}, inline_budget_ms=20_000)
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "inline")
+        normalized = payload["output"].replace(" ", "")
+        self.assertIn('"sum":5', normalized)
+        self.assertIn('"env_secret_visible":false', normalized)
+
+    def test_real_docker_node_api_sandbox_runs_runner_and_masks_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_node_api_skill(
+                tmp,
+                "inspect",
+                {"module": "demo_node.cjs", "function": "inspect", "sandbox": "docker"},
+                (
+                    "const fs = require('fs');\n"
+                    "exports.inspect = async function(args) {\n"
+                    "  const envText = fs.readFileSync('.env', 'utf8');\n"
+                    "  return {sum: args.a + args.b, envSecretVisible: envText.includes('SECRET_VALUE')};\n"
+                    "};\n"
+                ),
+            )
+            os.environ["OPENPPX_SANDBOX_DOCKER_BIN"] = self.docker_bin
+            os.environ["OPENPPX_SANDBOX_IMAGE"] = self.image
+
+            payload = json.loads(
+                invoke_skill_api("demo", "inspect", args={"a": 2, "b": 3}, inline_budget_ms=20_000)
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "inline")
+        normalized = payload["output"].replace(" ", "")
+        self.assertIn('"sum":5', normalized)
+        self.assertIn('"envSecretVisible":false', normalized)
+
+    def _prepare_python_api_skill(
+        self,
+        tmp: str,
+        api_name: str,
+        recipe: dict[str, object],
+        module_source: str,
+    ) -> None:
+        skill_dir = self._prepare_skill_dir(tmp)
+        (skill_dir / "demo_sdk.py").write_text(module_source, encoding="utf-8")
+        (skill_dir / "apis" / f"{api_name}.python.json").write_text(json.dumps(recipe), encoding="utf-8")
+
+    def _prepare_node_api_skill(
+        self,
+        tmp: str,
+        api_name: str,
+        recipe: dict[str, object],
+        module_source: str,
+    ) -> None:
+        skill_dir = self._prepare_skill_dir(tmp)
+        (skill_dir / "demo_node.cjs").write_text(module_source, encoding="utf-8")
+        (skill_dir / "apis" / f"{api_name}.node.json").write_text(json.dumps(recipe), encoding="utf-8")
+
+    def _prepare_skill_dir(self, tmp: str) -> Path:
+        root = Path(tmp)
+        agent_home = root / "agent"
+        skill_dir = agent_home / "skills" / "demo"
+        apis = skill_dir / "apis"
+        apis.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\ndescription: demo skill\n---\n# Demo\n",
+            encoding="utf-8",
+        )
+        (skill_dir / ".env").write_text("SECRET_VALUE=visible\n", encoding="utf-8")
+        os.environ["OPENPPX_AGENT_HOME"] = str(agent_home)
+        os.environ["OPENPPX_TASK_DB_PATH"] = str(root / "tasks.db")
+        time.sleep(0.001)
+        return skill_dir
 
 
 if __name__ == "__main__":
