@@ -7,6 +7,7 @@ from io import BytesIO
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -24,6 +25,7 @@ from openppx.runtime.task_execution import TaskController
 from openppx.runtime.task_store import TaskStore
 from openppx.runtime.tool_context import route_context
 from openppx.tooling.tool_meta import get_tool_meta
+from openppx.tooling import registry as exec_registry
 from openppx.tooling.registry import (
     SubagentSpawnRequest,
     advance_task_flow,
@@ -489,10 +491,10 @@ class ToolsTests(unittest.TestCase):
         mocked_run.assert_not_called()
 
     def test_exec_tool_builds_explicit_docker_sandbox_command(self) -> None:
-        calls: list[tuple[list[str], dict[str, object]]] = []
+        calls: list[dict[str, object]] = []
 
-        def _fake_run(args, **kwargs):
-            calls.append((list(args), kwargs))
+        def _fake_run_limited(args, **kwargs):
+            calls.append({"argv": list(args), **kwargs})
             return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -502,11 +504,12 @@ class ToolsTests(unittest.TestCase):
             (workspace / ".env").write_text("SECRET=1\n", encoding="utf-8")
             (workspace / ".ssh").mkdir()
             os.environ["OPENPPX_WORKSPACE"] = tmp
-            with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+            with patch("openppx.tooling.registry._run_limited_foreground_process", side_effect=_fake_run_limited):
                 out = exec_command("echo hello", sandbox="docker")
 
         self.assertIn("ok", out)
-        argv = calls[0][0]
+        argv = calls[0]["argv"]
+        self.assertIsInstance(argv, list)
         self.assertEqual(argv[:2], ["docker", "run"])
         self.assertIn("--network", argv)
         self.assertEqual(argv[argv.index("--network") + 1], "none")
@@ -523,17 +526,19 @@ class ToolsTests(unittest.TestCase):
             f"type=tmpfs,dst={resolved_workspace / '.ssh'},tmpfs-mode=0700,tmpfs-size=1m",
             mounts,
         )
+        self.assertEqual(calls[0]["cwd"], str(resolved_workspace))
+        self.assertEqual(calls[0]["timeout"], 60)
 
     def test_exec_tool_docker_sandbox_uses_container_shell(self) -> None:
         calls: list[list[str]] = []
 
-        def _fake_run(args, **kwargs):
+        def _fake_run_limited(args, **kwargs):
             calls.append(list(args))
             return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["OPENPPX_WORKSPACE"] = tmp
-            with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+            with patch("openppx.tooling.registry._run_limited_foreground_process", side_effect=_fake_run_limited):
                 out = exec_command("export OPENPPX_EXEC_TEST=hello && echo $OPENPPX_EXEC_TEST", sandbox="docker")
 
         self.assertIn("ok", out)
@@ -548,23 +553,42 @@ class ToolsTests(unittest.TestCase):
     def test_exec_tool_docker_sandbox_timeout_cleans_container(self) -> None:
         calls: list[list[str]] = []
 
-        def _fake_run(args, **kwargs):
+        def _fake_run_limited(args, **kwargs):
             argv = list(args)
             calls.append(argv)
-            if argv[:2] == ["docker", "run"]:
-                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
-            return pytypes.SimpleNamespace(stdout="", stderr="", returncode=0)
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
 
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["OPENPPX_WORKSPACE"] = tmp
-            with patch("openppx.tooling.registry.subprocess.run", side_effect=_fake_run):
+            with (
+                patch("openppx.tooling.registry._run_limited_foreground_process", side_effect=_fake_run_limited),
+                patch("openppx.tooling.registry.cleanup_docker_sandbox_container") as mocked_cleanup,
+            ):
                 out = exec_command("echo hello", sandbox="docker")
 
         container_name = calls[0][calls[0].index("--name") + 1]
         self.assertIn("timed out", out.lower())
         self.assertIn("cleanup requested", out.lower())
-        self.assertEqual(calls[1], ["docker", "kill", container_name])
-        self.assertEqual(calls[2], ["docker", "rm", "-f", container_name])
+        mocked_cleanup.assert_called_once_with("docker", container_name)
+
+    def test_exec_tool_docker_sandbox_limits_foreground_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = exec_registry._run_limited_foreground_process(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.write('a' * 200); sys.stderr.write('b' * 200)",
+                ],
+                cwd=tmp,
+                timeout=5,
+                stream_max_chars=50,
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertLess(len(result.stdout), 120)
+        self.assertLess(len(result.stderr), 120)
+        self.assertIn("stdout truncated to 50 chars", result.stdout)
+        self.assertIn("stderr truncated to 50 chars", result.stderr)
 
     def test_computer_use_tool_calls_executor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -17,6 +17,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import threading
 import uuid
 import zipfile
 from collections.abc import Iterable
@@ -1707,6 +1708,107 @@ def _format_exec_output(stdout: str, stderr: str, exit_code: int | None) -> str:
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class _ForegroundProcessResult:
+    """Bounded foreground process output."""
+
+    stdout: str
+    stderr: str
+    returncode: int
+
+
+class _BoundedTextCollector:
+    """Collect process text output up to a fixed character budget."""
+
+    def __init__(self, *, max_chars: int, label: str) -> None:
+        self._max_chars = max(1, max_chars)
+        self._label = label
+        self._parts: list[str] = []
+        self._chars = 0
+        self._truncated = False
+
+    def append(self, text: str) -> None:
+        """Append one chunk, dropping extra content after the budget is reached."""
+        if self._truncated or not text:
+            return
+        remaining = self._max_chars - self._chars
+        if remaining <= 0:
+            self._truncated = True
+            return
+        if len(text) <= remaining:
+            self._parts.append(text)
+            self._chars += len(text)
+            return
+        self._parts.append(text[:remaining])
+        self._chars += remaining
+        self._truncated = True
+
+    def text(self) -> str:
+        """Return collected text plus a truncation notice when needed."""
+        value = "".join(self._parts)
+        if self._truncated:
+            suffix = f"\n... ({self._label} truncated to {self._max_chars} chars)"
+            return value.rstrip("\n") + suffix
+        return value
+
+
+def _collect_process_stream(stream: Any, collector: _BoundedTextCollector) -> None:
+    """Drain one process text stream into a bounded collector."""
+    if stream is None:
+        return
+    try:
+        for chunk in iter(stream.readline, ""):
+            if not chunk:
+                break
+            collector.append(str(chunk))
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def _run_limited_foreground_process(
+    argv: list[str],
+    *,
+    cwd: str,
+    timeout: float | int | None,
+    stream_max_chars: int = 10_000,
+) -> _ForegroundProcessResult:
+    """Run a foreground process while bounding captured stdout and stderr."""
+    process = subprocess.Popen(  # noqa: S603 - caller already validated argv and shell=False.
+        argv,
+        shell=False,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    stdout = _BoundedTextCollector(max_chars=stream_max_chars, label="stdout")
+    stderr = _BoundedTextCollector(max_chars=stream_max_chars, label="stderr")
+    threads = [
+        threading.Thread(target=_collect_process_stream, args=(process.stdout, stdout), daemon=True),
+        threading.Thread(target=_collect_process_stream, args=(process.stderr, stderr), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        returncode = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=5)
+        except Exception:
+            pass
+        for thread in threads:
+            thread.join(timeout=1)
+        raise
+    for thread in threads:
+        thread.join(timeout=5)
+    return _ForegroundProcessResult(stdout=stdout.text(), stderr=stderr.text(), returncode=int(returncode))
+
+
 _PROCESS_KEY_TOKENS = {
     "enter": "\r",
     "return": "\r",
@@ -2953,14 +3055,21 @@ def exec_command(
     if not background and yield_ms is None and not pty:
         run_timeout = docker_sandbox.timeout_seconds if docker_sandbox is not None else timeout
         try:
-            completed = subprocess.run(
-                command_argv,
-                shell=False,
-                cwd=str(cwd),
-                capture_output=True,
-                text=True,
-                timeout=run_timeout,
-            )
+            if docker_sandbox is not None:
+                completed = _run_limited_foreground_process(
+                    command_argv,
+                    cwd=str(cwd),
+                    timeout=run_timeout,
+                )
+            else:
+                completed = subprocess.run(
+                    command_argv,
+                    shell=False,
+                    cwd=str(cwd),
+                    capture_output=True,
+                    text=True,
+                    timeout=run_timeout,
+                )
         except subprocess.TimeoutExpired:
             if docker_sandbox is not None:
                 cleanup_docker_sandbox_container(docker_sandbox.docker_bin, docker_sandbox.container_name)
