@@ -12,6 +12,7 @@ from .validation import resolve_backend
 
 
 _IMAGE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,254}$")
+_DISABLED_BACKEND_VALUES = {"", "0", "false", "none", "off"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,14 +51,23 @@ def resolve_recipe_sandbox_options(
     *,
     runner_name: str,
     env: Mapping[str, str],
+    default_backend: str | None = None,
 ) -> RecipeSandboxOptions | None:
-    """Resolve recipe sandbox options without trusting model-controlled relaxation."""
-    if raw in (None, False):
-        return None
-    if isinstance(raw, str) and raw.strip().lower() in {"", "0", "false", "none", "off"}:
-        return None
+    """Resolve recipe sandbox options without trusting model-controlled relaxation.
+
+    ``default_backend`` is trusted runtime policy. Recipe-controlled disabled
+    values are treated as absence when a default backend exists, so a modified
+    skill cannot opt out of a sandbox policy selected by the host.
+    """
+    trusted_default = _normalize_default_backend(default_backend)
     sandbox_options: dict[str, Any]
-    if raw is True:
+    if raw is None or raw is False:
+        requested = trusted_default
+        sandbox_options = {}
+    elif isinstance(raw, str) and _is_disabled_backend(raw):
+        requested = trusted_default or "none"
+        sandbox_options = {}
+    elif raw is True:
         requested = "docker"
         sandbox_options = {}
     elif isinstance(raw, str):
@@ -66,13 +76,20 @@ def resolve_recipe_sandbox_options(
     elif isinstance(raw, dict):
         sandbox_options = dict(raw)
         required = bool(raw.get("required", False))
-        requested = str(raw.get("backend", "") or ("docker" if required else "")).strip().lower()
-        if not requested:
-            return None
+        backend_value = raw.get("backend")
+        backend = str(backend_value or "").strip().lower()
+        if backend_value is not None and _is_disabled_backend(backend):
+            requested = trusted_default or "none"
+        else:
+            requested = backend or ("docker" if required else trusted_default)
     else:
         raise ValueError(f"{runner_name} API recipe sandbox must be a string, boolean, or object")
+    if not requested:
+        return None
 
-    configured = env.get("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
+    configured = trusted_default or env.get("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
+    if requested == "none" and configured == "none":
+        return None
     backend = resolve_backend(configured_backend=configured, requested_backend=requested)
     if backend != "docker":
         raise ValueError(f"{runner_name} API sandbox currently supports only docker")
@@ -137,6 +154,15 @@ def _resolve_image(raw: Any, *, runner_name: str, env: Mapping[str, str]) -> str
 
 def _truthy(raw: str | None) -> bool:
     return str(raw or "").strip().lower() in {"1", "true", "yes", "on", "enabled", "allow", "allowed"}
+
+
+def _normalize_default_backend(raw: str | None) -> str:
+    normalized = str(raw or "").strip().lower()
+    return "" if _is_disabled_backend(normalized) else normalized
+
+
+def _is_disabled_backend(raw: Any) -> bool:
+    return str(raw or "").strip().lower() in _DISABLED_BACKEND_VALUES
 
 
 def _network_locked_disabled(raw: str | None) -> bool:

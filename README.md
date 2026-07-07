@@ -211,6 +211,27 @@ macOS permission reminder (required for GUI automation):
 - `Privacy & Security -> Screen Recording` (Terminal / Python host process)
 - `Privacy & Security -> Accessibility` (keyboard/mouse control)
 
+## 🧱 Docker Sandbox
+
+Build the local sandbox image before enabling Docker-backed execution:
+
+```bash
+ppx sandbox build-image --image openppx-sandbox:dev
+```
+
+For production or high-risk agents, configure declarative skill APIs to run in Docker from the trusted runtime config, not from skill recipe files. Add this to the target agent's `runtime.json`:
+
+```json
+{
+  "env": {
+    "OPENPPX_SKILL_API_SANDBOX": "docker",
+    "OPENPPX_SANDBOX_IMAGE": "openppx-sandbox:dev"
+  }
+}
+```
+
+This forces Command, Python, and Node declarative skill APIs into Docker even when a skill recipe omits `sandbox` or sets it to `false` / `none`. See [`docs/SANDBOX.md`](./docs/SANDBOX.md) for the full policy and test commands.
+
 ## 📂 Runtime Files
 
 Background runtime/log files:

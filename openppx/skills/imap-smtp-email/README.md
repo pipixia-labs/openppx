@@ -106,7 +106,7 @@ node scripts/smtp.js send --to "a@example.com,b@example.com" --cc "c@example.com
 | QQ Mail | imap.qq.com | 993 | smtp.qq.com | 587 |
 
 **Important for 163.com:**
-- Use **authorization code** (授权码), not account password
+- Use an **authorization code**, not the account password
 - Enable IMAP/SMTP in web settings first
 
 ## Configuration Options
@@ -137,7 +137,7 @@ node scripts/smtp.js send --to "a@example.com,b@example.com" --cc "c@example.com
 
 **Authentication failed:**
 - For Gmail: Use App Password (not account password if 2FA enabled)
-- For 163.com: Use authorization code (授权码), not account password
+- For 163.com: Use an authorization code, not the account password
 
 **TLS/SSL errors:**
 - For self-signed certs: Set `IMAP_REJECT_UNAUTHORIZED=false` or `SMTP_REJECT_UNAUTHORIZED=false`

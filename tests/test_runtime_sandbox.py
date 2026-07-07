@@ -287,6 +287,58 @@ class SandboxPhaseOneTests(unittest.TestCase):
         self.assertTrue(options.network_approved)
         self.assertEqual(options.labels["openppx.network.approved"], "1")
 
+    def test_recipe_sandbox_default_backend_forces_docker_when_recipe_is_silent(self) -> None:
+        options = resolve_recipe_sandbox_options(
+            None,
+            runner_name="Python",
+            env={},
+            default_backend="docker",
+        )
+
+        self.assertIsNotNone(options)
+        assert options is not None
+        self.assertEqual(options.backend, "docker")
+        self.assertEqual(options.network_mode, NetworkMode.DISABLED)
+
+    def test_recipe_sandbox_default_backend_ignores_recipe_opt_out(self) -> None:
+        for raw in (False, "none", {"backend": "none"}, {"required": False}):
+            with self.subTest(raw=raw):
+                options = resolve_recipe_sandbox_options(
+                    raw,
+                    runner_name="Node",
+                    env={},
+                    default_backend="docker",
+                )
+
+                self.assertIsNotNone(options)
+                assert options is not None
+                self.assertEqual(options.backend, "docker")
+
+    def test_recipe_sandbox_default_backend_rejects_weaker_backend_request(self) -> None:
+        with self.assertRaisesRegex(SandboxValidationError, "downgrade"):
+            resolve_recipe_sandbox_options(
+                "bwrap",
+                runner_name="Command",
+                env={},
+                default_backend="docker",
+            )
+
+    def test_recipe_sandbox_baseline_rejects_explicit_disabled_backend(self) -> None:
+        with self.assertRaisesRegex(SandboxValidationError, "downgrade"):
+            resolve_recipe_sandbox_options(
+                "none",
+                runner_name="Command",
+                env={"OPENPPX_SANDBOX_BACKEND": "docker"},
+            )
+
+        self.assertIsNone(
+            resolve_recipe_sandbox_options(
+                None,
+                runner_name="Command",
+                env={"OPENPPX_SANDBOX_BACKEND": "docker"},
+            )
+        )
+
     def test_recipe_sandbox_options_gate_custom_image_on_allowlist(self) -> None:
         with self.assertRaisesRegex(ValueError, "TRUSTED_IMAGES"):
             resolve_recipe_sandbox_options(

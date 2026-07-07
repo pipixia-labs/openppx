@@ -1,15 +1,15 @@
 # openppx Docs
 
-## 文档索引
+## Documentation Index
 
-- [PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md): 项目总体说明（架构、Session/Memory、Compaction、工具能力）
-- [USE_CASES.md](./USE_CASES.md): 真实任务示例与可直接复制的提示词模板
-- [OPERATIONS.md](./OPERATIONS.md): 运行方式、网关模式、WhatsApp Bridge、Cron、测试
-- [CONFIGURATION.md](./CONFIGURATION.md): 配置模型、环境变量、配置样例、平台说明
-- [SANDBOX.md](./SANDBOX.md): Docker sandbox 构建、使用、安全边界、诊断与测试
-- [MCP_SECURITY.md](./MCP_SECURITY.md): MCP 接入和安全策略
+- [PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md): project overview, architecture, sessions, memory, compaction, and tool capabilities
+- [USE_CASES.md](./USE_CASES.md): real task examples and copy-ready prompt templates
+- [OPERATIONS.md](./OPERATIONS.md): runtime commands, gateway modes, WhatsApp Bridge, cron, sandbox, and testing
+- [CONFIGURATION.md](./CONFIGURATION.md): configuration model, environment variables, examples, and platform notes
+- [SANDBOX.md](./SANDBOX.md): Docker sandbox build, usage, security boundary, diagnostics, and testing
+- [MCP_SECURITY.md](./MCP_SECURITY.md): MCP integration and security policy
 
-## 维护建议
+## Maintenance Guidance
 
-- 新增功能时，优先补充 `PROJECT_OVERVIEW.md` 的对应章节
-- 当单一主题内容变长时，再拆分为专项文档（如 `MEMORY.md`、`MCP_INTEGRATION.md`）
+- When adding a feature, update the matching section in `PROJECT_OVERVIEW.md` first.
+- When one topic grows too large, split it into a focused document such as `MEMORY.md` or `MCP_INTEGRATION.md`.

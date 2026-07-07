@@ -284,6 +284,26 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertEqual(recipe.runner_payload["sandbox"]["timeout_seconds"], 12)
             self.assertIsNotNone(recipe.terminate_callback)
 
+    def test_skill_api_runtime_forces_python_sandbox_from_trusted_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_python_api_skill(
+                tmp,
+                "add",
+                {"module": "demo_sdk", "function": "add", "sandbox": False},
+                "def add(a, b):\n    return {'sum': a + b}\n",
+            )
+            os.environ["OPENPPX_SKILL_API_SANDBOX"] = "docker"
+
+            recipe = SkillApiRuntime().resolve(
+                skill_name="demo",
+                api_name="add",
+                args={"a": 2, "b": 3},
+                scope_key="scope-1",
+            )
+
+            self.assertEqual(recipe.argv[:2], ["docker", "run"])
+            self.assertEqual(recipe.runner_payload["sandbox"]["backend"], "docker")
+
     def test_skill_api_runtime_resolves_node_recipe_with_docker_sandbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare_node_api_skill(
@@ -424,6 +444,30 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertEqual(recipe.env["OPENPPX_API_RUNNER_PAYLOAD_STDIN"], "1")
             self.assertNotIn("OPENPPX_API_RUNNER_PAYLOAD_JSON", recipe.env)
             self.assertTrue(recipe.argv[-1].endswith("command_api_runner.py"))
+
+    def test_skill_api_runtime_passes_trusted_sandbox_policy_to_command_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_command_api_skill(
+                tmp,
+                "echo_value",
+                {
+                    "argv": [sys.executable, "-c", "print('command:' + '{value}')"],
+                    "allow_system_executable": True,
+                },
+            )
+            os.environ["OPENPPX_SKILL_API_SANDBOX"] = "docker"
+
+            recipe = SkillApiRuntime().resolve(
+                skill_name="demo",
+                api_name="echo_value",
+                args={"value": "Ada"},
+                scope_key="scope-1",
+            )
+
+            self.assertNotEqual(recipe.argv[:2], ["docker", "run"])
+            self.assertTrue(recipe.argv[-1].endswith("command_api_runner.py"))
+            self.assertEqual(recipe.env["OPENPPX_SKILL_API_SANDBOX"], "docker")
+            self.assertNotIn("sandbox", recipe.runner_payload)
 
     def test_skill_api_runtime_leaves_command_recipe_sandbox_to_command_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -167,6 +167,7 @@ def _recipe_sandbox_options(recipe: dict[str, Any]) -> RecipeSandboxOptions | No
         recipe.get("sandbox"),
         runner_name="Command",
         env=os.environ,
+        default_backend=os.getenv("OPENPPX_SKILL_API_SANDBOX"),
     )
 
 

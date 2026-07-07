@@ -47,7 +47,7 @@ SMTP_REJECT_UNAUTHORIZED=true     # Set to false for self-signed certs
 | QQ Mail | imap.qq.com | 993 | smtp.qq.com | 587 |
 
 **Important for 163.com:**
-- Use **authorization code** (授权码), not account password
+- Use an **authorization code**, not the account password
 - Enable IMAP/SMTP in web settings first
 
 ## IMAP Commands (Receiving Email)
@@ -171,7 +171,7 @@ npm install
 
 - Store credentials in `.env` (add to `.gitignore`)
 - For Gmail: use App Password if 2FA is enabled
-- For 163.com: use authorization code (授权码), not account password
+- For 163.com: use an authorization code, not the account password
 
 ## Troubleshooting
 

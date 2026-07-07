@@ -1,16 +1,16 @@
 # summarize
 
-使用 `trafilatura` 提取网页正文并生成智能摘要。
+Use `trafilatura` to extract the main text from web pages and generate concise summaries.
 
-## 使用方法
+## Usage
 
-1. **总结网页**：
-   提供一个 URL，我将使用 `trafilatura` 抓取正文并为您总结。
-   示例：`总结这个网页：https://example.com`
+1. **Summarize a web page**
+   Provide a URL. The skill uses `trafilatura` to fetch the main content and summarize it.
+   Example: `Summarize this page: https://example.com`
 
-2. **核心逻辑**：
-   - 调用 `trafilatura --markdown -u <URL>` 获取内容。
-   - 使用 AI 对抓取到的 Markdown 内容进行提炼。
+2. **Core flow**
+   - Run `trafilatura --markdown -u <URL>` to extract content.
+   - Use AI to condense the extracted Markdown content.
 
-## 依赖
-- `trafilatura` (已安装)
+## Dependency
+- `trafilatura`, already installed

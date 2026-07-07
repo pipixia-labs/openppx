@@ -68,6 +68,53 @@ class CommandApiRunnerTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY=host-secret", argv)
         self.assertEqual(captured["timeout"], 3600)
 
+    def test_main_forces_sandbox_from_trusted_skill_api_policy(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run_streaming_command(**kwargs):
+            captured.update(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe = {
+                "argv": ["echo", "hello"],
+                "allow_system_executable": True,
+                "sandbox": False,
+            }
+            os.environ["OPENPPX_COMMAND_API_RECIPE_JSON"] = json.dumps(recipe)
+            os.environ["OPENPPX_SKILL_API_SANDBOX"] = "docker"
+
+            with (
+                patch("openppx.runtime.command_api_runner._run_streaming_command", side_effect=_fake_run_streaming_command),
+                patch("os.getcwd", return_value=tmp),
+            ):
+                exit_code = command_api_runner.main()
+
+        self.assertEqual(exit_code, 0)
+        argv = captured["argv"]
+        self.assertIsInstance(argv, list)
+        assert isinstance(argv, list)
+        self.assertEqual(argv[:2], ["docker", "run"])
+        self.assertEqual(argv[-2:], ["echo", "hello"])
+
+    def test_main_rejects_weaker_backend_under_trusted_skill_api_policy(self) -> None:
+        recipe = {
+            "argv": ["echo", "hello"],
+            "allow_system_executable": True,
+            "sandbox": "bwrap",
+        }
+        os.environ["OPENPPX_COMMAND_API_RECIPE_JSON"] = json.dumps(recipe)
+        os.environ["OPENPPX_SKILL_API_SANDBOX"] = "docker"
+        out = StringIO()
+
+        with patch("sys.stdout", out):
+            exit_code = command_api_runner.main()
+
+        emitted = json.loads(out.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(emitted["ok"])
+        self.assertIn("downgrade", emitted["error"])
+
     def test_main_rejects_sandbox_network_enablement_without_approval(self) -> None:
         recipe = {
             "argv": ["echo", "hello"],

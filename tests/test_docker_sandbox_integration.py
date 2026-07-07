@@ -221,6 +221,30 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "inline")
         self.assertIn("visible=False", payload["output"])
 
+    def test_real_docker_command_api_forced_policy_masks_env_without_recipe_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_command_api_skill(
+                tmp,
+                "inspect",
+                {
+                    "argv": [
+                        "python",
+                        "-c",
+                        "from pathlib import Path; print('visible=' + str('SECRET_VALUE' in Path('.env').read_text()))",
+                    ],
+                    "allow_system_executable": True,
+                },
+            )
+            os.environ["OPENPPX_SANDBOX_DOCKER_BIN"] = self.docker_bin
+            os.environ["OPENPPX_SANDBOX_IMAGE"] = self.image
+            os.environ["OPENPPX_SKILL_API_SANDBOX"] = "docker"
+
+            payload = json.loads(invoke_skill_api("demo", "inspect", args={}, inline_budget_ms=20_000))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "inline")
+        self.assertIn("visible=False", payload["output"])
+
     def _prepare_python_api_skill(
         self,
         tmp: str,

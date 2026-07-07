@@ -91,7 +91,7 @@ ppx channels login
 
 ---
 
-### Feishu (飞书)
+### Feishu
 
 Uses **WebSocket** long connection — no public IP required.
 
@@ -137,19 +137,19 @@ Uses **WebSocket** long connection — no public IP required.
 
 ---
 
-### QQ (QQ单聊)
+### QQ
 
 Uses **botpy SDK** with WebSocket — no public IP required. Currently supports **private messages only**.
 
 **1. Register & create bot**
 - Visit [QQ Open Platform](https://q.qq.com) → Register as a developer (personal or enterprise)
 - Create a new bot application
-- Go to **开发设置 (Developer Settings)** → copy **AppID** and **AppSecret**
+- Go to **Developer Settings** and copy **AppID** and **AppSecret**.
 
 **2. Set up sandbox for testing**
-- In the bot management console, find **沙箱配置 (Sandbox Config)**
-- Under **在消息列表配置**, click **添加成员** and add your own QQ number
-- Once added, scan the bot's QR code with mobile QQ → open the bot profile → tap "发消息" to start chatting
+- In the bot management console, open **Sandbox Config**.
+- Under the message-list configuration section, click **Add Member** and add your own QQ number.
+- Once added, scan the bot QR code with mobile QQ, open the bot profile, and tap **Send Message** to start chatting.
 
 **3. Configure**
 
@@ -173,7 +173,7 @@ Now send a message to the bot from QQ — it should respond!
 
 ---
 
-### DingTalk (钉钉)
+### DingTalk
 
 Uses **Stream Mode** — no public IP required.
 
@@ -282,7 +282,7 @@ Give openppx its own email account. It polls **IMAP** for incoming mail and repl
 
 ---
 
-### Weixin (微信 / Personal WeChat)
+### Weixin / Personal WeChat
 
 Uses the Weixin HTTP long-poll API and QR-code login flow.
 
@@ -331,7 +331,7 @@ ppx gateway run --channels weixin
 
 ---
 
-### WeCom (企业微信)
+### WeCom
 
 Uses the WeCom AI bot WebSocket long connection. No public IP is required.
 

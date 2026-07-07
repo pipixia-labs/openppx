@@ -1,8 +1,8 @@
 # Sandbox
 
-openppx supports an opt-in Docker sandbox for dangerous local execution. The
-default runtime behavior is unchanged: commands and skill APIs only enter the
-sandbox when the caller explicitly requests it.
+openppx supports a Docker sandbox for dangerous local execution. The default
+runtime behavior is unchanged: commands and skill APIs only enter the sandbox
+when trusted runtime configuration or the caller explicitly requests it.
 
 ## Build the sandbox image
 
@@ -52,9 +52,25 @@ Docker sandboxed exec uses:
 `background=True`, `yield_ms`, and `pty=True` all use `process_session` for
 follow-up `poll`, `log`, `write`, `send-keys`, `kill`, and `remove` actions.
 
-## Skill API opt-in
+## Skill API sandbox policy
 
-Command, Python, and Node declarative skill APIs can request Docker sandboxing:
+Do not rely on skill recipes as the security boundary. Skill files are regular
+project content and may be edited by the model or by third-party code. To force
+local declarative skill APIs into Docker, set trusted runtime configuration:
+
+```bash
+export OPENPPX_SKILL_API_SANDBOX=docker
+```
+
+This applies to Command, Python, and Node declarative skill APIs even when the
+recipe has no `sandbox` field or sets `sandbox` to `false` / `none`. Recipe
+fields can only request options that fit within trusted runtime gates, such as
+an approved network or image option. They cannot disable or weaken the sandbox
+backend. A recipe request for a weaker backend such as `bwrap` is rejected under
+this policy.
+
+Recipes may still explicitly request Docker sandboxing when no trusted default
+is configured:
 
 ```json
 {
@@ -112,6 +128,7 @@ model-controlled capability.
 |---|---|---|
 | `OPENPPX_SANDBOX_BACKEND` | `none` | Baseline backend. `docker` prevents model-requested downgrade without confirmation. |
 | `OPENPPX_EXEC_SANDBOX` | unset | Optional default sandbox for `exec_command`; keep unset unless deliberately enabling. |
+| `OPENPPX_SKILL_API_SANDBOX` | unset | Optional trusted default sandbox for Command/Python/Node declarative skill APIs. Use `docker` to force local skill API code into Docker regardless of recipe opt-in. |
 | `OPENPPX_SANDBOX_DOCKER_BIN` | `docker` | Docker CLI path/name. |
 | `OPENPPX_SANDBOX_IMAGE` | `openppx-sandbox:dev` | Default sandbox image. |
 | `OPENPPX_SANDBOX_PYTHON_BASE_IMAGE` | `python:3.14-slim` | Base image for `ppx sandbox build-image`. |

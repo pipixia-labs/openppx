@@ -1,134 +1,133 @@
-# openppx 能力体验用例
+# openppx Capability Use Cases
 
-本文档提供可直接体验的真实任务示例，并附带可复制提示词模板。
+This document provides realistic tasks that can be tried directly, along with copy-ready prompt templates.
 
-## 1. 真实任务示例（按风险分组）
+## 1. Real Task Examples by Risk Level
 
-### 1.1 入门（低风险）
+### 1.1 Beginner: Low Risk
 
-1. 新闻快报整理任务
-   - 访问多个新闻源首页抓取头条
-   - 做去重并输出“重点摘要 + 来源链接”
+1. News briefing
+   - Visit several news home pages and collect headlines.
+   - Deduplicate items and return key summaries with source links.
 
-2. 页面截图与 PDF 归档任务
-   - 批量打开指定页面
-   - 导出 screenshot 和 PDF 到指定路径
+2. Page screenshot and PDF archiving
+   - Open a list of pages.
+   - Export screenshots and PDFs to a target directory.
 
-3. 站点可用性巡检任务
-   - 访问一组 URL，检查是否可达、是否异常跳转、是否超时
-   - 输出可用性状态报告
+3. Site availability check
+   - Visit a list of URLs and check reachability, unexpected redirects, and timeouts.
+   - Return an availability report.
 
-### 1.2 进阶（中风险）
+### 1.2 Intermediate: Medium Risk
 
-1. 电商比价任务
-   - 打开多个电商站点，搜索同一商品
-   - 抽取价格、运费、到货时间并输出推荐结果
+1. E-commerce price comparison
+   - Open several commerce sites and search for the same product.
+   - Extract price, shipping cost, estimated delivery time, and a recommendation.
 
-2. 机票/酒店筛选任务
-   - 按预算、日期、是否直飞/可取消等条件过滤
-   - 输出候选列表与最终建议
+2. Flight or hotel filtering
+   - Filter by budget, date, direct flight, free cancellation, and other constraints.
+   - Return candidate options and a final recommendation.
 
-3. 网站控制台错误巡检任务
-   - 打开核心页面，收集 console error/warning
-   - 生成可复核的错误清单
+3. Website console error audit
+   - Open core pages and collect console errors and warnings.
+   - Produce a reviewable error list.
 
-4. 表单自动填写任务（测试环境）
-   - 在测试页面自动填写字段并准备提交
-   - 在关键动作前停下做人工确认
+4. Test form autofill
+   - Fill fields on a test page and prepare for submission.
+   - Pause for human confirmation before the final submit action.
 
-### 1.3 高风险（强制人工确认）
+### 1.3 High Risk: Confirmation Required
 
-1. 登录后半自动任务（人工登录 + 代理执行）
-   - 用户先手动登录目标站点
-   - 代理执行后续导航、信息整理、草稿准备等动作
-   - 高风险步骤保持人工确认
+1. Semi-automated task after login
+   - The user logs in manually.
+   - The agent performs navigation, information gathering, and draft preparation.
+   - High-risk actions stay behind explicit confirmation.
 
-> 建议按“入门 -> 进阶 -> 高风险”顺序体验。
+Recommended trial order: beginner, then intermediate, then high-risk workflows.
 
-## 2. 可直接复制的提示词模板
+## 2. Copy-Ready Prompt Templates
 
-以下模板可直接发给 openppx 使用（将占位符替换为你的真实信息）。
-每个模板都标注了推荐分组，便于按风险逐步体验。
+Replace placeholders with real values before sending these prompts to openppx.
 
-### 2.1 电商比价任务（进阶）
+### 2.1 E-commerce Price Comparison
 
 ```text
-请帮我比价商品：<商品名>。
-要求：
-1) 访问至少 3 个电商站点；
-2) 提取每个站点的价格、运费、预计到货时间；
-3) 给出一个推荐选项并说明理由；
-4) 最后用表格输出结果。
+Help me compare prices for this product: <product name>.
+Requirements:
+1) Visit at least 3 e-commerce sites.
+2) Extract price, shipping cost, and estimated delivery time for each site.
+3) Recommend one option and explain why.
+4) Return the final result as a table.
 ```
 
-### 2.2 机票/酒店筛选任务（进阶）
+### 2.2 Flight or Hotel Filtering
 
 ```text
-请帮我筛选行程。
-出发地：<出发地>，目的地：<目的地>，日期：<日期范围>，预算：<预算>。
-要求：
-1) 优先直飞（如果是机票）/可免费取消（如果是酒店）；
-2) 输出 3-5 个候选；
-3) 每个候选给出价格、关键限制条件和推荐理由。
+Help me filter travel options.
+Origin: <origin>, destination: <destination>, dates: <date range>, budget: <budget>.
+Requirements:
+1) Prefer direct flights for airfare, or free cancellation for hotels.
+2) Return 3-5 candidates.
+3) For each candidate, include price, key restrictions, and the reason for recommendation.
 ```
 
-### 2.3 新闻快报整理任务（入门）
+### 2.3 News Briefing
 
 ```text
-请帮我做今日新闻快报。
-要求：
-1) 访问至少 3 个新闻来源首页；
-2) 抓取头条并去重；
-3) 输出“5 条重点 + 每条一句摘要 + 来源链接”。
+Create today's news briefing.
+Requirements:
+1) Visit at least 3 news source home pages.
+2) Collect and deduplicate headlines.
+3) Return 5 key items, each with a one-sentence summary and source link.
 ```
 
-### 2.4 表单自动填写任务（测试环境，进阶）
+### 2.4 Test Form Autofill
 
 ```text
-请打开这个测试表单并自动填写：<表单URL>。
-填写内容如下：<字段与值>。
-要求：
-1) 填写完成后先不要提交；
-2) 先给我预览已填写内容；
-3) 等我确认“可以提交”后再执行提交。
+Open this test form and fill it automatically: <form URL>.
+Use these fields and values: <fields and values>.
+Requirements:
+1) Do not submit after filling the form.
+2) Show me a preview of the filled content.
+3) Submit only after I confirm "you may submit".
 ```
 
-### 2.5 网站控制台错误巡检任务（进阶）
+### 2.5 Website Console Error Audit
 
 ```text
-请巡检这个网站的前端错误：<站点URL>。
-要求：
-1) 访问这些核心页面：<页面列表>；
-2) 收集 console 中的 error/warning；
-3) 输出按页面分组的错误清单（含错误文本）。
+Audit frontend errors for this website: <site URL>.
+Requirements:
+1) Visit these core pages: <page list>.
+2) Collect console errors and warnings.
+3) Return an error list grouped by page, including the error text.
 ```
 
-### 2.6 页面截图与 PDF 归档任务（入门）
+### 2.6 Page Screenshot and PDF Archiving
 
 ```text
-请批量归档这些页面：<URL列表>。
-要求：
-1) 每个页面都保存 screenshot 和 PDF；
-2) 文件保存到目录：<目录路径>；
-3) 最后输出文件清单和保存结果。
+Archive these pages: <URL list>.
+Requirements:
+1) Save both a screenshot and a PDF for each page.
+2) Save files to this directory: <directory path>.
+3) Return the file list and save status.
 ```
 
-### 2.7 站点可用性巡检任务（入门）
+### 2.7 Site Availability Check
 
 ```text
-请巡检以下 URL 可用性：<URL列表>。
-要求：
-1) 检查是否可访问、是否异常跳转、是否超时；
-2) 输出每个 URL 的状态和异常原因；
-3) 给出总体可用性结论。
+Check availability for these URLs: <URL list>.
+Requirements:
+1) Check whether each URL is reachable, redirects unexpectedly, or times out.
+2) Return status and failure reason for each URL.
+3) Provide an overall availability conclusion.
 ```
 
-### 2.8 登录后半自动任务（人工登录，高风险）
+### 2.8 Semi-Automated Task After Login
 
 ```text
-我要做一个登录后任务：<任务描述>。
-请按下面流程执行：
-1) 先打开目标站点并提示我手动登录；
-2) 我确认“登录完成”后，你再继续执行后续步骤；
-3) 高风险动作（发布/删除/转账等）前必须再次征求我确认。
+I want to run a task after login: <task description>.
+Follow this flow:
+1) Open the target site and ask me to log in manually.
+2) Continue only after I confirm "login complete".
+3) Ask for confirmation again before any high-risk action such as publishing, deleting, or transferring money.
 ```

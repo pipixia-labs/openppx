@@ -1,31 +1,31 @@
-# MCP 与安全策略
+# MCP and Security Policy
 
-## MCP Tool Integration（最小接入）
+## MCP Tool Integration
 
-`openppx` 使用 ADK `McpToolset`，从 `tools.mcpServers` 读取服务配置。
+`openppx` uses ADK `McpToolset` and reads server definitions from `tools.mcpServers`.
 
-### 每个服务可配置字段
+### Per-Server Fields
 
-- `enabled`：可选，默认 `true`；设为 `false` 时跳过该 MCP 服务
-- `command` + `args` + `env`：stdio MCP 服务
-- `url`：远端 MCP 服务
-- `transport`：可选，`sse` / `http`
-- `headers`：远端请求头
-- `toolFilter`（或 `tool_filter`）：暴露工具白名单
-- `toolNamePrefix`（或 `tool_name_prefix`）：工具名前缀 stem；ADK 会在 prefix 与工具名之间自动加 `_`
-- `requireConfirmation`（或 `require_confirmation`）：调用确认
-- `runtimeHeaders`（或 `runtime_headers`）：把 ADK 运行时上下文按需映射为远端 MCP 请求头
-- `progressEvents`（或 `progress_events`）：是否把 MCP progress notification 转为 openppx step event，默认 `false`
-- `longTaskProxy`（或 `long_task_proxy`）：是否让 MCP 工具进入 openppx 长任务 proxy，默认 `true`
-- `inlineBudgetMs`（或 `inline_budget_ms`）：MCP 工具调用的内联等待预算，默认 `5000`
+- `enabled`: optional, defaults to `true`; set to `false` to skip that MCP server
+- `command` + `args` + `env`: stdio MCP server configuration
+- `url`: remote MCP server URL
+- `transport`: optional, `sse` or `http`
+- `headers`: remote request headers
+- `toolFilter` or `tool_filter`: tool allowlist exposed to the agent
+- `toolNamePrefix` or `tool_name_prefix`: tool-name prefix stem; ADK inserts `_` between the prefix and tool name
+- `requireConfirmation` or `require_confirmation`: per-tool confirmation policy
+- `runtimeHeaders` or `runtime_headers`: maps ADK runtime context into remote MCP request headers
+- `progressEvents` or `progress_events`: converts MCP progress notifications into openppx step events; defaults to `false`
+- `longTaskProxy` or `long_task_proxy`: routes MCP tools through the openppx long-task proxy; defaults to `true`
+- `inlineBudgetMs` or `inline_budget_ms`: inline wait budget for MCP calls; defaults to `5000`
 
-`runtimeHeaders` 默认关闭，避免把 user/session 等上下文静默发送给远端服务。支持的 source 包括：
+`runtimeHeaders` is disabled by default to avoid silently sending user/session context to remote services. Supported sources include:
 
-- `user_id`、`session_id`、`app_name`、`invocation_id`、`agent_name`
+- `user_id`, `session_id`, `app_name`, `invocation_id`, `agent_name`
 - `metadata.<key>` / `custom_metadata.<key>` / `run_metadata.<key>`
-- `state.<key>`、`session.<attr>`、`literal:<value>`
+- `state.<key>`, `session.<attr>`, `literal:<value>`
 
-示例：
+Example:
 
 ```json
 {
@@ -47,23 +47,23 @@
 }
 ```
 
-### MCP 长任务 proxy
+### MCP Long-Task Proxy
 
-`longTaskProxy` 默认开启后，openppx 会包装 ADK 返回的 MCP tools，而不是替换 ADK `McpToolset`。
+When `longTaskProxy` is enabled, openppx wraps MCP tools returned by ADK. It does not replace ADK `McpToolset`.
 
-当前语义：
+Current behavior:
 
-- MCP 调用在 `inlineBudgetMs` 内完成时，工具结果按原样 inline 返回。
-- 超过预算仍未完成时，工具返回 `task_id`，后台 coroutine 在当前进程内继续执行。
-- 后台完成或失败会更新 `TaskRun(kind=mcp)` 和 task events。
-- 当前进程内仍 attached 的 MCP proxy task 可以 best-effort `interrupt_task` / `cancel_task`。
-- 如果进程重启或后台 coroutine 不再 attached，任务会进入 `stale`，后续可收敛为 `lost`。
+- If the MCP call completes within `inlineBudgetMs`, the tool result is returned inline unchanged.
+- If it exceeds the budget, the tool returns a `task_id`, and a background coroutine continues in the current process.
+- Completion or failure updates `TaskRun(kind=mcp)` and task events.
+- MCP proxy tasks still attached to the current process can be interrupted or canceled on a best-effort basis.
+- If the process restarts or the background coroutine is no longer attached, the task enters `stale` and may later be converged to `lost`.
 
-这里没有承诺通用 MCP server-side cancel/status/checkpoint。只有当具体 MCP server 暴露明确 job 协议时，才适合继续接入 server-specific adapter。
+This does not promise generic server-side MCP cancel, status, or checkpoint semantics. Server-specific adapters should be added only when a concrete MCP server exposes an explicit job protocol.
 
-### MCP 外部 job protocol
+### MCP External Job Protocol
 
-如果某个 MCP server 的工具会快速返回外部 job id，可显式配置 `jobProtocol`：
+If an MCP server tool quickly returns an external job id, configure `jobProtocol` explicitly:
 
 ```json
 {
@@ -77,26 +77,26 @@
 }
 ```
 
-当前语义：
+Current behavior:
 
-- 只有配置了 `jobProtocol`，且原 MCP 工具结果能按 `jobIdPath` 取到 job id 时，openppx 才创建 external `TaskRun`。
-- `statusTool` 是必须项；没有它就不能声明可 rejoin 的外部 job。
-- `outputTool` / `cancelTool` 是可选项；未配置时不会伪造 output/cancel 能力。
-- `show_task` / scheduler 会通过 `statusTool` 更新任务状态；状态不可见时任务会进入 `stale`，而不是继续展示成普通 running。
-- `cancel_task` 只在 `cancelTool` 存在时展示并调用 provider cancel。
+- openppx creates an external `TaskRun` only when `jobProtocol` is configured and the original MCP result contains a job id at `jobIdPath`.
+- `statusTool` is required; without it, the job cannot be declared rejoinable.
+- `outputTool` and `cancelTool` are optional; missing tools do not create fake output or cancel capability.
+- `show_task` and the scheduler use `statusTool` to update task state. When status is invisible, the task becomes `stale` instead of being shown as a normal running task.
+- `cancel_task` is offered only when `cancelTool` exists.
 
-这里仍不承诺 checkpoint/resume，也不自动发现 MCP server 的 job 协议；协议必须由配置显式声明。
+This still does not promise checkpoint or resume behavior, and openppx does not auto-discover MCP job protocols. The protocol must be declared in configuration.
 
-### 最小验证流程
+### Minimal Validation Flow
 
-1. 在目标 Agent 的 `~/.openppx/<agent_name>/config.json` 配置 `tools.mcpServers`
-2. 执行 `ppx doctor` 查看服务健康状态与工具列表
-3. 启动 `ppx gateway run`
-4. 在对话中调用 MCP 工具（例如 `mcp_filesystem_...`）
+1. Configure `tools.mcpServers` in the target agent config at `~/.openppx/<agent_name>/config.json`.
+2. Run `ppx doctor` to inspect service health and the tool list.
+3. Start `ppx gateway run`.
+4. Call MCP tools in conversation, for example `mcp_filesystem_...`.
 
-### 内置 GUI MCP（推荐）
+### Built-In GUI MCP
 
-可将 GUI 能力作为独立 MCP 服务接入，便于统一权限控制：
+Expose GUI automation as an MCP service when you want centralized permission control:
 
 ```json
 {
@@ -114,53 +114,48 @@
 }
 ```
 
-- 工具名：`mcp_gui_gui_action`、`mcp_gui_gui_task`
-- `requireConfirmation=true` 可将高风险 GUI 执行纳入确认流
-- 细粒度动作控制仍由 GUI 环境变量生效（如 `OPENPPX_GUI_ALLOWED_ACTIONS`）
-- 建议同时设置 `OPENPPX_GUI_BUILTIN_TOOLS_ENABLED=0`，让 agent 仅通过 MCP GUI 工具执行
+- Tool names: `mcp_gui_gui_action`, `mcp_gui_gui_task`
+- `requireConfirmation=true` routes high-risk GUI execution through the confirmation flow.
+- Fine-grained action controls still come from GUI environment variables such as `OPENPPX_GUI_ALLOWED_ACTIONS`.
+- Set `OPENPPX_GUI_BUILTIN_TOOLS_ENABLED=0` if you want the agent to use GUI tools only through MCP.
 
-### 常用 MCP 环境变量
+### Common MCP Environment Variables
 
-| 变量 | 默认值 | 作用 |
+| Variable | Default | Purpose |
 |---|---|---|
-| `OPENPPX_MCP_DOCTOR_TIMEOUT_SECONDS` | `5`（范围 1..30） | `doctor` 对 MCP 健康检查超时 |
-| `OPENPPX_MCP_GATEWAY_TIMEOUT_SECONDS` | `5`（范围 1..30） | gateway 启动阶段 required MCP 检查超时 |
-| `OPENPPX_MCP_PROBE_RETRY_ATTEMPTS` | `2`（范围 1..5） | MCP 探测失败重试次数 |
-| `OPENPPX_MCP_PROBE_RETRY_BACKOFF_SECONDS` | `0.3`（范围 0..5） | MCP 探测重试退避基数（秒） |
-| `OPENPPX_MCP_REQUIRED_SERVERS` | 空 | 指定必须健康的 MCP 服务列表（逗号分隔） |
+| `OPENPPX_MCP_DOCTOR_TIMEOUT_SECONDS` | `5`, range `1..30` | MCP health-check timeout for `doctor` |
+| `OPENPPX_MCP_GATEWAY_TIMEOUT_SECONDS` | `5`, range `1..30` | Required MCP check timeout during gateway startup |
+| `OPENPPX_MCP_PROBE_RETRY_ATTEMPTS` | `2`, range `1..5` | MCP probe retry count |
+| `OPENPPX_MCP_PROBE_RETRY_BACKOFF_SECONDS` | `0.3`, range `0..5` | Base backoff for MCP probe retries |
+| `OPENPPX_MCP_REQUIRED_SERVERS` | empty | Comma-separated list of MCP servers that must be healthy |
 
-如果设置了 `OPENPPX_MCP_REQUIRED_SERVERS`，且某 required server 不可用，gateway 启动会失败（快速失败）。
+If `OPENPPX_MCP_REQUIRED_SERVERS` is set and any required server is unavailable, gateway startup fails fast.
 
-## 安全策略
+## Security Policy
 
-`openppx` 用统一策略约束文件、命令、网络能力。
+`openppx` uses one policy layer for file, command, and network capabilities.
 
-| 字段 | 默认值 | 说明 |
+| Field | Default | Description |
 |---|---|---|
-| `restrictToWorkspace` | `false` | 限制文件工具和 shell 路径参数在 `OPENPPX_WORKSPACE` 下 |
-| `allowExec` | `true` | 全局启用/禁用 `exec` 工具 |
-| `allowNetwork` | `true` | 全局启用/禁用 `web_search`/`web_fetch` |
-| `execAllowlist` | `[]` | 命令名白名单（空表示不额外限制） |
+| `restrictToWorkspace` | `false` | Restrict file tools and shell path arguments to `OPENPPX_WORKSPACE` |
+| `allowExec` | `true` | Enable or disable the `exec` tool globally |
+| `allowNetwork` | `true` | Enable or disable `web_search` / `web_fetch` globally |
+| `execAllowlist` | `[]` | Command-name allowlist; empty means no extra command-name restriction |
 
-补充：
+Additional notes:
 
-- `execAllowlist` 在链式命令下会逐段校验命令名（`&&` / `||` / `;`）
-- `exec` 默认 `shell=False`，减少 shell 注入面
+- `execAllowlist` validates each command segment in chained commands such as `&&`, `||`, and `;`.
+- `exec` defaults to `shell=False` to reduce shell injection risk.
 
-### Exec 运行时策略（新增）
+### Exec Runtime Policy
 
-`exec` 现在支持常见 shell 复合命令（如 `export ... && ...`），并可通过环境变量控制执行策略：
+`exec` supports common shell compound commands such as `export ... && ...` and can be controlled through environment variables:
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Description |
 |---|---|---|
-| `OPENPPX_EXEC_SECURITY` | 自动（有 allowlist 时=`allowlist`，否则=`full`） | 执行策略：`deny` / `allowlist` / `full` |
-| `OPENPPX_EXEC_SAFE_BINS` | 空 | 在 `allowlist` 模式下允许的额外命令名（逗号分隔） |
-| `OPENPPX_EXEC_ASK` | `off` | 审批策略：`off` / `on-miss` / `always` |
-| `OPENPPX_HIGH_RISK_ACTION_ACCESS` | `true` | 高风险工具策略：`true` 允许，`conditional` 走 ADK 确认，其他值禁用 |
+| `OPENPPX_EXEC_SECURITY` | automatic: `allowlist` when an allowlist exists, otherwise `full` | Execution policy: `deny`, `allowlist`, or `full` |
+| `OPENPPX_EXEC_SAFE_BINS` | empty | Extra command names allowed in `allowlist` mode |
+| `OPENPPX_EXEC_ASK` | `off` | Approval policy: `off`, `on-miss`, or `always` |
+| `OPENPPX_HIGH_RISK_ACTION_ACCESS` | `true` | High-risk tool policy: `true` allows, `conditional` asks for ADK confirmation, other values deny |
 
-在 root agent / gateway 路径中，`OPENPPX_EXEC_ASK` 和
-`OPENPPX_HIGH_RISK_ACTION_ACCESS=conditional` 会使用 ADK 原生
-`adk_request_confirmation` 暂停工具调用。用户回复 `yes` / `confirm` /
-`approve` 后继续执行，回复 `no` / `reject` / `cancel` 后拒绝执行。直接
-调用 Python 工具函数且没有 ADK `tool_context` 时仍会返回
-`approval required`，用于保持低层安全边界。
+In the root-agent and gateway paths, `OPENPPX_EXEC_ASK` and `OPENPPX_HIGH_RISK_ACTION_ACCESS=conditional` use ADK-native `adk_request_confirmation` to pause tool calls. The call continues after `yes`, `confirm`, or `approve`, and is rejected after `no`, `reject`, or `cancel`. Direct Python tool calls without ADK `tool_context` still return `approval required`, preserving the low-level safety boundary.

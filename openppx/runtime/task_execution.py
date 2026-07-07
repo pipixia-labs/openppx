@@ -709,6 +709,7 @@ class SkillApiRuntime:
             recipe.get("sandbox"),
             runner_name=runner_name,
             env=os.environ,
+            default_backend=os.getenv("OPENPPX_SKILL_API_SANDBOX"),
         )
 
     @staticmethod
