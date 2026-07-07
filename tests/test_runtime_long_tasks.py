@@ -324,6 +324,73 @@ class LongTaskRuntimeTests(unittest.TestCase):
                     scope_key="scope-1",
                 )
 
+    def test_skill_api_runtime_allows_python_sandbox_network_with_trusted_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_python_api_skill(
+                tmp,
+                "add",
+                {"module": "demo_sdk", "function": "add", "sandbox": {"required": True, "network": "enabled"}},
+                "def add(a, b):\n    return {'sum': a + b}\n",
+            )
+            os.environ["OPENPPX_SANDBOX_ALLOW_NETWORK"] = "1"
+
+            recipe = SkillApiRuntime().resolve(
+                skill_name="demo",
+                api_name="add",
+                args={"a": 2, "b": 3},
+                scope_key="scope-1",
+            )
+
+            self.assertEqual(recipe.argv[recipe.argv.index("--network") + 1], "bridge")
+            self.assertIn("openppx.network.approved=1", recipe.argv)
+            self.assertEqual(recipe.runner_payload["sandbox"]["network"], "enabled")
+
+    def test_skill_api_runtime_rejects_untrusted_sandbox_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_node_api_skill(
+                tmp,
+                "add",
+                {
+                    "module": "demo_node.cjs",
+                    "function": "add",
+                    "sandbox": {"required": True, "image": "registry.example/openppx-sandbox:tool"},
+                },
+                "exports.add = async function(args) { return {sum: args.a + args.b}; };\n",
+            )
+
+            with self.assertRaisesRegex(ValueError, "TRUSTED_IMAGES"):
+                SkillApiRuntime().resolve(
+                    skill_name="demo",
+                    api_name="add",
+                    args={"a": 2, "b": 3},
+                    scope_key="scope-1",
+                )
+
+    def test_skill_api_runtime_allows_trusted_sandbox_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_node_api_skill(
+                tmp,
+                "add",
+                {
+                    "module": "demo_node.cjs",
+                    "function": "add",
+                    "sandbox": {"required": True, "image": "registry.example/openppx-sandbox:tool"},
+                },
+                "exports.add = async function(args) { return {sum: args.a + args.b}; };\n",
+            )
+            os.environ["OPENPPX_SANDBOX_TRUSTED_IMAGES"] = "registry.example/openppx-sandbox:*"
+
+            recipe = SkillApiRuntime().resolve(
+                skill_name="demo",
+                api_name="add",
+                args={"a": 2, "b": 3},
+                scope_key="scope-1",
+            )
+
+            self.assertIn("openppx.image.approved=1", recipe.argv)
+            self.assertEqual(recipe.argv[-3], "registry.example/openppx-sandbox:tool")
+            self.assertEqual(recipe.runner_payload["sandbox"]["image"], "registry.example/openppx-sandbox:tool")
+
     def test_skill_api_runtime_resolves_command_recipe_without_length_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare_command_api_skill(

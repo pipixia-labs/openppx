@@ -23,6 +23,7 @@ from .plan import (
     ValidatedSandboxExecutionPlan,
 )
 from .profiles import read_only_profile, workspace_write_profile
+from .recipe_options import RecipeSandboxOptions, recipe_sandbox_declared, resolve_recipe_sandbox_options
 from .validation import (
     SandboxValidationError,
     resolve_backend,
@@ -42,6 +43,7 @@ __all__ = [
     "PathAccessMode",
     "PathGrant",
     "PermissionProfile",
+    "RecipeSandboxOptions",
     "ResourceLimits",
     "SandboxCommand",
     "SandboxDiagnostics",
@@ -57,8 +59,10 @@ __all__ = [
     "list_docker_sandbox_containers",
     "prune_docker_sandbox_containers",
     "read_only_profile",
+    "recipe_sandbox_declared",
     "resolve_backend",
     "resolve_network_mode",
+    "resolve_recipe_sandbox_options",
     "validate_sandbox_execution_plan",
     "workspace_write_profile",
 ]

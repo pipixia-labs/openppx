@@ -20,11 +20,13 @@ from openppx.runtime.sandbox import (
     ValidatedSandboxExecutionPlan,
     build_docker_run_spec,
     build_sandbox_diagnostics,
+    build_workspace_docker_sandbox,
     list_docker_sandbox_containers,
     prune_docker_sandbox_containers,
     read_only_profile,
     resolve_backend,
     resolve_network_mode,
+    resolve_recipe_sandbox_options,
     workspace_write_profile,
 )
 
@@ -244,6 +246,86 @@ class SandboxPhaseOneTests(unittest.TestCase):
                 labels={**plan.labels, "openppx.network.approved": "1"},
             )
             ValidatedSandboxExecutionPlan.from_plan(approved_plan)
+
+    def test_recipe_sandbox_options_gate_network_on_trusted_env(self) -> None:
+        with self.assertRaisesRegex(ValueError, "OPENPPX_SANDBOX_ALLOW_NETWORK"):
+            resolve_recipe_sandbox_options(
+                {"required": True, "network": "enabled"},
+                runner_name="Python",
+                env={},
+            )
+
+        options = resolve_recipe_sandbox_options(
+            {"required": True, "network": "enabled"},
+            runner_name="Python",
+            env={"OPENPPX_SANDBOX_ALLOW_NETWORK": "1"},
+        )
+
+        self.assertIsNotNone(options)
+        assert options is not None
+        self.assertEqual(options.network_mode, NetworkMode.ENABLED)
+        self.assertTrue(options.network_approved)
+        self.assertEqual(options.labels["openppx.network.approved"], "1")
+
+    def test_recipe_sandbox_options_gate_custom_image_on_allowlist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "TRUSTED_IMAGES"):
+            resolve_recipe_sandbox_options(
+                {"required": True, "image": "registry.example/openppx-sandbox:tool"},
+                runner_name="Node",
+                env={},
+            )
+
+        options = resolve_recipe_sandbox_options(
+            {"required": True, "image": "registry.example/openppx-sandbox:tool"},
+            runner_name="Node",
+            env={"OPENPPX_SANDBOX_TRUSTED_IMAGES": "registry.example/openppx-sandbox:*"},
+        )
+
+        self.assertIsNotNone(options)
+        assert options is not None
+        self.assertEqual(options.image, "registry.example/openppx-sandbox:tool")
+        self.assertEqual(options.labels["openppx.image.approved"], "1")
+
+    def test_workspace_docker_sandbox_can_enable_approved_network_and_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp).resolve()
+            sandbox = build_workspace_docker_sandbox(
+                command_argv=["python", "--version"],
+                workspace=workspace,
+                cwd=workspace,
+                timeout_seconds=10,
+                image="registry.example/openppx-sandbox:tool",
+                network_mode=NetworkMode.ENABLED,
+                network_approved=True,
+                labels={"openppx.tool": "test"},
+            )
+
+        argv = sandbox.argv
+        self.assertIn("--network", argv)
+        self.assertEqual(argv[argv.index("--network") + 1], "bridge")
+        self.assertIn("--label", argv)
+        self.assertIn("openppx.network.approved=1", argv)
+        self.assertEqual(argv[-3:], ["registry.example/openppx-sandbox:tool", "python", "--version"])
+
+    def test_workspace_docker_sandbox_network_lock_overrides_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            "os.environ",
+            {"OPENPPX_SANDBOX_NETWORK_LOCK": "disabled"},
+            clear=False,
+        ):
+            workspace = Path(tmp).resolve()
+            sandbox = build_workspace_docker_sandbox(
+                command_argv=["python", "--version"],
+                workspace=workspace,
+                cwd=workspace,
+                timeout_seconds=10,
+                network_mode=NetworkMode.ENABLED,
+                network_approved=True,
+            )
+
+        argv = sandbox.argv
+        self.assertIn("--network", argv)
+        self.assertEqual(argv[argv.index("--network") + 1], "none")
 
     def test_grant_can_disallow_symlink_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

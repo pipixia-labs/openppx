@@ -12,6 +12,8 @@ from typing import Mapping
 from .docker_backend import DockerSandboxConfig, DockerRunSpec, build_docker_run_spec
 from .plan import (
     FileSystemPolicy,
+    NetworkMode,
+    NetworkPolicy,
     PathAccessMode,
     PathGrant,
     ResourceLimits,
@@ -21,6 +23,7 @@ from .plan import (
     ValidatedSandboxExecutionPlan,
 )
 from .profiles import workspace_write_profile
+from .validation import resolve_network_mode
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +50,8 @@ def build_workspace_docker_sandbox(
     readonly_mounts: Mapping[str, Path] | None = None,
     docker_bin: str | None = None,
     image: str | None = None,
+    network_mode: NetworkMode | None = None,
+    network_approved: bool = False,
 ) -> WorkspaceDockerSandbox:
     """Build a validated Docker sandbox command for a workspace execution."""
     root = workspace.resolve(strict=False)
@@ -65,6 +70,21 @@ def build_workspace_docker_sandbox(
         profile,
         limits=_resource_limits_from_env(replace(profile.limits, timeout_seconds=cap)),
     )
+    network_lock = _network_lock_from_env()
+    if network_mode is not None or network_lock is not None:
+        resolved_network = resolve_network_mode(
+            default_mode=profile.network.mode,
+            requested_mode=network_mode,
+            lock_mode=network_lock,
+            approved=network_approved,
+        )
+        profile = replace(profile, network=NetworkPolicy(mode=resolved_network, lock=network_lock))
+    plan_labels = {
+        "openppx.run_id": uuid.uuid4().hex,
+        **{str(k): str(v) for k, v in (labels or {}).items()},
+    }
+    if network_approved:
+        plan_labels["openppx.network.approved"] = "1"
     plan = SandboxExecutionPlan(
         command=SandboxCommand(argv=tuple(command_argv)),
         profile=profile,
@@ -75,10 +95,7 @@ def build_workspace_docker_sandbox(
         env={str(k): str(v) for k, v in (env or {}).items()},
         cwd=str(cwd.resolve(strict=False)),
         stdin=stdin,
-        labels={
-            "openppx.run_id": uuid.uuid4().hex,
-            **{str(k): str(v) for k, v in (labels or {}).items()},
-        },
+        labels=plan_labels,
     )
     validated = ValidatedSandboxExecutionPlan.from_plan(plan)
     resolved_docker_bin = docker_bin or os.getenv("OPENPPX_SANDBOX_DOCKER_BIN", "").strip() or "docker"
@@ -200,6 +217,13 @@ def _resource_limits_from_env(defaults: ResourceLimits) -> ResourceLimits:
         pids_limit=_env_int("OPENPPX_SANDBOX_PIDS_LIMIT", defaults.pids_limit),
         tmpfs_size=_env_string("OPENPPX_SANDBOX_TMPFS_SIZE", defaults.tmpfs_size),
     )
+
+
+def _network_lock_from_env() -> NetworkMode | None:
+    raw = os.getenv("OPENPPX_SANDBOX_NETWORK_LOCK", "").strip().lower()
+    if raw in {"1", "true", "yes", "disabled", "none", "no-network", "network-none"}:
+        return NetworkMode.DISABLED
+    return None
 
 
 def _env_string(name: str, default: str) -> str:

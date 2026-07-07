@@ -21,10 +21,11 @@ from openppx.runtime.api_runner_payload import (
     load_recipe_from_payload_or_env,
 )
 from openppx.runtime.sandbox import (
+    RecipeSandboxOptions,
     WorkspaceDockerSandbox,
     build_workspace_docker_sandbox,
     cleanup_docker_sandbox_container,
-    resolve_backend,
+    resolve_recipe_sandbox_options,
 )
 
 
@@ -41,12 +42,12 @@ def main() -> int:
         payload = load_api_runner_payload()
         recipe = _load_recipe(payload)
         args_payload = _load_args(payload)
-        sandbox_backend = _recipe_sandbox_backend(recipe)
+        sandbox_options = _recipe_sandbox_options(recipe)
         argv = _render_argv(recipe, args_payload)
         stdin = _render_stdin(recipe, args_payload)
         timeout = _timeout_seconds(recipe)
         output_max_bytes = _output_max_bytes(recipe)
-        if sandbox_backend == "docker":
+        if sandbox_options is not None:
             docker_sandbox = build_workspace_docker_sandbox(
                 command_argv=argv,
                 workspace=Path(os.getcwd()),
@@ -55,7 +56,14 @@ def main() -> int:
                 timeout_cap_seconds=_sandbox_timeout_cap_seconds(),
                 stdin=stdin,
                 env=_render_env(recipe, args_payload, inherit_host_env=False),
-                labels={"openppx.tool": "command_api", "openppx.runner": "command_api"},
+                labels={
+                    "openppx.tool": "command_api",
+                    "openppx.runner": "command_api",
+                    **sandbox_options.labels,
+                },
+                image=sandbox_options.image,
+                network_mode=sandbox_options.network_mode,
+                network_approved=sandbox_options.network_approved,
             )
             returncode = _run_streaming_command(
                 argv=docker_sandbox.argv,
@@ -154,37 +162,12 @@ def _render_stdin(recipe: dict[str, Any], args_payload: Any) -> str | None:
     return str(value)
 
 
-def _recipe_sandbox_backend(recipe: dict[str, Any]) -> str:
-    raw = recipe.get("sandbox")
-    if raw in (None, False):
-        return ""
-    if isinstance(raw, str) and raw.strip().lower() in {"", "0", "false", "none", "off"}:
-        return ""
-    if raw is True:
-        requested = "docker"
-        sandbox_options: dict[str, Any] = {}
-    elif isinstance(raw, str):
-        requested = raw.strip().lower()
-        sandbox_options = {}
-    elif isinstance(raw, dict):
-        sandbox_options = raw
-        required = bool(raw.get("required", False))
-        requested = str(raw.get("backend", "") or ("docker" if required else "")).strip().lower()
-        if not requested:
-            return ""
-    else:
-        raise ValueError("Command API recipe sandbox must be a string, boolean, or object")
-
-    if str(sandbox_options.get("network", "disabled") or "disabled").strip().lower() not in {"disabled", "none"}:
-        raise ValueError("Command API sandbox network enablement requires approval and is not implemented")
-    if str(sandbox_options.get("image", "") or "").strip():
-        raise ValueError("Command API recipe sandbox.image is not supported yet")
-
-    configured = os.getenv("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
-    backend = resolve_backend(configured_backend=configured, requested_backend=requested)
-    if backend != "docker":
-        raise ValueError("Command API sandbox currently supports only docker")
-    return backend
+def _recipe_sandbox_options(recipe: dict[str, Any]) -> RecipeSandboxOptions | None:
+    return resolve_recipe_sandbox_options(
+        recipe.get("sandbox"),
+        runner_name="Command",
+        env=os.environ,
+    )
 
 
 def _sandbox_timeout_cap_seconds() -> int:

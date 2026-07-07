@@ -85,6 +85,64 @@ class CommandApiRunnerTests(unittest.TestCase):
         self.assertFalse(emitted["ok"])
         self.assertIn("network enablement", emitted["error"])
 
+    def test_main_allows_sandbox_network_enablement_with_trusted_env(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run_streaming_command(**kwargs):
+            captured.update(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe = {
+                "argv": ["echo", "hello"],
+                "allow_system_executable": True,
+                "sandbox": {"required": True, "network": "enabled"},
+            }
+            os.environ["OPENPPX_COMMAND_API_RECIPE_JSON"] = json.dumps(recipe)
+            os.environ["OPENPPX_SANDBOX_ALLOW_NETWORK"] = "1"
+
+            with (
+                patch("openppx.runtime.command_api_runner._run_streaming_command", side_effect=_fake_run_streaming_command),
+                patch("os.getcwd", return_value=tmp),
+            ):
+                exit_code = command_api_runner.main()
+
+        self.assertEqual(exit_code, 0)
+        argv = captured["argv"]
+        self.assertIsInstance(argv, list)
+        assert isinstance(argv, list)
+        self.assertEqual(argv[argv.index("--network") + 1], "bridge")
+        self.assertIn("openppx.network.approved=1", argv)
+
+    def test_main_allows_recipe_image_from_trusted_allowlist(self) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_run_streaming_command(**kwargs):
+            captured.update(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            recipe = {
+                "argv": ["echo", "hello"],
+                "allow_system_executable": True,
+                "sandbox": {"required": True, "image": "registry.example/openppx-sandbox:tool"},
+            }
+            os.environ["OPENPPX_COMMAND_API_RECIPE_JSON"] = json.dumps(recipe)
+            os.environ["OPENPPX_SANDBOX_TRUSTED_IMAGES"] = "registry.example/openppx-sandbox:*"
+
+            with (
+                patch("openppx.runtime.command_api_runner._run_streaming_command", side_effect=_fake_run_streaming_command),
+                patch("os.getcwd", return_value=tmp),
+            ):
+                exit_code = command_api_runner.main()
+
+        self.assertEqual(exit_code, 0)
+        argv = captured["argv"]
+        self.assertIsInstance(argv, list)
+        assert isinstance(argv, list)
+        self.assertIn("openppx.image.approved=1", argv)
+        self.assertEqual(argv[-3:], ["registry.example/openppx-sandbox:tool", "echo", "hello"])
+
     def test_main_loads_combined_payload_from_env(self) -> None:
         captured: dict[str, object] = {}
 

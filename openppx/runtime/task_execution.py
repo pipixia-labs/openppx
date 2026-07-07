@@ -38,10 +38,12 @@ from .checkpoint_schema import normalize_task_checkpoint_payload
 from .context_engine import ContextSummary, LongTaskContextStore
 from .process_sessions import get_process_session_manager
 from .sandbox import (
+    RecipeSandboxOptions,
     SandboxValidationError,
     build_workspace_docker_sandbox,
     cleanup_docker_sandbox_container,
-    resolve_backend,
+    recipe_sandbox_declared,
+    resolve_recipe_sandbox_options,
 )
 from .mcp_proxy import cancel_mcp_proxy_task
 from .mcp_proxy import is_mcp_proxy_task_active
@@ -354,12 +356,12 @@ class SkillApiRuntime:
             "recipe_runner": spec.name,
             "api_recipe": recipe_path.relative_to(skill_root).as_posix(),
         }
-        sandbox_backend = ""
+        sandbox_options: RecipeSandboxOptions | None = None
         if spec.name in {"python", "node"}:
-            sandbox_backend = cls._recipe_sandbox_backend(recipe, runner_name=spec.name)
+            sandbox_options = cls._recipe_sandbox_options(recipe, runner_name=spec.name)
         elif spec.name != "command" and cls._recipe_sandbox_declared(recipe):
             raise ValueError(f"{spec.name} API sandbox is not supported yet")
-        if sandbox_backend:
+        if sandbox_options is not None:
             try:
                 docker_sandbox = build_workspace_docker_sandbox(
                     command_argv=["python", str(runner_path)],
@@ -369,8 +371,15 @@ class SkillApiRuntime:
                     timeout_cap_seconds=cls._api_sandbox_timeout_cap_seconds(),
                     stdin=payload_json,
                     env={PAYLOAD_STDIN_ENV: "1"},
-                    labels={"openppx.tool": "skill_api", "openppx.runner": spec.logical_runner},
+                    labels={
+                        "openppx.tool": "skill_api",
+                        "openppx.runner": spec.logical_runner,
+                        **sandbox_options.labels,
+                    },
                     readonly_mounts={"openppx-runtime": runner_path.parent},
+                    image=sandbox_options.image,
+                    network_mode=sandbox_options.network_mode,
+                    network_approved=sandbox_options.network_approved,
                 )
             except SandboxValidationError as exc:
                 raise ValueError(f"failed to validate {spec.name} API sandbox plan: {exc}") from exc
@@ -389,6 +398,8 @@ class SkillApiRuntime:
                     "backend": "docker",
                     "container_name": docker_sandbox.container_name,
                     "timeout_seconds": docker_sandbox.timeout_seconds,
+                    "network": sandbox_options.network_mode.value,
+                    "image": sandbox_options.image or "",
                 },
             }
         return ExecutionRecipe(
@@ -690,47 +701,15 @@ class SkillApiRuntime:
 
     @staticmethod
     def _recipe_sandbox_declared(recipe: dict[str, Any]) -> bool:
-        raw = recipe.get("sandbox")
-        if raw in (None, False):
-            return False
-        if isinstance(raw, str) and raw.strip().lower() in {"", "0", "false", "none", "off"}:
-            return False
-        if isinstance(raw, dict):
-            return bool(raw.get("required", False) or str(raw.get("backend", "")).strip())
-        return True
+        return recipe_sandbox_declared(recipe.get("sandbox"))
 
     @staticmethod
-    def _recipe_sandbox_backend(recipe: dict[str, Any], *, runner_name: str) -> str:
-        raw = recipe.get("sandbox")
-        if raw in (None, False):
-            return ""
-        if isinstance(raw, str) and raw.strip().lower() in {"", "0", "false", "none", "off"}:
-            return ""
-        if raw is True:
-            requested = "docker"
-            sandbox_options: dict[str, Any] = {}
-        elif isinstance(raw, str):
-            requested = raw.strip().lower()
-            sandbox_options = {}
-        elif isinstance(raw, dict):
-            sandbox_options = raw
-            required = bool(raw.get("required", False))
-            requested = str(raw.get("backend", "") or ("docker" if required else "")).strip().lower()
-            if not requested:
-                return ""
-        else:
-            raise ValueError(f"{runner_name} API recipe sandbox must be a string, boolean, or object")
-
-        if str(sandbox_options.get("network", "disabled") or "disabled").strip().lower() not in {"disabled", "none"}:
-            raise ValueError(f"{runner_name} API sandbox network enablement requires approval and is not implemented")
-        if str(sandbox_options.get("image", "") or "").strip():
-            raise ValueError(f"{runner_name} API recipe sandbox.image is not supported yet")
-
-        configured = os.getenv("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
-        backend = resolve_backend(configured_backend=configured, requested_backend=requested)
-        if backend != "docker":
-            raise ValueError(f"{runner_name} API sandbox currently supports only docker")
-        return backend
+    def _recipe_sandbox_options(recipe: dict[str, Any], *, runner_name: str) -> RecipeSandboxOptions | None:
+        return resolve_recipe_sandbox_options(
+            recipe.get("sandbox"),
+            runner_name=runner_name,
+            env=os.environ,
+        )
 
     @staticmethod
     def _recipe_timeout_seconds(recipe: dict[str, Any]) -> float | None:

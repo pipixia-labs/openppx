@@ -173,6 +173,31 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
         self.assertIn('"sum":5', normalized)
         self.assertIn('"envSecretVisible":false', normalized)
 
+    def test_real_docker_command_api_allows_trusted_network_and_image_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_command_api_skill(
+                tmp,
+                "inspect",
+                {
+                    "argv": [
+                        "python",
+                        "-c",
+                        "from pathlib import Path; print('visible=' + str('SECRET_VALUE' in Path('.env').read_text()))",
+                    ],
+                    "allow_system_executable": True,
+                    "sandbox": {"required": True, "network": "enabled", "image": self.image},
+                },
+            )
+            os.environ["OPENPPX_SANDBOX_DOCKER_BIN"] = self.docker_bin
+            os.environ["OPENPPX_SANDBOX_IMAGE"] = self.image
+            os.environ["OPENPPX_SANDBOX_ALLOW_NETWORK"] = "1"
+
+            payload = json.loads(invoke_skill_api("demo", "inspect", args={}, inline_budget_ms=20_000))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "inline")
+        self.assertIn("visible=False", payload["output"])
+
     def _prepare_python_api_skill(
         self,
         tmp: str,
@@ -194,6 +219,15 @@ class DockerSandboxIntegrationTests(unittest.TestCase):
         skill_dir = self._prepare_skill_dir(tmp)
         (skill_dir / "demo_node.cjs").write_text(module_source, encoding="utf-8")
         (skill_dir / "apis" / f"{api_name}.node.json").write_text(json.dumps(recipe), encoding="utf-8")
+
+    def _prepare_command_api_skill(
+        self,
+        tmp: str,
+        api_name: str,
+        recipe: dict[str, object],
+    ) -> None:
+        skill_dir = self._prepare_skill_dir(tmp)
+        (skill_dir / "apis" / f"{api_name}.command.json").write_text(json.dumps(recipe), encoding="utf-8")
 
     def _prepare_skill_dir(self, tmp: str) -> Path:
         root = Path(tmp)
