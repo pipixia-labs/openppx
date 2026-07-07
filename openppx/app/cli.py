@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import datetime as dt
 import importlib.util
 import json
@@ -18,7 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Iterator, Literal
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -230,6 +231,9 @@ def _cmd_sandbox_build_image(
     docker_bin: str,
     no_cache: bool = False,
     base_image: str = "python:3.14-slim",
+    python_requirements: str | None = None,
+    node_package_json: str | None = None,
+    node_package_lock: str | None = None,
 ) -> int:
     """Build the local Docker sandbox image."""
     dockerfile = _sandbox_dockerfile_path()
@@ -237,22 +241,32 @@ def _cmd_sandbox_build_image(
         _stdout_line(f"Sandbox Dockerfile not found: {dockerfile}")
         return 1
     resolved_base_image = str(base_image or "").strip() or "python:3.14-slim"
-    argv = [
-        docker_bin,
-        "build",
-        "-t",
-        image,
-        "-f",
-        str(dockerfile),
-        "--build-arg",
-        f"PYTHON_BASE_IMAGE={resolved_base_image}",
-    ]
-    if no_cache:
-        argv.append("--no-cache")
-    argv.append(str(dockerfile.parents[2]))
-    _stdout_line(f"Building sandbox image {image} from {dockerfile} with base {resolved_base_image}")
+    build_context = _sandbox_build_context(
+        dockerfile=dockerfile,
+        python_requirements=python_requirements,
+        node_package_json=node_package_json,
+        node_package_lock=node_package_lock,
+    )
     try:
-        completed = subprocess.run(argv, check=False)
+        with build_context as (context_dir, effective_dockerfile):
+            argv = [
+                docker_bin,
+                "build",
+                "-t",
+                image,
+                "-f",
+                str(effective_dockerfile),
+                "--build-arg",
+                f"PYTHON_BASE_IMAGE={resolved_base_image}",
+            ]
+            if no_cache:
+                argv.append("--no-cache")
+            argv.append(str(context_dir))
+            _stdout_line(f"Building sandbox image {image} from {effective_dockerfile} with base {resolved_base_image}")
+            completed = subprocess.run(argv, check=False)
+    except ValueError as exc:
+        _stdout_line(str(exc))
+        return 1
     except FileNotFoundError:
         _stdout_line(f"Docker CLI not found: {docker_bin}")
         return 1
@@ -263,6 +277,96 @@ def _cmd_sandbox_build_image(
             "`--base-image <local-or-mirror-python-image>` or set OPENPPX_SANDBOX_PYTHON_BASE_IMAGE."
         )
     return returncode
+
+
+@contextlib.contextmanager
+def _sandbox_build_context(
+    *,
+    dockerfile: Path,
+    python_requirements: str | None = None,
+    node_package_json: str | None = None,
+    node_package_lock: str | None = None,
+) -> Iterator[tuple[Path, Path]]:
+    """Yield a Docker build context, extending it with trusted dependency files when requested."""
+    requirements_path = _optional_existing_file(python_requirements, label="Python requirements")
+    package_json_path = _optional_existing_file(node_package_json, label="Node package.json")
+    package_lock_path = _optional_existing_file(node_package_lock, label="Node package lock")
+    if package_lock_path is not None and package_json_path is None:
+        raise ValueError("Node package lock requires --node-package-json")
+    if requirements_path is None and package_json_path is None:
+        yield dockerfile.parents[2], dockerfile
+        return
+
+    with tempfile.TemporaryDirectory(prefix="openppx-sandbox-build-") as tmp:
+        context_dir = Path(tmp)
+        generated_dockerfile = context_dir / "Dockerfile"
+        dockerfile_text = dockerfile.read_text(encoding="utf-8")
+        generated_dockerfile.write_text(
+            "\n".join(
+                [
+                    dockerfile_text.rstrip(),
+                    *_dependency_dockerfile_chunks(
+                        context_dir=context_dir,
+                        python_requirements=requirements_path,
+                        node_package_json=package_json_path,
+                        node_package_lock=package_lock_path,
+                    ),
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        yield context_dir, generated_dockerfile
+
+
+def _dependency_dockerfile_chunks(
+    *,
+    context_dir: Path,
+    python_requirements: Path | None,
+    node_package_json: Path | None,
+    node_package_lock: Path | None,
+) -> list[str]:
+    """Copy trusted dependency manifests and return Dockerfile instructions."""
+    chunks: list[str] = []
+    if python_requirements is not None:
+        shutil.copy2(python_requirements, context_dir / "requirements.txt")
+        chunks.extend(
+            [
+                "COPY requirements.txt /tmp/openppx-sandbox-requirements.txt",
+                "RUN python -m pip install --no-cache-dir -r /tmp/openppx-sandbox-requirements.txt",
+            ]
+        )
+    if node_package_json is not None:
+        shutil.copy2(node_package_json, context_dir / "package.json")
+        copy_files = "package.json"
+        install_command = "npm install --omit=dev"
+        if node_package_lock is not None:
+            shutil.copy2(node_package_lock, context_dir / "package-lock.json")
+            copy_files = "package.json package-lock.json"
+            install_command = "npm ci --omit=dev"
+        chunks.extend(
+            [
+                "WORKDIR /opt/openppx-sandbox-node",
+                f"COPY {copy_files} ./",
+                f"RUN {install_command}",
+                "ENV NODE_PATH=/opt/openppx-sandbox-node/node_modules",
+                "WORKDIR /",
+            ]
+        )
+    return chunks
+
+
+def _optional_existing_file(raw_path: str | None, *, label: str) -> Path | None:
+    """Resolve an optional CLI path and require it to point at an existing file."""
+    if raw_path is None:
+        return None
+    text = str(raw_path).strip()
+    if not text:
+        return None
+    path = Path(text).expanduser().resolve(strict=False)
+    if not path.is_file():
+        raise ValueError(f"{label} file not found: {path}")
+    return path
 
 
 def _cmd_sandbox_prune(*, docker_bin: str) -> int:
@@ -4476,6 +4580,21 @@ def main(argv: list[str] | None = None) -> None:
         default=os.getenv("OPENPPX_SANDBOX_PYTHON_BASE_IMAGE", "python:3.14-slim"),
         help="Python base image for the sandbox Dockerfile. Defaults to OPENPPX_SANDBOX_PYTHON_BASE_IMAGE or python:3.14-slim.",
     )
+    sandbox_build_parser.add_argument(
+        "--python-requirements",
+        default=os.getenv("OPENPPX_SANDBOX_PYTHON_REQUIREMENTS"),
+        help="Optional requirements.txt copied into the sandbox image and installed with pip.",
+    )
+    sandbox_build_parser.add_argument(
+        "--node-package-json",
+        default=os.getenv("OPENPPX_SANDBOX_NODE_PACKAGE_JSON"),
+        help="Optional package.json copied into the sandbox image and installed with npm.",
+    )
+    sandbox_build_parser.add_argument(
+        "--node-package-lock",
+        default=os.getenv("OPENPPX_SANDBOX_NODE_PACKAGE_LOCK"),
+        help="Optional package-lock.json used with --node-package-json for npm ci.",
+    )
     sandbox_prune_parser = sandbox_subparsers.add_parser(
         "prune",
         help="Remove Docker containers labeled as openppx sandbox runs.",
@@ -5080,6 +5199,9 @@ def main(argv: list[str] | None = None) -> None:
                 docker_bin=args.docker_bin,
                 no_cache=args.no_cache,
                 base_image=args.base_image,
+                python_requirements=args.python_requirements,
+                node_package_json=args.node_package_json,
+                node_package_lock=args.node_package_lock,
             )
             if args.sandbox_action == "build-image"
             else _cmd_sandbox_prune(docker_bin=args.docker_bin)

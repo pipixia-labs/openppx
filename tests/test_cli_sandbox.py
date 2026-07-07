@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -89,6 +90,49 @@ class SandboxCliTests(unittest.TestCase):
         self.assertTrue(dockerfile.is_file())
         self.assertEqual(dockerfile.name, "Dockerfile")
 
+    def test_sandbox_build_image_extends_context_with_dependency_files(self) -> None:
+        completed = mock.Mock(returncode=0)
+        captured: dict[str, object] = {}
+
+        def _fake_run(argv: list[str], check: bool = False):
+            _ = check
+            dockerfile = Path(argv[argv.index("-f") + 1])
+            context_dir = Path(argv[-1])
+            captured["argv"] = argv
+            captured["dockerfile_text"] = dockerfile.read_text(encoding="utf-8")
+            captured["context_files"] = sorted(path.name for path in context_dir.iterdir())
+            return completed
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            requirements = root / "requirements.txt"
+            package_json = root / "package.json"
+            package_lock = root / "package-lock.json"
+            requirements.write_text("requests==2.32.0\n", encoding="utf-8")
+            package_json.write_text('{"dependencies":{"left-pad":"1.3.0"}}\n', encoding="utf-8")
+            package_lock.write_text('{"lockfileVersion":3}\n', encoding="utf-8")
+
+            with (
+                mock.patch.object(cli.subprocess, "run", side_effect=_fake_run),
+                mock.patch.object(cli, "_stdout_line"),
+            ):
+                code = cli._cmd_sandbox_build_image(
+                    image="openppx-sandbox:test",
+                    docker_bin="dockerx",
+                    python_requirements=str(requirements),
+                    node_package_json=str(package_json),
+                    node_package_lock=str(package_lock),
+                )
+
+        self.assertEqual(code, 0)
+        self.assertIn("requirements.txt", captured["context_files"])
+        self.assertIn("package.json", captured["context_files"])
+        self.assertIn("package-lock.json", captured["context_files"])
+        dockerfile_text = str(captured["dockerfile_text"])
+        self.assertIn("python -m pip install --no-cache-dir", dockerfile_text)
+        self.assertIn("npm ci --omit=dev", dockerfile_text)
+        self.assertIn("NODE_PATH=/opt/openppx-sandbox-node/node_modules", dockerfile_text)
+
     def test_sandbox_build_image_reports_missing_docker_cli(self) -> None:
         with (
             mock.patch.object(cli.subprocess, "run", side_effect=FileNotFoundError),
@@ -115,6 +159,41 @@ class SandboxCliTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("--base-image", mocked_stdout.call_args.args[0])
+
+    def test_sandbox_build_image_rejects_missing_dependency_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-requirements.txt"
+            with (
+                mock.patch.object(cli.subprocess, "run") as mocked_run,
+                mock.patch.object(cli, "_stdout_line") as mocked_stdout,
+            ):
+                code = cli._cmd_sandbox_build_image(
+                    image="openppx-sandbox:test",
+                    docker_bin="dockerx",
+                    python_requirements=str(missing),
+                )
+
+        self.assertEqual(code, 1)
+        mocked_run.assert_not_called()
+        self.assertIn("file not found", mocked_stdout.call_args.args[0])
+
+    def test_sandbox_build_image_rejects_node_lock_without_package_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package_lock = Path(tmp) / "package-lock.json"
+            package_lock.write_text('{"lockfileVersion":3}\n', encoding="utf-8")
+            with (
+                mock.patch.object(cli.subprocess, "run") as mocked_run,
+                mock.patch.object(cli, "_stdout_line") as mocked_stdout,
+            ):
+                code = cli._cmd_sandbox_build_image(
+                    image="openppx-sandbox:test",
+                    docker_bin="dockerx",
+                    node_package_lock=str(package_lock),
+                )
+
+        self.assertEqual(code, 1)
+        mocked_run.assert_not_called()
+        self.assertIn("--node-package-json", mocked_stdout.call_args.args[0])
 
     def test_sandbox_prune_removes_labeled_containers(self) -> None:
         with (
@@ -158,6 +237,12 @@ class SandboxCliTests(unittest.TestCase):
                         "--no-cache",
                         "--base-image",
                         "registry.example/python:3.14-slim",
+                        "--python-requirements",
+                        "requirements.txt",
+                        "--node-package-json",
+                        "package.json",
+                        "--node-package-lock",
+                        "package-lock.json",
                     ]
                 )
 
@@ -167,6 +252,9 @@ class SandboxCliTests(unittest.TestCase):
             docker_bin="dockerx",
             no_cache=True,
             base_image="registry.example/python:3.14-slim",
+            python_requirements="requirements.txt",
+            node_package_json="package.json",
+            node_package_lock="package-lock.json",
         )
 
     def test_main_dispatches_sandbox_prune(self) -> None:
