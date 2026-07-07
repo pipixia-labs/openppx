@@ -21,7 +21,7 @@ from ..gui.job_coordinator import gui_task_job_output
 from ..gui.job_coordinator import gui_task_job_status
 from ..gui.job_coordinator import resume_gui_task_job
 from .artifact_service import load_artifact_config
-from .api_runner_payload import PAYLOAD_JSON_ENV, build_api_runner_payload_json
+from .api_runner_payload import PAYLOAD_JSON_ENV, PAYLOAD_STDIN_ENV, build_api_runner_payload_json
 from .browser_remote_provider import BrowserRemoteJob
 from .browser_remote_provider import BrowserRemoteProviderStore
 from .browser_remote_provider import browser_remote_job_payload
@@ -134,6 +134,7 @@ class ExecutionRecipe:
     cwd: Path
     env: dict[str, str]
     scope_key: str | None
+    stdin: str | bytes | None = None
     use_pty: bool = False
     task_kind: str = "skill_api"
     runner_payload: dict[str, Any] = field(default_factory=dict)
@@ -332,7 +333,9 @@ class SkillApiRuntime:
         env[spec.env_var] = json.dumps(recipe, ensure_ascii=False, default=str)
         if args is not None:
             env["OPENPPX_SKILL_ARGS_JSON"] = json.dumps(args, ensure_ascii=False, default=str)
-        env[PAYLOAD_JSON_ENV] = build_api_runner_payload_json(recipe=recipe, args=args)
+        payload_json = build_api_runner_payload_json(recipe=recipe, args=args)
+        env.pop(PAYLOAD_JSON_ENV, None)
+        env[PAYLOAD_STDIN_ENV] = "1"
         argv = [sys.executable, str(Path(__file__).with_name(spec.runner_filename))]
         return ExecutionRecipe(
             title=f"{skill_name}:{api_name}",
@@ -341,6 +344,7 @@ class SkillApiRuntime:
             cwd=skill_root,
             env=env,
             scope_key=scope_key,
+            stdin=payload_json,
             use_pty=False,
             task_kind="api_call",
             runner_payload={
@@ -764,6 +768,11 @@ class ProcessExecutionSupervisor:
             use_pty=recipe.use_pty,
             scope_key=recipe.scope_key,
         )
+        stdin_error = _send_initial_stdin(session, recipe.stdin)
+        if stdin_error:
+            manager.remove_session(session.session_id, scope_key=recipe.scope_key)
+            self.tool_call_store.settle(idempotency_key, status="failed", error=stdin_error)
+            return ExecutionResult(mode="error", status="failed", error=stdin_error)
         wait_ms = _normalize_inline_budget_ms(inline_budget_ms)
         polled = _poll_until_budget(
             session_id=session.session_id,
@@ -4083,6 +4092,24 @@ def _normalize_inline_budget_ms(value: int | None) -> int:
     except Exception:
         return DEFAULT_INLINE_BUDGET_MS
     return max(0, min(parsed, MAX_INLINE_BUDGET_MS))
+
+
+def _send_initial_stdin(session: Any, stdin: str | bytes | None) -> str | None:
+    """Write one startup stdin payload and close the child stdin."""
+    if stdin is None:
+        return None
+    writer = getattr(session, "write_stdin", None)
+    closer = getattr(session, "close_stdin", None)
+    if writer is None:
+        return "process stdin is not writable"
+    data = stdin if isinstance(stdin, bytes) else str(stdin).encode("utf-8", errors="replace")
+    try:
+        writer(data)
+        if closer is not None:
+            closer()
+    except Exception as exc:
+        return f"failed to write initial process stdin: {exc}"
+    return None
 
 
 def _wall_now_ms() -> int:
