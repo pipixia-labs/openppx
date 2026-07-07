@@ -6,6 +6,7 @@
 - [USE_CASES.md](./USE_CASES.md): 真实任务示例与可直接复制的提示词模板
 - [OPERATIONS.md](./OPERATIONS.md): 运行方式、网关模式、WhatsApp Bridge、Cron、测试
 - [CONFIGURATION.md](./CONFIGURATION.md): 配置模型、环境变量、配置样例、平台说明
+- [SANDBOX.md](./SANDBOX.md): Docker sandbox 构建、使用、安全边界、诊断与测试
 - [MCP_SECURITY.md](./MCP_SECURITY.md): MCP 接入和安全策略
 
 ## 维护建议

@@ -65,6 +65,32 @@ ppx gateway-service status
 ppx gateway-service status --json
 ```
 
+## Docker sandbox
+
+危险命令和声明式 skill API 可以显式 opt-in 到 Docker sandbox。默认执行路径保持不变。
+
+先构建本地 sandbox 镜像：
+
+```bash
+ppx sandbox build-image --image openppx-sandbox:dev
+```
+
+执行真实 Docker 集成测试：
+
+```bash
+OPENPPX_RUN_DOCKER_SANDBOX_TESTS=1 \
+python -m pytest tests/test_docker_sandbox_integration.py -q
+```
+
+诊断与清理：
+
+```bash
+ppx doctor
+ppx sandbox prune
+```
+
+完整配置、网络/image 受控放开和安全边界见 [`SANDBOX.md`](./SANDBOX.md)。
+
 ### 常见缺失字段与修复路径
 
 - provider: `<provider>.apiKey`  
