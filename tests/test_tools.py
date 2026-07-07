@@ -601,6 +601,30 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(calls[0]["timeout"], 90)
         self.assertEqual(calls[1]["timeout"], 120)
 
+    def test_exec_tool_docker_sandbox_uses_configured_resource_limits(self) -> None:
+        calls: list[list[str]] = []
+
+        def _fake_run_limited(args, **kwargs):
+            calls.append(list(args))
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            os.environ["OPENPPX_SANDBOX_MEMORY"] = "512m"
+            os.environ["OPENPPX_SANDBOX_CPUS"] = "1.5"
+            os.environ["OPENPPX_SANDBOX_PIDS_LIMIT"] = "64"
+            os.environ["OPENPPX_SANDBOX_TMPFS_SIZE"] = "64m"
+            with patch("openppx.tooling.registry._run_limited_foreground_process", side_effect=_fake_run_limited):
+                out = exec_command("echo hello", sandbox="docker")
+
+        self.assertIn("ok", out)
+        argv = calls[0]
+        self.assertEqual(argv[argv.index("--memory") + 1], "512m")
+        self.assertEqual(argv[argv.index("--memory-swap") + 1], "512m")
+        self.assertEqual(argv[argv.index("--pids-limit") + 1], "64")
+        self.assertEqual(argv[argv.index("--cpus") + 1], "1.5")
+        self.assertIn("/tmp:rw,nosuid,nodev,mode=1777,size=64m", argv)
+
     def test_exec_tool_docker_sandbox_uses_container_shell(self) -> None:
         calls: list[list[str]] = []
 

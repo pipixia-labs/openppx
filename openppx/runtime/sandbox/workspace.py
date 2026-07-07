@@ -12,6 +12,7 @@ from typing import Mapping
 from .docker_backend import DockerSandboxConfig, DockerRunSpec, build_docker_run_spec
 from .plan import (
     PathAccessMode,
+    ResourceLimits,
     SandboxCommand,
     SandboxExecutionPlan,
     SandboxMount,
@@ -48,7 +49,10 @@ def build_workspace_docker_sandbox(
     root = workspace.resolve(strict=False)
     cap = max(1, int(timeout_cap_seconds))
     profile = workspace_write_profile(root)
-    profile = replace(profile, limits=replace(profile.limits, timeout_seconds=cap))
+    profile = replace(
+        profile,
+        limits=_resource_limits_from_env(replace(profile.limits, timeout_seconds=cap)),
+    )
     plan = SandboxExecutionPlan(
         command=SandboxCommand(argv=tuple(command_argv)),
         profile=profile,
@@ -132,3 +136,41 @@ def _effective_timeout(*, timeout_seconds: float | int | None, cap_seconds: int)
     if timeout_seconds is None:
         return cap_seconds
     return min(max(1, int(float(timeout_seconds))), cap_seconds)
+
+
+def _resource_limits_from_env(defaults: ResourceLimits) -> ResourceLimits:
+    """Overlay trusted sandbox resource-limit environment configuration."""
+    return replace(
+        defaults,
+        memory=_env_string("OPENPPX_SANDBOX_MEMORY", defaults.memory),
+        cpus=_env_float("OPENPPX_SANDBOX_CPUS", defaults.cpus),
+        pids_limit=_env_int("OPENPPX_SANDBOX_PIDS_LIMIT", defaults.pids_limit),
+        tmpfs_size=_env_string("OPENPPX_SANDBOX_TMPFS_SIZE", defaults.tmpfs_size),
+    )
+
+
+def _env_string(name: str, default: str) -> str:
+    value = os.getenv(name, "").strip()
+    return value or default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except Exception:
+        return default
+    return value if value > 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(float(raw))
+    except Exception:
+        return default
+    return value if value > 0 else default
