@@ -1,4 +1,5 @@
-FROM python:3.14-slim
+ARG PYTHON_BASE_IMAGE=python:3.14-slim
+FROM ${PYTHON_BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 

@@ -224,23 +224,45 @@ def _sandbox_dockerfile_path() -> Path:
     return Path(__file__).resolve().parents[2] / "docker" / "sandbox" / "Dockerfile"
 
 
-def _cmd_sandbox_build_image(*, image: str, docker_bin: str, no_cache: bool = False) -> int:
+def _cmd_sandbox_build_image(
+    *,
+    image: str,
+    docker_bin: str,
+    no_cache: bool = False,
+    base_image: str = "python:3.14-slim",
+) -> int:
     """Build the local Docker sandbox image."""
     dockerfile = _sandbox_dockerfile_path()
     if not dockerfile.is_file():
         _stdout_line(f"Sandbox Dockerfile not found: {dockerfile}")
         return 1
-    argv = [docker_bin, "build", "-t", image, "-f", str(dockerfile)]
+    resolved_base_image = str(base_image or "").strip() or "python:3.14-slim"
+    argv = [
+        docker_bin,
+        "build",
+        "-t",
+        image,
+        "-f",
+        str(dockerfile),
+        "--build-arg",
+        f"PYTHON_BASE_IMAGE={resolved_base_image}",
+    ]
     if no_cache:
         argv.append("--no-cache")
     argv.append(str(dockerfile.parents[2]))
-    _stdout_line(f"Building sandbox image {image} from {dockerfile}")
+    _stdout_line(f"Building sandbox image {image} from {dockerfile} with base {resolved_base_image}")
     try:
         completed = subprocess.run(argv, check=False)
     except FileNotFoundError:
         _stdout_line(f"Docker CLI not found: {docker_bin}")
         return 1
-    return int(completed.returncode)
+    returncode = int(completed.returncode)
+    if returncode != 0:
+        _stdout_line(
+            "Sandbox image build failed. If Docker Hub is unreachable, retry with "
+            "`--base-image <local-or-mirror-python-image>` or set OPENPPX_SANDBOX_PYTHON_BASE_IMAGE."
+        )
+    return returncode
 
 
 def _cmd_sandbox_prune(*, docker_bin: str) -> int:
@@ -4449,6 +4471,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Pass --no-cache to docker build.",
     )
+    sandbox_build_parser.add_argument(
+        "--base-image",
+        default=os.getenv("OPENPPX_SANDBOX_PYTHON_BASE_IMAGE", "python:3.14-slim"),
+        help="Python base image for the sandbox Dockerfile. Defaults to OPENPPX_SANDBOX_PYTHON_BASE_IMAGE or python:3.14-slim.",
+    )
     sandbox_prune_parser = sandbox_subparsers.add_parser(
         "prune",
         help="Remove Docker containers labeled as openppx sandbox runs.",
@@ -5052,6 +5079,7 @@ def main(argv: list[str] | None = None) -> None:
                 image=args.image,
                 docker_bin=args.docker_bin,
                 no_cache=args.no_cache,
+                base_image=args.base_image,
             )
             if args.sandbox_action == "build-image"
             else _cmd_sandbox_prune(docker_bin=args.docker_bin)

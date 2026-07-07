@@ -76,11 +76,14 @@ class SandboxCliTests(unittest.TestCase):
                 image="openppx-sandbox:test",
                 docker_bin="dockerx",
                 no_cache=True,
+                base_image="registry.example/python:3.14-slim",
             )
 
         self.assertEqual(code, 0)
         argv = mocked_run.call_args.args[0]
         self.assertEqual(argv[:4], ["dockerx", "build", "-t", "openppx-sandbox:test"])
+        self.assertIn("--build-arg", argv)
+        self.assertIn("PYTHON_BASE_IMAGE=registry.example/python:3.14-slim", argv)
         self.assertIn("--no-cache", argv)
         dockerfile = Path(argv[argv.index("-f") + 1])
         self.assertTrue(dockerfile.is_file())
@@ -98,6 +101,20 @@ class SandboxCliTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertIn("Docker CLI not found", mocked_stdout.call_args.args[0])
+
+    def test_sandbox_build_image_reports_base_image_hint_on_build_failure(self) -> None:
+        completed = mock.Mock(returncode=1)
+        with (
+            mock.patch.object(cli.subprocess, "run", return_value=completed),
+            mock.patch.object(cli, "_stdout_line") as mocked_stdout,
+        ):
+            code = cli._cmd_sandbox_build_image(
+                image="openppx-sandbox:test",
+                docker_bin="dockerx",
+            )
+
+        self.assertEqual(code, 1)
+        self.assertIn("--base-image", mocked_stdout.call_args.args[0])
 
     def test_sandbox_prune_removes_labeled_containers(self) -> None:
         with (
@@ -130,10 +147,27 @@ class SandboxCliTests(unittest.TestCase):
     def test_main_dispatches_sandbox_build_image(self) -> None:
         with mock.patch.object(cli, "_cmd_sandbox_build_image", return_value=0) as mocked_build:
             with self.assertRaises(SystemExit) as caught:
-                cli.main(["sandbox", "build-image", "--image", "sandbox:test", "--docker-bin", "dockerx", "--no-cache"])
+                cli.main(
+                    [
+                        "sandbox",
+                        "build-image",
+                        "--image",
+                        "sandbox:test",
+                        "--docker-bin",
+                        "dockerx",
+                        "--no-cache",
+                        "--base-image",
+                        "registry.example/python:3.14-slim",
+                    ]
+                )
 
         self.assertEqual(caught.exception.code, 0)
-        mocked_build.assert_called_once_with(image="sandbox:test", docker_bin="dockerx", no_cache=True)
+        mocked_build.assert_called_once_with(
+            image="sandbox:test",
+            docker_bin="dockerx",
+            no_cache=True,
+            base_image="registry.example/python:3.14-slim",
+        )
 
     def test_main_dispatches_sandbox_prune(self) -> None:
         with mock.patch.object(cli, "_cmd_sandbox_prune", return_value=0) as mocked_prune:
