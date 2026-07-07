@@ -547,12 +547,10 @@ class ToolsTests(unittest.TestCase):
         image_index = argv.index("openppx-sandbox:dev")
         self.assertEqual(argv[image_index + 1 : image_index + 3], ["/bin/sh", "-lc"])
 
-    def test_exec_tool_docker_sandbox_rejects_pty_and_yield_modes(self) -> None:
+    def test_exec_tool_docker_sandbox_rejects_pty_mode(self) -> None:
         pty_out = exec_command("echo hello", sandbox="docker", pty=True)
-        yield_out = exec_command("echo hello", sandbox="docker", yield_ms=10)
 
-        self.assertIn("pty and yield_ms are not supported", pty_out.lower())
-        self.assertIn("pty and yield_ms are not supported", yield_out.lower())
+        self.assertIn("pty is not supported", pty_out.lower())
 
     def test_exec_tool_docker_sandbox_background_starts_session_with_cleanup(self) -> None:
         captured: dict[str, object] = {}
@@ -584,6 +582,56 @@ class ToolsTests(unittest.TestCase):
         self.assertIn("session session-docker", out)
         self.assertEqual(captured["backgrounded"], ("session-docker", None))
         mocked_cleanup.assert_called_once_with("docker", container_name)
+
+    def test_exec_tool_docker_sandbox_yield_ms_backgrounds_when_still_running(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _DummyManager:
+            def start_session(self, **kwargs):
+                captured.update(kwargs)
+                return pytypes.SimpleNamespace(session_id="session-yield", process=pytypes.SimpleNamespace(pid=1234)), []
+
+            def poll_session(self, session_id, *, timeout_ms, scope_key=None):
+                captured["polled"] = (session_id, timeout_ms, scope_key)
+                return {"exited": False, "stdout": "", "stderr": "", "exit_code": None}
+
+            def mark_backgrounded(self, session_id, *, scope_key):
+                captured["backgrounded"] = (session_id, scope_key)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            with patch("openppx.tooling.registry.get_process_session_manager", return_value=_DummyManager()):
+                out = exec_command("echo hello", sandbox="docker", yield_ms=25)
+
+        self.assertIn("session session-yield", out)
+        self.assertEqual(captured["polled"], ("session-yield", 25, None))
+        self.assertEqual(captured["backgrounded"], ("session-yield", None))
+        self.assertTrue(callable(captured["terminate_callback"]))
+
+    def test_exec_tool_docker_sandbox_yield_ms_returns_inline_when_finished(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _DummyManager:
+            def start_session(self, **kwargs):
+                captured.update(kwargs)
+                return pytypes.SimpleNamespace(session_id="session-inline", process=pytypes.SimpleNamespace(pid=1234)), []
+
+            def poll_session(self, session_id, *, timeout_ms, scope_key=None):
+                captured["polled"] = (session_id, timeout_ms, scope_key)
+                return {"exited": True, "stdout": "done\n", "stderr": "", "exit_code": 0}
+
+            def remove_session(self, session_id, scope_key=None):
+                captured["removed"] = (session_id, scope_key)
+                return True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            with patch("openppx.tooling.registry.get_process_session_manager", return_value=_DummyManager()):
+                out = exec_command("echo hello", sandbox="docker", yield_ms=25)
+
+        self.assertIn("done", out)
+        self.assertEqual(captured["polled"], ("session-inline", 25, None))
+        self.assertEqual(captured["removed"], ("session-inline", None))
 
     def test_exec_tool_docker_sandbox_timeout_cleans_container(self) -> None:
         calls: list[list[str]] = []

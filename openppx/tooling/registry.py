@@ -2981,10 +2981,10 @@ def exec_command(
     command_argv = argv
     effective_command = cmd
     if sandbox_name == "docker":
-        if pty or yield_ms is not None:
+        if pty:
             return _ret(
                 "tool.exec.output",
-                "Error: docker sandbox currently supports foreground or background exec only; pty and yield_ms are not supported",
+                "Error: docker sandbox currently supports non-PTY exec only; pty is not supported",
             )
         if _should_use_shell(argv):
             command_argv = ["/bin/sh", "-lc", effective_command]
