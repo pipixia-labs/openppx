@@ -2981,10 +2981,10 @@ def exec_command(
     command_argv = argv
     effective_command = cmd
     if sandbox_name == "docker":
-        if background or pty or yield_ms is not None:
+        if pty or yield_ms is not None:
             return _ret(
                 "tool.exec.output",
-                "Error: docker sandbox currently supports foreground exec only; background, pty, and yield_ms are not supported",
+                "Error: docker sandbox currently supports foreground or background exec only; pty and yield_ms are not supported",
             )
         if _should_use_shell(argv):
             command_argv = ["/bin/sh", "-lc", effective_command]
@@ -3111,6 +3111,12 @@ def exec_command(
 
     manager = get_process_session_manager()
     effective_scope = _resolve_process_scope(scope)
+    terminate_callback: Callable[[], None] | None = None
+    if docker_sandbox is not None:
+        def _cleanup_docker_background() -> None:
+            cleanup_docker_sandbox_container(docker_sandbox.docker_bin, docker_sandbox.container_name)
+
+        terminate_callback = _cleanup_docker_background
     try:
         session, warnings = manager.start_session(
             command=effective_command,
@@ -3119,6 +3125,7 @@ def exec_command(
             env=os.environ.copy(),
             use_pty=pty,
             scope_key=effective_scope,
+            terminate_callback=terminate_callback,
         )
     except Exception as exc:
         return _ret("tool.exec.output", f"Error executing command: {exc}")

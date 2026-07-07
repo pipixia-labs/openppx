@@ -21,6 +21,7 @@ from urllib.error import URLError
 
 from openppx.browser.service import BrowserDispatchResponse
 from openppx.runtime.checkpoint_schema import TASK_CHECKPOINT_ENVELOPE_SCHEMA, TASK_CHECKPOINT_METADATA_KEY
+from openppx.runtime.process_sessions import ProcessSessionManager
 from openppx.runtime.task_execution import TaskController
 from openppx.runtime.task_store import TaskStore
 from openppx.runtime.tool_context import route_context
@@ -546,9 +547,43 @@ class ToolsTests(unittest.TestCase):
         image_index = argv.index("openppx-sandbox:dev")
         self.assertEqual(argv[image_index + 1 : image_index + 3], ["/bin/sh", "-lc"])
 
-    def test_exec_tool_docker_sandbox_rejects_session_modes(self) -> None:
-        out = exec_command("echo hello", sandbox="docker", background=True)
-        self.assertIn("foreground exec only", out.lower())
+    def test_exec_tool_docker_sandbox_rejects_pty_and_yield_modes(self) -> None:
+        pty_out = exec_command("echo hello", sandbox="docker", pty=True)
+        yield_out = exec_command("echo hello", sandbox="docker", yield_ms=10)
+
+        self.assertIn("pty and yield_ms are not supported", pty_out.lower())
+        self.assertIn("pty and yield_ms are not supported", yield_out.lower())
+
+    def test_exec_tool_docker_sandbox_background_starts_session_with_cleanup(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _DummyManager:
+            def start_session(self, **kwargs):
+                captured.update(kwargs)
+                return pytypes.SimpleNamespace(session_id="session-docker", process=pytypes.SimpleNamespace(pid=4321)), []
+
+            def mark_backgrounded(self, session_id, *, scope_key):
+                captured["backgrounded"] = (session_id, scope_key)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            with (
+                patch("openppx.tooling.registry.get_process_session_manager", return_value=_DummyManager()),
+                patch("openppx.tooling.registry.cleanup_docker_sandbox_container") as mocked_cleanup,
+            ):
+                out = exec_command("echo hello", sandbox="docker", background=True)
+                callback = captured["terminate_callback"]
+                self.assertTrue(callable(callback))
+                callback()
+
+        argv = captured["argv"]
+        self.assertIsInstance(argv, list)
+        assert isinstance(argv, list)
+        self.assertEqual(argv[:2], ["docker", "run"])
+        container_name = argv[argv.index("--name") + 1]
+        self.assertIn("session session-docker", out)
+        self.assertEqual(captured["backgrounded"], ("session-docker", None))
+        mocked_cleanup.assert_called_once_with("docker", container_name)
 
     def test_exec_tool_docker_sandbox_timeout_cleans_container(self) -> None:
         calls: list[list[str]] = []
@@ -1442,6 +1477,68 @@ class ToolsTests(unittest.TestCase):
 
         removed = process_session("remove", session_id=session_id)
         self.assertIn("Removed session", removed)
+
+    def test_process_session_manager_runs_terminate_callback_on_kill(self) -> None:
+        calls: list[str] = []
+        manager = ProcessSessionManager()
+        with tempfile.TemporaryDirectory() as tmp:
+            session, _ = manager.start_session(
+                command="sleep",
+                argv=[sys.executable, "-c", "import time; time.sleep(10)"],
+                cwd=Path(tmp),
+                env=os.environ.copy(),
+                use_pty=False,
+                scope_key=None,
+                terminate_callback=lambda: calls.append("cleanup"),
+            )
+            manager.mark_backgrounded(session.session_id)
+
+            err = manager.kill_session(session.session_id)
+
+        self.assertIsNone(err)
+        self.assertEqual(calls, ["cleanup"])
+
+    def test_process_session_manager_runs_terminate_callback_on_remove(self) -> None:
+        calls: list[str] = []
+        manager = ProcessSessionManager()
+        with tempfile.TemporaryDirectory() as tmp:
+            session, _ = manager.start_session(
+                command="sleep",
+                argv=[sys.executable, "-c", "import time; time.sleep(10)"],
+                cwd=Path(tmp),
+                env=os.environ.copy(),
+                use_pty=False,
+                scope_key=None,
+                terminate_callback=lambda: calls.append("cleanup"),
+            )
+            manager.mark_backgrounded(session.session_id)
+
+            removed = manager.remove_session(session.session_id)
+
+        self.assertTrue(removed)
+        self.assertEqual(calls, ["cleanup"])
+
+    def test_process_session_manager_runs_terminate_callback_once(self) -> None:
+        calls: list[str] = []
+        manager = ProcessSessionManager()
+        with tempfile.TemporaryDirectory() as tmp:
+            session, _ = manager.start_session(
+                command="sleep",
+                argv=[sys.executable, "-c", "import time; time.sleep(10)"],
+                cwd=Path(tmp),
+                env=os.environ.copy(),
+                use_pty=False,
+                scope_key=None,
+                terminate_callback=lambda: calls.append("cleanup"),
+            )
+            manager.mark_backgrounded(session.session_id)
+
+            err = manager.kill_session(session.session_id)
+            removed = manager.remove_session(session.session_id)
+
+        self.assertIsNone(err)
+        self.assertTrue(removed)
+        self.assertEqual(calls, ["cleanup"])
 
     def test_exec_tool_supports_shell_compound_command(self) -> None:
         if os.name == "nt":

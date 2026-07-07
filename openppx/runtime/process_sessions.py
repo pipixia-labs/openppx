@@ -65,6 +65,8 @@ class ProcessSession:
     write_stdin: Callable[[bytes], None] | None
     close_stdin: Callable[[], None] | None
     cleanup_mode: Callable[[], None] | None
+    terminate_callback: Callable[[], None] | None = None
+    terminate_callback_ran: bool = False
     pty_master_fd: int | None = None
     backgrounded: bool = False
     exited: bool = False
@@ -118,6 +120,7 @@ class ProcessSessionManager:
         env: dict[str, str] | None,
         use_pty: bool,
         scope_key: str | None,
+        terminate_callback: Callable[[], None] | None = None,
     ) -> tuple[ProcessSession, list[str]]:
         """Spawn a new command session.
 
@@ -148,6 +151,7 @@ class ProcessSessionManager:
             write_stdin=write_stdin,
             close_stdin=close_stdin,
             cleanup_mode=cleanup_mode,
+            terminate_callback=terminate_callback,
             pty_master_fd=pty_master_fd,
         )
 
@@ -345,6 +349,7 @@ class ProcessSessionManager:
 
         with session.lock:
             session.termination_reason = "killed"
+        self._run_terminate_callback(session)
 
         return None
 
@@ -364,10 +369,15 @@ class ProcessSessionManager:
         if session is None:
             return False
 
+        should_run_terminate_callback = False
         with session.lock:
             if not session.exited:
                 self._terminate_process(session)
                 session.termination_reason = "removed"
+                should_run_terminate_callback = True
+
+        if should_run_terminate_callback:
+            self._run_terminate_callback(session)
 
         cleanup = session.cleanup_mode
         if cleanup is not None:
@@ -603,6 +613,20 @@ class ProcessSessionManager:
             except Exception as exc:
                 return f"Failed to terminate session: {exc}"
         return None
+
+    def _run_terminate_callback(self, session: ProcessSession) -> None:
+        """Run an optional external cleanup hook after active termination."""
+        with session.lock:
+            if session.terminate_callback_ran:
+                return
+            session.terminate_callback_ran = True
+            callback = session.terminate_callback
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            pass
 
     def _spawn_child(
         self,
