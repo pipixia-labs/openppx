@@ -582,6 +582,25 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(calls[0]["cwd"], str(resolved_workspace))
         self.assertEqual(calls[0]["timeout"], 60)
 
+    def test_exec_tool_docker_sandbox_timeout_uses_configured_cap(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def _fake_run_limited(args, **kwargs):
+            calls.append({"argv": list(args), **kwargs})
+            return pytypes.SimpleNamespace(stdout="ok\n", stderr="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENPPX_WORKSPACE"] = tmp
+            os.environ["OPENPPX_SANDBOX_TIMEOUT_MAX_SECONDS"] = "120"
+            with patch("openppx.tooling.registry._run_limited_foreground_process", side_effect=_fake_run_limited):
+                out_under_cap = exec_command("echo hello", timeout=90, sandbox="docker")
+                out_over_cap = exec_command("echo hello", timeout=300, sandbox="docker")
+
+        self.assertIn("ok", out_under_cap)
+        self.assertIn("ok", out_over_cap)
+        self.assertEqual(calls[0]["timeout"], 90)
+        self.assertEqual(calls[1]["timeout"], 120)
+
     def test_exec_tool_docker_sandbox_uses_container_shell(self) -> None:
         calls: list[list[str]] = []
 

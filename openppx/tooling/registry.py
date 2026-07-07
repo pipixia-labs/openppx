@@ -1651,6 +1651,8 @@ def _wrap_command_with_sandbox(sandbox: str, command: str, workspace: str, cwd: 
 
 _EXEC_SANDBOX_DISABLED_VALUES = {"", "0", "false", "none", "off"}
 _EXEC_SANDBOX_BACKEND_RANK = {"none": 0, "bwrap": 1, "docker": 2}
+_EXEC_SANDBOX_DEFAULT_TIMEOUT_CAP_SECONDS = 60
+_EXEC_SANDBOX_HARD_TIMEOUT_CAP_SECONDS = 24 * 60 * 60
 
 
 def _configured_exec_sandbox_backend() -> str:
@@ -1691,6 +1693,18 @@ def _exec_sandbox_weakening_error(sandbox: str | None) -> str | None:
         return None
     action = "sandbox disable" if requested == "none" else "sandbox backend downgrade"
     return f"Error: approval required for {action}: configured={configured}, requested={requested}"
+
+
+def _exec_sandbox_timeout_cap_seconds() -> int:
+    """Return the Docker exec sandbox timeout cap."""
+    raw = os.getenv("OPENPPX_SANDBOX_TIMEOUT_MAX_SECONDS", "").strip()
+    if not raw:
+        return _EXEC_SANDBOX_DEFAULT_TIMEOUT_CAP_SECONDS
+    try:
+        value = int(float(raw))
+    except Exception:
+        return _EXEC_SANDBOX_DEFAULT_TIMEOUT_CAP_SECONDS
+    return max(1, min(value, _EXEC_SANDBOX_HARD_TIMEOUT_CAP_SECONDS))
 
 
 def _resolve_exec_sandbox_name(sandbox: str | None, *, allow_backend_downgrade: bool = False) -> str:
@@ -3052,7 +3066,7 @@ def exec_command(
                 workspace=_workspace(policy),
                 cwd=cwd,
                 timeout_seconds=timeout,
-                timeout_cap_seconds=60,
+                timeout_cap_seconds=_exec_sandbox_timeout_cap_seconds(),
                 labels={"openppx.tool": "exec"},
             )
             command_argv = docker_sandbox.argv
