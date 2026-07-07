@@ -11,7 +11,9 @@ from typing import Mapping
 
 from .docker_backend import DockerSandboxConfig, DockerRunSpec, build_docker_run_spec
 from .plan import (
+    FileSystemPolicy,
     PathAccessMode,
+    PathGrant,
     ResourceLimits,
     SandboxCommand,
     SandboxExecutionPlan,
@@ -42,6 +44,7 @@ def build_workspace_docker_sandbox(
     stdin: str | bytes | None = None,
     env: Mapping[str, str] | None = None,
     labels: Mapping[str, str] | None = None,
+    readonly_mounts: Mapping[str, Path] | None = None,
     docker_bin: str | None = None,
     image: str | None = None,
 ) -> WorkspaceDockerSandbox:
@@ -49,6 +52,15 @@ def build_workspace_docker_sandbox(
     root = workspace.resolve(strict=False)
     cap = max(1, int(timeout_cap_seconds))
     profile = workspace_write_profile(root)
+    trusted_readonly_mounts = _trusted_readonly_mounts(readonly_mounts or {})
+    if trusted_readonly_mounts:
+        profile = replace(
+            profile,
+            filesystem=_filesystem_with_trusted_readonly_mounts(
+                profile.filesystem,
+                trusted_readonly_mounts,
+            ),
+        )
     profile = replace(
         profile,
         limits=_resource_limits_from_env(replace(profile.limits, timeout_seconds=cap)),
@@ -56,7 +68,10 @@ def build_workspace_docker_sandbox(
     plan = SandboxExecutionPlan(
         command=SandboxCommand(argv=tuple(command_argv)),
         profile=profile,
-        mounts=_workspace_mounts(profile=profile, root=root),
+        mounts=(
+            *_workspace_mounts(profile=profile, root=root),
+            *_readonly_mounts_from_trusted_paths(trusted_readonly_mounts),
+        ),
         env={str(k): str(v) for k, v in (env or {}).items()},
         cwd=str(cwd.resolve(strict=False)),
         stdin=stdin,
@@ -78,6 +93,44 @@ def build_workspace_docker_sandbox(
         container_name=spec.container_name,
         timeout_seconds=_effective_timeout(timeout_seconds=timeout_seconds, cap_seconds=cap),
         stdin=spec.stdin,
+    )
+
+
+def _trusted_readonly_mounts(raw_mounts: Mapping[str, Path]) -> tuple[tuple[str, Path], ...]:
+    items: list[tuple[str, Path]] = []
+    for logical_name, path in raw_mounts.items():
+        normalized_name = str(logical_name).strip()
+        if not normalized_name:
+            raise ValueError("trusted readonly mount logical_name must be non-empty")
+        items.append((normalized_name, Path(path).resolve(strict=False)))
+    return tuple(items)
+
+
+def _filesystem_with_trusted_readonly_mounts(
+    filesystem: FileSystemPolicy,
+    mounts: tuple[tuple[str, Path], ...],
+) -> FileSystemPolicy:
+    grants = tuple(
+        PathGrant(
+            logical_name=f"backend:{logical_name}",
+            host_path=path,
+            container_path=str(path),
+            access=PathAccessMode.READ,
+        )
+        for logical_name, path in mounts
+    )
+    return replace(filesystem, readable_roots=(*filesystem.readable_roots, *grants))
+
+
+def _readonly_mounts_from_trusted_paths(mounts: tuple[tuple[str, Path], ...]) -> tuple[SandboxMount, ...]:
+    return tuple(
+        SandboxMount(
+            logical_name=f"backend:{logical_name}",
+            host_path=path,
+            container_path=str(path),
+            access=PathAccessMode.READ,
+        )
+        for logical_name, path in mounts
     )
 
 

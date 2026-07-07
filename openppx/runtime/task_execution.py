@@ -37,6 +37,12 @@ from .browser_remote_job_protocol import normalize_browser_remote_job_snapshot
 from .checkpoint_schema import normalize_task_checkpoint_payload
 from .context_engine import ContextSummary, LongTaskContextStore
 from .process_sessions import get_process_session_manager
+from .sandbox import (
+    SandboxValidationError,
+    build_workspace_docker_sandbox,
+    cleanup_docker_sandbox_container,
+    resolve_backend,
+)
 from .mcp_proxy import cancel_mcp_proxy_task
 from .mcp_proxy import is_mcp_proxy_task_active
 from .mcp_job_protocol import call_mcp_job_cancel
@@ -66,6 +72,7 @@ from .sync_tool_proxy import request_sync_proxy_task_stop
 
 DEFAULT_INLINE_BUDGET_MS = 5_000
 MAX_INLINE_BUDGET_MS = 120_000
+DEFAULT_API_SANDBOX_TIMEOUT_CAP_SECONDS = 3600
 DEFAULT_OUTPUT_ARTIFACT_THRESHOLD_CHARS = 50_000
 MAX_TERMINAL_SUMMARY_CHARS = 4_000
 DEFAULT_STUCK_TASK_AFTER_MS = 30 * 60 * 1000
@@ -136,6 +143,7 @@ class ExecutionRecipe:
     scope_key: str | None
     stdin: str | bytes | None = None
     use_pty: bool = False
+    terminate_callback: Callable[[], None] | None = None
     task_kind: str = "skill_api"
     runner_payload: dict[str, Any] = field(default_factory=dict)
 
@@ -336,22 +344,65 @@ class SkillApiRuntime:
         payload_json = build_api_runner_payload_json(recipe=recipe, args=args)
         env.pop(PAYLOAD_JSON_ENV, None)
         env[PAYLOAD_STDIN_ENV] = "1"
-        argv = [sys.executable, str(Path(__file__).with_name(spec.runner_filename))]
+        runner_path = Path(__file__).with_name(spec.runner_filename).resolve(strict=False)
+        argv = [sys.executable, str(runner_path)]
+        command = shlex.join(argv)
+        stdin: str | bytes | None = payload_json
+        terminate_callback: Callable[[], None] | None = None
+        runner_payload = {
+            "logical_runner": spec.logical_runner,
+            "recipe_runner": spec.name,
+            "api_recipe": recipe_path.relative_to(skill_root).as_posix(),
+        }
+        sandbox_backend = ""
+        if spec.name in {"python", "node"}:
+            sandbox_backend = cls._recipe_sandbox_backend(recipe, runner_name=spec.name)
+        elif spec.name != "command" and cls._recipe_sandbox_declared(recipe):
+            raise ValueError(f"{spec.name} API sandbox is not supported yet")
+        if sandbox_backend:
+            try:
+                docker_sandbox = build_workspace_docker_sandbox(
+                    command_argv=["python", str(runner_path)],
+                    workspace=skill_root,
+                    cwd=skill_root,
+                    timeout_seconds=cls._recipe_timeout_seconds(recipe),
+                    timeout_cap_seconds=cls._api_sandbox_timeout_cap_seconds(),
+                    stdin=payload_json,
+                    env={PAYLOAD_STDIN_ENV: "1"},
+                    labels={"openppx.tool": "skill_api", "openppx.runner": spec.logical_runner},
+                    readonly_mounts={"openppx-runtime": runner_path.parent},
+                )
+            except SandboxValidationError as exc:
+                raise ValueError(f"failed to validate {spec.name} API sandbox plan: {exc}") from exc
+            argv = docker_sandbox.argv
+            command = shlex.join(argv)
+            env = os.environ.copy()
+            stdin = docker_sandbox.stdin
+
+            def _cleanup_docker_api_runner() -> None:
+                cleanup_docker_sandbox_container(docker_sandbox.docker_bin, docker_sandbox.container_name)
+
+            terminate_callback = _cleanup_docker_api_runner
+            runner_payload = {
+                **runner_payload,
+                "sandbox": {
+                    "backend": "docker",
+                    "container_name": docker_sandbox.container_name,
+                    "timeout_seconds": docker_sandbox.timeout_seconds,
+                },
+            }
         return ExecutionRecipe(
             title=f"{skill_name}:{api_name}",
-            command=shlex.join(argv),
+            command=command,
             argv=argv,
             cwd=skill_root,
             env=env,
             scope_key=scope_key,
-            stdin=payload_json,
+            stdin=stdin,
             use_pty=False,
+            terminate_callback=terminate_callback,
             task_kind="api_call",
-            runner_payload={
-                "logical_runner": spec.logical_runner,
-                "recipe_runner": spec.name,
-                "api_recipe": recipe_path.relative_to(skill_root).as_posix(),
-            },
+            runner_payload=runner_payload,
         )
 
     @classmethod
@@ -638,6 +689,74 @@ class SkillApiRuntime:
         return raw
 
     @staticmethod
+    def _recipe_sandbox_declared(recipe: dict[str, Any]) -> bool:
+        raw = recipe.get("sandbox")
+        if raw in (None, False):
+            return False
+        if isinstance(raw, str) and raw.strip().lower() in {"", "0", "false", "none", "off"}:
+            return False
+        if isinstance(raw, dict):
+            return bool(raw.get("required", False) or str(raw.get("backend", "")).strip())
+        return True
+
+    @staticmethod
+    def _recipe_sandbox_backend(recipe: dict[str, Any], *, runner_name: str) -> str:
+        raw = recipe.get("sandbox")
+        if raw in (None, False):
+            return ""
+        if isinstance(raw, str) and raw.strip().lower() in {"", "0", "false", "none", "off"}:
+            return ""
+        if raw is True:
+            requested = "docker"
+            sandbox_options: dict[str, Any] = {}
+        elif isinstance(raw, str):
+            requested = raw.strip().lower()
+            sandbox_options = {}
+        elif isinstance(raw, dict):
+            sandbox_options = raw
+            required = bool(raw.get("required", False))
+            requested = str(raw.get("backend", "") or ("docker" if required else "")).strip().lower()
+            if not requested:
+                return ""
+        else:
+            raise ValueError(f"{runner_name} API recipe sandbox must be a string, boolean, or object")
+
+        if str(sandbox_options.get("network", "disabled") or "disabled").strip().lower() not in {"disabled", "none"}:
+            raise ValueError(f"{runner_name} API sandbox network enablement requires approval and is not implemented")
+        if str(sandbox_options.get("image", "") or "").strip():
+            raise ValueError(f"{runner_name} API recipe sandbox.image is not supported yet")
+
+        configured = os.getenv("OPENPPX_SANDBOX_BACKEND", "").strip().lower() or "none"
+        backend = resolve_backend(configured_backend=configured, requested_backend=requested)
+        if backend != "docker":
+            raise ValueError(f"{runner_name} API sandbox currently supports only docker")
+        return backend
+
+    @staticmethod
+    def _recipe_timeout_seconds(recipe: dict[str, Any]) -> float | None:
+        if "timeout_seconds" not in recipe:
+            return None
+        raw = recipe.get("timeout_seconds")
+        try:
+            value = float(raw)
+        except Exception as exc:
+            raise ValueError("API recipe timeout_seconds must be a positive number") from exc
+        if value <= 0:
+            raise ValueError("API recipe timeout_seconds must be positive")
+        return value
+
+    @staticmethod
+    def _api_sandbox_timeout_cap_seconds() -> int:
+        raw = os.getenv("OPENPPX_SANDBOX_TIMEOUT_MAX_SECONDS", "").strip()
+        if not raw:
+            return DEFAULT_API_SANDBOX_TIMEOUT_CAP_SECONDS
+        try:
+            value = int(float(raw))
+        except Exception:
+            return DEFAULT_API_SANDBOX_TIMEOUT_CAP_SECONDS
+        return max(1, min(value, 24 * 60 * 60))
+
+    @staticmethod
     def _argv_for_script(script_path: Path, *, args: Any = None) -> list[str]:
         suffix = script_path.suffix.lower()
         if suffix == ".py":
@@ -767,6 +886,7 @@ class ProcessExecutionSupervisor:
             env=recipe.env,
             use_pty=recipe.use_pty,
             scope_key=recipe.scope_key,
+            terminate_callback=recipe.terminate_callback,
         )
         stdin_error = _send_initial_stdin(session, recipe.stdin)
         if stdin_error:

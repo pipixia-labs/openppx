@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from openppx.runtime import task_execution as task_execution_module
 from openppx.runtime.browser_remote_provider import BrowserRemoteProviderStore
 from openppx.runtime import checkpoint_migration_catalog
 from openppx.runtime.long_task_context import render_long_task_context
@@ -249,6 +250,80 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertNotIn("OPENPPX_API_RUNNER_PAYLOAD_JSON", recipe.env)
             self.assertTrue(recipe.argv[-1].endswith("node_api_runner.py"))
 
+    def test_skill_api_runtime_resolves_python_recipe_with_docker_sandbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_python_api_skill(
+                tmp,
+                "add",
+                {"module": "demo_sdk", "function": "add", "sandbox": {"required": True}, "timeout_seconds": 12},
+                "def add(a, b):\n    return {'sum': a + b}\n",
+            )
+
+            recipe = SkillApiRuntime().resolve(
+                skill_name="demo",
+                api_name="add",
+                args={"a": 2, "b": 3},
+                scope_key="scope-1",
+            )
+            combined_payload = json.loads(str(recipe.stdin))
+            runner_path = Path(task_execution_module.__file__).with_name("python_api_runner.py").resolve(strict=False)
+            runtime_dir = runner_path.parent
+            mounts = [recipe.argv[index + 1] for index, item in enumerate(recipe.argv) if item == "--mount"]
+            env_items = [recipe.argv[index + 1] for index, item in enumerate(recipe.argv) if item == "--env"]
+
+            self.assertEqual(recipe.argv[:2], ["docker", "run"])
+            self.assertIn("-i", recipe.argv)
+            self.assertIn(f"type=bind,src={recipe.cwd.resolve(strict=False)},dst={recipe.cwd.resolve(strict=False)}", mounts)
+            self.assertIn(f"type=bind,src={runtime_dir},dst={runtime_dir},readonly", mounts)
+            self.assertIn("OPENPPX_API_RUNNER_PAYLOAD_STDIN=1", env_items)
+            self.assertNotIn("OPENPPX_API_RUNNER_PAYLOAD_JSON", recipe.env)
+            self.assertEqual(recipe.argv[-3:], ["openppx-sandbox:dev", "python", str(runner_path)])
+            self.assertEqual(combined_payload["recipe"]["module"], "demo_sdk")
+            self.assertEqual(combined_payload["args"], {"a": 2, "b": 3})
+            self.assertEqual(recipe.runner_payload["sandbox"]["backend"], "docker")
+            self.assertEqual(recipe.runner_payload["sandbox"]["timeout_seconds"], 12)
+            self.assertIsNotNone(recipe.terminate_callback)
+
+    def test_skill_api_runtime_resolves_node_recipe_with_docker_sandbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_node_api_skill(
+                tmp,
+                "add",
+                {"module": "demo_node.cjs", "function": "add", "sandbox": "docker"},
+                "exports.add = async function(args) { return {sum: args.a + args.b}; };\n",
+            )
+
+            recipe = SkillApiRuntime().resolve(
+                skill_name="demo",
+                api_name="add",
+                args={"a": 2, "b": 3},
+                scope_key="scope-1",
+            )
+            runner_path = Path(task_execution_module.__file__).with_name("node_api_runner.py").resolve(strict=False)
+            mounts = [recipe.argv[index + 1] for index, item in enumerate(recipe.argv) if item == "--mount"]
+
+            self.assertEqual(recipe.argv[:2], ["docker", "run"])
+            self.assertEqual(recipe.argv[-3:], ["openppx-sandbox:dev", "python", str(runner_path)])
+            self.assertIn(f"type=bind,src={runner_path.parent},dst={runner_path.parent},readonly", mounts)
+            self.assertEqual(recipe.runner_payload["sandbox"]["backend"], "docker")
+
+    def test_skill_api_runtime_rejects_python_sandbox_network_enablement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_python_api_skill(
+                tmp,
+                "add",
+                {"module": "demo_sdk", "function": "add", "sandbox": {"required": True, "network": "enabled"}},
+                "def add(a, b):\n    return {'sum': a + b}\n",
+            )
+
+            with self.assertRaisesRegex(ValueError, "network enablement"):
+                SkillApiRuntime().resolve(
+                    skill_name="demo",
+                    api_name="add",
+                    args={"a": 2, "b": 3},
+                    scope_key="scope-1",
+                )
+
     def test_skill_api_runtime_resolves_command_recipe_without_length_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self._prepare_command_api_skill(
@@ -282,6 +357,30 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertEqual(recipe.env["OPENPPX_API_RUNNER_PAYLOAD_STDIN"], "1")
             self.assertNotIn("OPENPPX_API_RUNNER_PAYLOAD_JSON", recipe.env)
             self.assertTrue(recipe.argv[-1].endswith("command_api_runner.py"))
+
+    def test_skill_api_runtime_leaves_command_recipe_sandbox_to_command_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._prepare_command_api_skill(
+                tmp,
+                "echo_value",
+                {
+                    "argv": [sys.executable, "-c", "print('command:' + '{value}')"],
+                    "allow_system_executable": True,
+                    "sandbox": {"required": True},
+                },
+            )
+
+            recipe = SkillApiRuntime().resolve(
+                skill_name="demo",
+                api_name="echo_value",
+                args={"value": "Ada"},
+                scope_key="scope-1",
+            )
+
+            self.assertNotEqual(recipe.argv[:2], ["docker", "run"])
+            self.assertTrue(recipe.argv[-1].endswith("command_api_runner.py"))
+            self.assertEqual(recipe.runner_payload["logical_runner"], "command_api")
+            self.assertNotIn("sandbox", recipe.runner_payload)
 
     def test_invoke_skill_api_returns_inline_for_fast_python_recipe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -523,6 +622,83 @@ class LongTaskRuntimeTests(unittest.TestCase):
             self.assertEqual(shown["task"]["status"], "completed")
             self.assertIn("done after 0.2", output["output"])
             self.assertIn("task.completed", [event["event_type"] for event in shown["events"]])
+
+    def test_process_supervisor_sends_recipe_stdin_and_terminate_callback(self) -> None:
+        class _FakeProcess:
+            pid = 123
+
+        class _FakeSession:
+            session_id = "session-1"
+            process = _FakeProcess()
+
+            def write_stdin(self, data: bytes) -> None:
+                written.append(data)
+
+            def close_stdin(self) -> None:
+                closed.append(True)
+
+        class _FakeManager:
+            def start_session(self, **kwargs):
+                captured.update(kwargs)
+                return _FakeSession(), []
+
+            def poll_session(self, session_id: str, timeout_ms: int, scope_key: str | None = None):
+                return {
+                    "exited": True,
+                    "exit_code": 0,
+                    "stdout": "done\n",
+                    "stderr": "",
+                    "truncated": False,
+                }
+
+            def remove_session(self, session_id: str, scope_key: str | None = None) -> bool:
+                removed.append((session_id, scope_key))
+                return True
+
+        captured: dict[str, object] = {}
+        written: list[bytes] = []
+        closed: list[bool] = []
+        removed: list[tuple[str, str | None]] = []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["OPENPPX_TASK_DB_PATH"] = str(root / "tasks.db")
+            supervisor = ProcessExecutionSupervisor()
+            supervisor.tool_call_store.create_or_get(
+                idempotency_key="call-1",
+                tool_name="invoke_skill_api",
+                args_hash="hash-1",
+            )
+
+            def _cleanup() -> None:
+                pass
+
+            recipe = ExecutionRecipe(
+                title="demo:add",
+                command="python runner.py",
+                argv=["python", "runner.py"],
+                cwd=root,
+                env={},
+                scope_key="scope-1",
+                stdin="payload",
+                terminate_callback=_cleanup,
+                task_kind="api_call",
+            )
+
+            with mock.patch("openppx.runtime.task_execution.get_process_session_manager", return_value=_FakeManager()):
+                result = supervisor._run_process_recipe(
+                    recipe=recipe,
+                    inline_budget_ms=10,
+                    context=TaskInvocationContext(),
+                    idempotency_key="call-1",
+                    dedupe_key="dedupe-1",
+                )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(written, [b"payload"])
+        self.assertEqual(closed, [True])
+        self.assertEqual(removed, [("session-1", "scope-1")])
+        self.assertIs(captured["terminate_callback"], _cleanup)
 
     def test_invoke_skill_api_materializes_long_task_and_interrupts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
